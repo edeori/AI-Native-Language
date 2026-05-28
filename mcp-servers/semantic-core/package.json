@@ -1,0 +1,16 @@
+{
+  "name": "@ai-native/mcp-semantic-core",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@ai-native/semantic-shared": "file:../shared",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "^4.0.0"
+  }
+}

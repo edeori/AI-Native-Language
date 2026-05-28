@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./mcp-servers/shared" },
+    { "path": "./mcp-servers/semantic-core" },
+    { "path": "./mcp-servers/validator" },
+    { "path": "./mcp-servers/compiler" }
+  ]
+}

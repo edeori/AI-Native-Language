@@ -1,0 +1,39 @@
+FROM node:20-alpine AS build
+
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY mcp-servers ./mcp-servers
+COPY examples ./examples
+COPY docs ./docs
+COPY README.md ./
+COPY AI_Native_Semantic_Pilot_Spec.md ./
+COPY AI_Native_Semantic_Pilot_Notes.md ./
+COPY AI_Native_Semantic_Workflow.md ./
+COPY AI_Native_Semantic_Programming_Platform.md ./
+
+RUN npm ci --ignore-scripts
+RUN npm run build
+
+FROM node:20-alpine AS runtime
+
+WORKDIR /app
+
+ENV MCP_TRANSPORT_MODE=http
+ENV PORT=3000
+
+COPY --from=build /app/package.json /app/package-lock.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/mcp-servers ./mcp-servers
+COPY --from=build /app/examples ./examples
+COPY --from=build /app/docs ./docs
+COPY --from=build /app/README.md ./
+COPY --from=build /app/AI_Native_Semantic_Pilot_Spec.md ./
+COPY --from=build /app/AI_Native_Semantic_Pilot_Notes.md ./
+COPY --from=build /app/AI_Native_Semantic_Workflow.md ./
+COPY --from=build /app/AI_Native_Semantic_Programming_Platform.md ./
+
+ARG SERVICE
+ENV SERVICE=${SERVICE}
+
+CMD ["sh", "-c", "node mcp-servers/${SERVICE}/dist/index.js"]

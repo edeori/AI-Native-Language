@@ -1,0 +1,253 @@
+{
+  "schemaVersion": "1.0.0",
+  "nodes": [
+    {
+      "id": "sys.document-processing-service",
+      "type": "SystemSlice",
+      "name": "Document Processing Service Slice",
+      "description": "Enterprise service slice for incoming document processing, transformation, and UI-based operations.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#system",
+      "version": "1.0.0"
+    },
+    {
+      "id": "iface.ibm-mq-inbound",
+      "type": "Interface",
+      "name": "IBM MQ inbound",
+      "description": "Inbound XML message intake via IBM MQ.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "iface.kafka-inbound",
+      "type": "Interface",
+      "name": "Kafka inbound",
+      "description": "Event-based document intake via Kafka.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "iface.ui-ops",
+      "type": "Interface",
+      "name": "Operator UI",
+      "description": "User interface for review, correction, and controlled reprocessing.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "proc.classify-source",
+      "type": "Process",
+      "name": "Classify source",
+      "description": "Identify the incoming source using the source marker field.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "proc.load-schema",
+      "type": "Process",
+      "name": "Load schema document",
+      "description": "Select and load the schema document that matches the source type.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "proc.transform-document",
+      "type": "Process",
+      "name": "Transform document",
+      "description": "Map raw XML into normalized schema data and domain output.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "proc.ui-review",
+      "type": "Process",
+      "name": "UI review and correction",
+      "description": "Allow operators to review, correct, and reprocess failed documents.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "trans.xml-to-schema",
+      "type": "Transformation",
+      "name": "XML to canonical schema",
+      "description": "Convert source XML into a canonical schema document representation.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "rule.source-marker-required",
+      "type": "Rule",
+      "name": "Source marker required",
+      "description": "The source marker must be present and valid before canonical processing starts.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#rules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "rule.traceability-preserved",
+      "type": "Rule",
+      "name": "Traceability preserved",
+      "description": "Any transformation must preserve traceability back to the source document.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#rules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sec.policy-enterprise",
+      "type": "SecurityPolicy",
+      "name": "Enterprise access policy",
+      "description": "Authentication, authorization, SSO, masking, and protected processing rules for the service slice.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#security",
+      "version": "1.0.0"
+    },
+    {
+      "id": "dep.ibm-mq",
+      "type": "Dependency",
+      "name": "IBM MQ module",
+      "description": "Integration module for inbound XML message intake.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "dep.kafka",
+      "type": "Dependency",
+      "name": "Kafka module",
+      "description": "Integration module for event-based document intake.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "dep.spring-security",
+      "type": "Dependency",
+      "name": "Spring Security",
+      "description": "Security framework for authentication and authorization.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "ext.oracle",
+      "type": "ExternalSystem",
+      "name": "Oracle",
+      "description": "Legacy reference data store.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "ext.postgresql",
+      "type": "ExternalSystem",
+      "name": "PostgreSQL",
+      "description": "Persistence store for normalized document data.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "mon.process-throughput",
+      "type": "Monitor",
+      "name": "Process throughput monitor",
+      "description": "Observes throughput, failure, and latency for document processing.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "metric.processing-latency",
+      "type": "Metric",
+      "name": "Processing latency",
+      "description": "Latency of document processing stages.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "alert.processing-failure",
+      "type": "Alert",
+      "name": "Processing failure alert",
+      "description": "Alert emitted when a document fails validation or transformation.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "flow.inbound-xml",
+      "type": "DataFlow",
+      "name": "Inbound XML",
+      "description": "Raw XML documents received from IBM MQ or Kafka.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "flow.normalized-schema",
+      "type": "DataFlow",
+      "name": "Normalized schema data",
+      "description": "Canonical schema representation derived from source XML.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "example.source-legacyA",
+      "type": "Example",
+      "name": "legacyA intake example",
+      "description": "Example of an incoming XML message classified as legacyA and mapped to its schema document.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#examples",
+      "version": "1.0.0"
+    },
+    {
+      "id": "acceptance.enterprise-slice",
+      "type": "AcceptanceCriterion",
+      "name": "Enterprise slice acceptance",
+      "description": "The slice can be modeled, validated, and generated as an enterprise Java service with security, integration, transformation, and monitoring.",
+      "status": "validated",
+      "sourceRef": "examples/document_processing_service.semantic.md#acceptance_criteria",
+      "version": "1.0.0"
+    }
+  ],
+  "edges": [
+    { "from": "sys.document-processing-service", "to": "iface.ibm-mq-inbound", "type": "contains" },
+    { "from": "sys.document-processing-service", "to": "iface.kafka-inbound", "type": "contains" },
+    { "from": "sys.document-processing-service", "to": "iface.ui-ops", "type": "contains" },
+    { "from": "sys.document-processing-service", "to": "proc.classify-source", "type": "contains" },
+    { "from": "sys.document-processing-service", "to": "proc.load-schema", "type": "contains" },
+    { "from": "sys.document-processing-service", "to": "proc.transform-document", "type": "contains" },
+    { "from": "sys.document-processing-service", "to": "proc.ui-review", "type": "contains" },
+    { "from": "sys.document-processing-service", "to": "sec.policy-enterprise", "type": "contains" },
+    { "from": "sys.document-processing-service", "to": "mon.process-throughput", "type": "contains" },
+    { "from": "sys.document-processing-service", "to": "acceptance.enterprise-slice", "type": "contains" },
+    { "from": "iface.ibm-mq-inbound", "to": "flow.inbound-xml", "type": "consumesFrom" },
+    { "from": "iface.kafka-inbound", "to": "flow.inbound-xml", "type": "consumesFrom" },
+    { "from": "flow.inbound-xml", "to": "proc.classify-source", "type": "flowsTo" },
+    { "from": "proc.classify-source", "to": "proc.load-schema", "type": "flowsTo" },
+    { "from": "proc.load-schema", "to": "trans.xml-to-schema", "type": "supports" },
+    { "from": "flow.inbound-xml", "to": "trans.xml-to-schema", "type": "flowsTo" },
+    { "from": "trans.xml-to-schema", "to": "flow.normalized-schema", "type": "transformsInto" },
+    { "from": "proc.transform-document", "to": "ext.postgresql", "type": "persistsTo" },
+    { "from": "proc.transform-document", "to": "ext.oracle", "type": "readsFrom" },
+    { "from": "proc.ui-review", "to": "iface.ui-ops", "type": "uses" },
+    { "from": "proc.ui-review", "to": "sec.policy-enterprise", "type": "guardedBy" },
+    { "from": "sec.policy-enterprise", "to": "rule.source-marker-required", "type": "contains" },
+    { "from": "sec.policy-enterprise", "to": "rule.traceability-preserved", "type": "contains" },
+    { "from": "sec.policy-enterprise", "to": "dep.spring-security", "type": "requires" },
+    { "from": "proc.classify-source", "to": "dep.ibm-mq", "type": "dependsOn" },
+    { "from": "proc.classify-source", "to": "dep.kafka", "type": "dependsOn" },
+    { "from": "mon.process-throughput", "to": "metric.processing-latency", "type": "observes" },
+    { "from": "mon.process-throughput", "to": "alert.processing-failure", "type": "emits" },
+    { "from": "example.source-legacyA", "to": "proc.load-schema", "type": "refines" },
+    { "from": "acceptance.enterprise-slice", "to": "sys.document-processing-service", "type": "supports" }
+  ]
+}

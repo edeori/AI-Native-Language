@@ -1,0 +1,140 @@
+{
+  "name": "@ai-native/vscode-extension",
+  "displayName": "AI Native Semantic Workflow",
+  "description": "Developer-facing VSCode extension for the AI-native semantic workflow.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./out/extension.js",
+  "engines": {
+    "vscode": "^1.97.0"
+  },
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:aiNative.openDashboard",
+    "onCommand:aiNative.openConfiguration",
+    "onCommand:aiNative.openTutorial",
+    "onCommand:aiNative.refreshAll",
+    "onCommand:aiNative.validateActiveSemanticMarkdown",
+    "onCommand:aiNative.generateCanonicalGraph",
+    "onCommand:aiNative.generateSpringBootSkeleton",
+    "onCommand:aiNative.openArtifactsFolder",
+    "onCommand:aiNative.showMcpStatus",
+    "onView:aiNativeWorkflow",
+    "onView:aiNativeArtifacts",
+    "onView:aiNativeTutorials"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -w -p tsconfig.json",
+    "clean": "node --input-type=module -e \"import fs from 'node:fs'; fs.rmSync('out', { recursive: true, force: true });\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/vscode": "^1.97.0",
+    "typescript": "^5.6.3"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiNative.openDashboard",
+        "title": "AI Native: Open Dashboard"
+      },
+      {
+        "command": "aiNative.openConfiguration",
+        "title": "AI Native: Configure MCP Servers"
+      },
+      {
+        "command": "aiNative.openTutorial",
+        "title": "AI Native: Open Tutorial"
+      },
+      {
+        "command": "aiNative.refreshAll",
+        "title": "AI Native: Refresh Views"
+      },
+      {
+        "command": "aiNative.validateActiveSemanticMarkdown",
+        "title": "AI Native: Validate Active Semantic Markdown"
+      },
+      {
+        "command": "aiNative.generateCanonicalGraph",
+        "title": "AI Native: Generate Canonical Graph"
+      },
+      {
+        "command": "aiNative.generateSpringBootSkeleton",
+        "title": "AI Native: Generate Spring Boot Skeleton"
+      },
+      {
+        "command": "aiNative.openArtifactsFolder",
+        "title": "AI Native: Open Artifact Folder"
+      },
+      {
+        "command": "aiNative.showMcpStatus",
+        "title": "AI Native: Show MCP Status"
+      }
+    ],
+    "configuration": {
+      "title": "AI Native Semantic Workflow",
+      "properties": {
+        "aiNative.mcp.semanticCoreUrl": {
+          "type": "string",
+          "default": "http://localhost:3001/mcp",
+          "description": "Remote Streamable HTTP endpoint for the semantic-core MCP server."
+        },
+        "aiNative.mcp.validatorUrl": {
+          "type": "string",
+          "default": "http://localhost:3002/mcp",
+          "description": "Remote Streamable HTTP endpoint for the validator MCP server."
+        },
+        "aiNative.mcp.compilerUrl": {
+          "type": "string",
+          "default": "http://localhost:3003/mcp",
+          "description": "Remote Streamable HTTP endpoint for the compiler MCP server."
+        },
+        "aiNative.artifactRoot": {
+          "type": "string",
+          "default": ".ai-native",
+          "description": "Workspace-relative folder used for local semantic artifacts and generated outputs."
+        },
+        "aiNative.java.basePackage": {
+          "type": "string",
+          "default": "com.example.generated",
+          "description": "Default Java base package used by the compiler scaffold."
+        },
+        "aiNative.autoValidateOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Validate Semantic Markdown automatically after save."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiNativeSemantic",
+          "title": "AI Native",
+          "icon": "media/ai-native.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiNativeSemantic": [
+        {
+          "id": "aiNativeWorkflow",
+          "name": "Workflow"
+        },
+        {
+          "id": "aiNativeArtifacts",
+          "name": "Artifacts"
+        },
+        {
+          "id": "aiNativeTutorials",
+          "name": "Tutorials"
+        }
+      ]
+    }
+  }
+}

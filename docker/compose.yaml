@@ -1,0 +1,45 @@
+services:
+  semantic-core:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.mcp
+      args:
+        SERVICE: semantic-core
+    environment:
+      MCP_TRANSPORT_MODE: http
+      MCP_PATH: /mcp
+      PORT: 3001
+    ports:
+      - "3001:3001"
+    volumes:
+      - ../.ai-native:/app/.ai-native
+
+  validator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.mcp
+      args:
+        SERVICE: validator
+    environment:
+      MCP_TRANSPORT_MODE: http
+      MCP_PATH: /mcp
+      PORT: 3002
+    ports:
+      - "3002:3002"
+    volumes:
+      - ../.ai-native:/app/.ai-native
+
+  compiler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.mcp
+      args:
+        SERVICE: compiler
+    environment:
+      MCP_TRANSPORT_MODE: http
+      MCP_PATH: /mcp
+      PORT: 3003
+    ports:
+      - "3003:3003"
+    volumes:
+      - ../.ai-native:/app/.ai-native
