@@ -46,11 +46,12 @@ The first visible target is a Spring Boot application on Java 17+.
 - Java baseline: 17+
 - Target framework: Spring Boot
 - Security framework: Spring Security
-- Enterprise integrations:
-  - IBM MQ
-  - Kafka
-  - Oracle
-  - PostgreSQL
+- Enterprise integrations may include:
+  - messaging systems
+  - event streams
+  - relational databases
+  - search indexes
+  - notification platforms
   - monitoring and alerting systems
 
 ## 5. Semantic Markdown Source
@@ -377,8 +378,8 @@ The following can be prepared before any real code execution exists:
 
 ### Example artifacts location
 
-- `examples/document_processing_service.semantic.md`
-- `examples/document_processing_service.graph.json`
+- `examples/team_knowledge_publishing_service.semantic.md`
+- `examples/team_knowledge_publishing_service.graph.json`
 
 ### What this enables
 

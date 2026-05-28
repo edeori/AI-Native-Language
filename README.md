@@ -20,6 +20,97 @@ This repo is organized as a reproducible starting point for a future pilot that 
 - no runnable pilot implementation yet
 - designed to be cloned and extended by other teams
 
+## What This Will Be Used For
+
+This repository defines a repeatable workflow for turning a high-level system slice into a validated, traceable, Java/Spring Boot implementation.
+
+In practical terms, it is meant for:
+
+- describing an enterprise service in `Semantic Markdown`
+- capturing interfaces, data flows, security rules, and dependencies in one source of truth
+- validating the description into a canonical graph IR
+- detecting gaps, contradictions, and security violations early
+- generating a constrained Java 17+ / Spring Boot scaffold from the validated model
+- keeping semantic changes and generated code in the same reviewable branch
+- running the workflow through remote MCP services and a VSCode control plane
+
+### Typical Workflow
+
+1. Define the business need in a structured semantic format.
+2. Validate the description for gaps, contradictions, and security issues.
+3. Generate a machine-readable model of the intended system behavior.
+4. Generate the Spring Boot / Java implementation scaffold from that model.
+5. Review the semantic change and the code change together in VSCode.
+6. Refine the semantic source until the output matches the intended business behavior.
+
+The diagram below renders in Mermaid-capable Markdown viewers such as GitHub and VSCode preview.
+
+```mermaid
+flowchart LR
+  %% ===== Styles =====
+  classDef user fill:#FFF4CC,stroke:#D6A100,color:#3B2F00,stroke-width:1px;
+  classDef editor fill:#DFF3FF,stroke:#2D8CFF,color:#05324A,stroke-width:1px;
+  classDef mcp fill:#E8E0FF,stroke:#7A4DFF,color:#28124A,stroke-width:1px;
+  classDef artifact fill:#E8F7E8,stroke:#3C9D40,color:#153315,stroke-width:1px;
+  classDef feedback fill:#FFE5E5,stroke:#D64545,color:#4A1111,stroke-width:1px;
+
+  subgraph U["User"]
+    U1[Business need / change request]:::user
+    U2[Semantic Markdown authoring]:::user
+    U3[Review semantic + code diffs]:::user
+  end
+
+  subgraph V["VSCode Extension"]
+    V1[Open dashboard / tutorials]:::editor
+    V2[Edit system slice]:::editor
+    V3[Trigger validate / generate]:::editor
+    V4[Show local artifacts]:::editor
+  end
+
+  subgraph M["Remote MCP Services"]
+    M1[semantic-core<br/>parse + graph generation]:::mcp
+    M2[validator<br/>gaps + contradictions + security violations]:::mcp
+    M3[compiler<br/>Spring Boot / Java generation]:::mcp
+  end
+
+  subgraph A["Local Artifacts"]
+    A1[Validation report<br/>.ai-native/validation/]:::artifact
+    A2[Graph snapshot<br/>.ai-native/graph/]:::artifact
+    A3[Generated Java<br/>.ai-native/generated/]:::artifact
+    A4[Traceable cache<br/>.ai-native/cache/]:::artifact
+  end
+
+  U1 --> V1 --> V2
+  V2 --> U2
+  U2 --> V3
+  V3 --> M2
+  V3 --> M1
+  M2 --> A1
+  M1 --> A2
+  M1 --> M3
+  M3 --> A3
+  M1 --> A4
+  A1 --> V4
+  A2 --> V4
+  A3 --> V4
+  V4 --> U3
+  U3 --> U2
+
+  M2 -->|violation / gap| V4
+  M3 -->|generated scaffold| V4
+```
+
+The value proposition is simple: faster change, clearer review, better traceability, and less rework when requirements change.
+
+### Example Use Cases
+
+- internal knowledge publishing workflows with review, publish, and search
+- enterprise Java modernization from legacy platform descriptions
+- security-aware service generation with SSO and role-based access rules
+- dependency-driven generation where existing internal modules must be used
+
+This is not just documentation. The semantic source is intended to become the editable contract that drives validation, generation, and review.
+
 ## Core Documents
 
 - [AI_Native_Semantic_Pilot_Spec.md](./AI_Native_Semantic_Pilot_Spec.md)
@@ -31,8 +122,8 @@ This repo is organized as a reproducible starting point for a future pilot that 
 
 ## Example Artifacts
 
-- [examples/document_processing_service.semantic.md](./examples/document_processing_service.semantic.md)
-- [examples/document_processing_service.graph.json](./examples/document_processing_service.graph.json)
+- [examples/team_knowledge_publishing_service.semantic.md](./examples/team_knowledge_publishing_service.semantic.md)
+- [examples/team_knowledge_publishing_service.graph.json](./examples/team_knowledge_publishing_service.graph.json)
 
 ## Repository Layout
 
@@ -130,6 +221,33 @@ npm run build:vscode-extension
 ```
 
 The extension expects the remote MCP endpoints to be available at the defaults from `vscode-extension/package.json` unless overridden in VSCode settings.
+
+## Developer Input to Generated Output
+
+The workflow is input-driven. The developer writes a system slice in `Semantic Markdown` with:
+
+- the system boundary
+- the intent
+- the context and constraints
+- the important interfaces
+- the main data flows
+- the processes in free-form prose
+- the rules and invariants
+- the security requirements
+- the required dependencies
+- sample examples
+- acceptance criteria
+
+From that input, the toolchain produces:
+
+1. a canonical graph IR
+2. a validation report with gaps, contradictions, and security violations
+3. a Spring Boot skeleton or target implementation
+4. local artifact snapshots for review
+
+The IR is the machine-readable middle layer. It is not source code and not just documentation. It is the normalized representation that lets the validator and compiler reason about the slice consistently.
+
+The Java/Spring output is generated from the IR, not from ad hoc prompt text.
 
 ## Contributing Direction
 

@@ -40,7 +40,7 @@ Build a very small pilot for an AI-native semantic programming platform that can
 - Platform targets are compiler / adapter concerns, not core application concerns.
 - If a first execution target is needed for prototyping, use desktop as a temporary convenience layer.
 - v0 should still produce one concrete, visible, demoable application target.
-- The long-term business value may be legacy enterprise modernization, especially bank and JVM-heavy environments.
+- The long-term business value may be legacy enterprise modernization, especially large JVM-heavy enterprise environments.
 
 ## What Is Already Clear
 
@@ -89,7 +89,7 @@ Build a very small pilot for an AI-native semantic programming platform that can
 - For v0, a single concrete target is still useful to make the system demoable and observable.
 - The first target should be treated as a reference backend, not as the identity of the whole platform.
 - A fully platform-specific first design risks locking the paradigm to an existing ecosystem too early.
-- A major envisioned use case is describing an existing Java 8 / IBM WAS application semantically, then regenerating it into a modern Kubernetes / microservice / Java + React implementation.
+- A major envisioned use case is describing an existing internal knowledge portal or content workflow service semantically, then regenerating it into a modern Spring Boot service architecture with a web UI.
 
 ## MVP Gaps Still To Define
 
@@ -412,7 +412,7 @@ The canonical IR and planner/runtime pipeline can then hold Level 4 detail.
 - Every `Transformation` should connect an input `DataFlow` to an output `DataFlow`.
 - Every `SecurityPolicy` should be traceable to one or more `Rule` or `Issue` records.
 - Every `Dependency` should be linked to the process or interface that uses it.
-- Every external integration such as MQ, Kafka, Oracle, PostgreSQL, or a monitoring system should appear either as an `ExternalSystem`, `IntegrationEndpoint`, or `Dependency`.
+- Every external integration such as a messaging system, event stream, relational database, search index, notification platform, or monitoring system should appear either as an `ExternalSystem`, `IntegrationEndpoint`, or `Dependency`.
 - Every monitorable concern should be linked to a `Monitor`, `Metric`, or `Alert` node when relevant.
 - Every `Issue` should point to the node or edge that caused the problem.
 - Every `AcceptanceCriterion` should trace back to the `Intent` or `Process` it validates.
@@ -818,10 +818,10 @@ Testing and refinement
 - Use AI to summarize and propose semantic models, but validate those models against existing behavior with tests and traces.
 - Capture knowledge in a reusable canonical model so future changes become cheaper than the first extraction.
 
-## Example: Bank Legacy Modernization
+## Example: Legacy Knowledge Portal Modernization
 
 ```text
-Legacy Java 8 / IBM WAS application
+Legacy internal knowledge portal
     ↓
 Semantic extraction / domain modeling
     ↓
@@ -834,10 +834,10 @@ Canonical semantic IR / graph
 Target compiler / backend selection
     ↓
 Modern deployment shape
-    ├── Kubernetes cluster
-    ├── Java services
-    ├── React frontend
-    └── service / adapter layer
+    ├── Spring Boot services
+    ├── web UI
+    ├── search/indexing adapter
+    └── notification / integration layer
 ```
 
 - The semantic specification captures business meaning, state, invariants, and transitions.

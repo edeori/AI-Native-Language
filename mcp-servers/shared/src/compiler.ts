@@ -45,9 +45,8 @@ function collectNames(graph: CanonicalGraph, type: string): string[] {
 }
 
 function renderPomXml(artifactName: string, basePackage: string, graph: CanonicalGraph): string {
-  const needsJpa = graph.nodes.some((node) => node.type === 'ExternalSystem' && /postgresql|oracle/i.test(node.name));
-  const needsKafka = graph.nodes.some((node) => node.type === 'ExternalSystem' && /kafka/i.test(node.name));
-  const needsMq = graph.nodes.some((node) => node.type === 'ExternalSystem' && /mq/i.test(node.name));
+  const needsJpa = graph.nodes.some((node) => node.type === 'ExternalSystem' && /database|sql|jdbc|relational/i.test(node.name));
+  const needsMessaging = graph.nodes.some((node) => node.type === 'ExternalSystem' && /kafka|mq|queue|messaging|event/i.test(node.name));
 
   const extraDeps: string[] = [];
   if (needsJpa) {
@@ -57,16 +56,12 @@ function renderPomXml(artifactName: string, basePackage: string, graph: Canonica
       <artifactId>spring-boot-starter-data-jpa</artifactId>
     </dependency>`);
   }
-  if (needsKafka) {
+  if (needsMessaging) {
     extraDeps.push(`
     <dependency>
       <groupId>org.springframework.kafka</groupId>
       <artifactId>spring-kafka</artifactId>
     </dependency>`);
-  }
-  if (needsMq) {
-    extraDeps.push(`
-    <!-- IBM MQ integration dependency should be supplied by the workspace dependency model. -->`);
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>

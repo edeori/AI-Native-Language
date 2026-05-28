@@ -1,0 +1,261 @@
+{
+  "schemaVersion": "1.0.0",
+  "nodes": [
+    {
+      "id": "sys.team-knowledge-publishing-service",
+      "type": "SystemSlice",
+      "name": "Team Knowledge Publishing Service Slice",
+      "description": "Internal knowledge workflow for drafting, reviewing, publishing, and indexing team articles.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#system",
+      "version": "1.0.0"
+    },
+    {
+      "id": "iface.author-ui",
+      "type": "Interface",
+      "name": "Author UI",
+      "description": "Draft creation and editing interface for authors.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "iface.reviewer-ui",
+      "type": "Interface",
+      "name": "Reviewer UI",
+      "description": "Approval, rejection, and comment interface for reviewers.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "iface.content-api",
+      "type": "Interface",
+      "name": "Content API",
+      "description": "Automated draft submission and retrieval interface.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "iface.search-index",
+      "type": "Interface",
+      "name": "Search index interface",
+      "description": "Lookup path for published article content.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "proc.validate-draft",
+      "type": "Process",
+      "name": "Validate draft",
+      "description": "Check structural and content rules before a draft enters review.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "proc.review-draft",
+      "type": "Process",
+      "name": "Review draft",
+      "description": "Allow reviewers to comment, approve, or reject content.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "proc.publish-article",
+      "type": "Process",
+      "name": "Publish article",
+      "description": "Turn an approved draft into a published article and make it searchable.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "proc.notify-subscribers",
+      "type": "Process",
+      "name": "Notify subscribers",
+      "description": "Emit publication and review events to notification channels.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "trans.draft-to-published",
+      "type": "Transformation",
+      "name": "Draft to published article",
+      "description": "Convert reviewed draft content into a published article representation.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "rule.approval-required",
+      "type": "Rule",
+      "name": "Approval required",
+      "description": "Only approved content may be published.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#rules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "rule.traceability-preserved",
+      "type": "Rule",
+      "name": "Traceability preserved",
+      "description": "Every published article must remain traceable to its draft and review decisions.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#rules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sec.internal-access-policy",
+      "type": "SecurityPolicy",
+      "name": "Internal access policy",
+      "description": "Authentication, authorization, SSO, visibility, and protected state transition rules.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#security",
+      "version": "1.0.0"
+    },
+    {
+      "id": "dep.spring-security",
+      "type": "Dependency",
+      "name": "Spring Security",
+      "description": "Security framework for authentication and authorization.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "dep.search-client",
+      "type": "Dependency",
+      "name": "Search index client",
+      "description": "Client used to update and query published article search indexes.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "dep.notification-client",
+      "type": "Dependency",
+      "name": "Notification service client",
+      "description": "Client used to emit publication and review events.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "ext.search-index",
+      "type": "ExternalSystem",
+      "name": "Search index",
+      "description": "Searchable store for published article content.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "ext.notification-platform",
+      "type": "ExternalSystem",
+      "name": "Notification platform",
+      "description": "Messaging or notification platform used to inform subscribers.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "mon.article-flow",
+      "type": "Monitor",
+      "name": "Article flow monitor",
+      "description": "Observes draft throughput, approval latency, and publication success.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "metric.approval-latency",
+      "type": "Metric",
+      "name": "Approval latency",
+      "description": "Time between draft submission and final approval.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "alert.publish-failure",
+      "type": "Alert",
+      "name": "Publish failure alert",
+      "description": "Alert emitted when publication or indexing fails.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "flow.draft-content",
+      "type": "DataFlow",
+      "name": "Draft content",
+      "description": "Draft article content submitted by authors or APIs.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "flow.published-article",
+      "type": "DataFlow",
+      "name": "Published article",
+      "description": "Approved and published article representation.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "example.reviewed-article",
+      "type": "Example",
+      "name": "Reviewed article example",
+      "description": "An onboarding article is drafted, reviewed, approved, published, indexed, and notified.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#examples",
+      "version": "1.0.0"
+    },
+    {
+      "id": "acceptance.knowledge-service",
+      "type": "AcceptanceCriterion",
+      "name": "Knowledge service acceptance",
+      "description": "The slice can be modeled, validated, and generated as an internal content workflow service with review, publish, search, notification, and security behavior.",
+      "status": "validated",
+      "sourceRef": "examples/team_knowledge_publishing_service.semantic.md#acceptance_criteria",
+      "version": "1.0.0"
+    }
+  ],
+  "edges": [
+    { "from": "sys.team-knowledge-publishing-service", "to": "iface.author-ui", "type": "contains" },
+    { "from": "sys.team-knowledge-publishing-service", "to": "iface.reviewer-ui", "type": "contains" },
+    { "from": "sys.team-knowledge-publishing-service", "to": "iface.content-api", "type": "contains" },
+    { "from": "sys.team-knowledge-publishing-service", "to": "iface.search-index", "type": "contains" },
+    { "from": "sys.team-knowledge-publishing-service", "to": "proc.validate-draft", "type": "contains" },
+    { "from": "sys.team-knowledge-publishing-service", "to": "proc.review-draft", "type": "contains" },
+    { "from": "sys.team-knowledge-publishing-service", "to": "proc.publish-article", "type": "contains" },
+    { "from": "sys.team-knowledge-publishing-service", "to": "proc.notify-subscribers", "type": "contains" },
+    { "from": "sys.team-knowledge-publishing-service", "to": "sec.internal-access-policy", "type": "contains" },
+    { "from": "sys.team-knowledge-publishing-service", "to": "mon.article-flow", "type": "contains" },
+    { "from": "sys.team-knowledge-publishing-service", "to": "acceptance.knowledge-service", "type": "contains" },
+    { "from": "iface.author-ui", "to": "flow.draft-content", "type": "consumesFrom" },
+    { "from": "iface.content-api", "to": "flow.draft-content", "type": "consumesFrom" },
+    { "from": "flow.draft-content", "to": "proc.validate-draft", "type": "flowsTo" },
+    { "from": "proc.validate-draft", "to": "proc.review-draft", "type": "flowsTo" },
+    { "from": "proc.review-draft", "to": "trans.draft-to-published", "type": "supports" },
+    { "from": "trans.draft-to-published", "to": "flow.published-article", "type": "transformsInto" },
+    { "from": "proc.publish-article", "to": "ext.search-index", "type": "publishesTo" },
+    { "from": "proc.publish-article", "to": "ext.notification-platform", "type": "emits" },
+    { "from": "proc.notify-subscribers", "to": "dep.notification-client", "type": "dependsOn" },
+    { "from": "proc.publish-article", "to": "dep.search-client", "type": "dependsOn" },
+    { "from": "proc.publish-article", "to": "sec.internal-access-policy", "type": "guardedBy" },
+    { "from": "sec.internal-access-policy", "to": "rule.approval-required", "type": "contains" },
+    { "from": "sec.internal-access-policy", "to": "rule.traceability-preserved", "type": "contains" },
+    { "from": "sec.internal-access-policy", "to": "dep.spring-security", "type": "requires" },
+    { "from": "mon.article-flow", "to": "metric.approval-latency", "type": "observes" },
+    { "from": "mon.article-flow", "to": "alert.publish-failure", "type": "emits" },
+    { "from": "example.reviewed-article", "to": "proc.review-draft", "type": "refines" },
+    { "from": "acceptance.knowledge-service", "to": "sys.team-knowledge-publishing-service", "type": "supports" }
+  ]
+}

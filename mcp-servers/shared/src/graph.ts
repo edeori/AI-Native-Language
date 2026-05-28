@@ -147,10 +147,9 @@ function inferGraphNodes(document: SemanticDocument, systemId: string): { nodes:
   );
 
   const externalSystemSeeds = [
-    ['IBM MQ', /ibm\s*mq|\bmq\b/i],
-    ['Kafka', /\bkafka\b/i],
-    ['Oracle', /\boracle\b/i],
-    ['PostgreSQL', /\bpostgres(ql)?\b/i],
+    ['Message Queue', /\bmq\b|\bqueue\b|\bmessage queue\b/i],
+    ['Event Stream', /\bkafka\b|\bevent stream\b|\bstream\b/i],
+    ['Relational Database', /\bpostgres(ql)?\b|\boracle\b|\bdatabase\b|\bsql\b/i],
   ] as const;
 
   const externalSystemNodes = externalSystemSeeds

@@ -40,10 +40,10 @@ export class TutorialTreeDataProvider implements vscode.TreeDataProvider<Tutoria
         ];
       case 'Semantic Markdown':
         return [
-          new TutorialTreeItem('Open the example semantic slice', 'Uses the document-processing reference artifact.', vscode.TreeItemCollapsibleState.None, {
+          new TutorialTreeItem('Open the example semantic slice', 'Uses the knowledge publishing reference artifact.', vscode.TreeItemCollapsibleState.None, {
             command: 'vscode.open',
             title: 'Open example',
-            arguments: [resolveRepoUri('examples/document_processing_service.semantic.md')],
+            arguments: [resolveRepoUri('examples/team_knowledge_publishing_service.semantic.md')],
           }),
           new TutorialTreeItem('Validate the active document', 'Runs the validator MCP server on the current editor buffer.', vscode.TreeItemCollapsibleState.None, {
             command: commandIds.validateActiveSemanticMarkdown,

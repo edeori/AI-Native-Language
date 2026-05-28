@@ -63,7 +63,7 @@ Default URLs point at the local Docker ports:
 3. Open the AI Native view container.
 4. Open the dashboard.
 5. Run **AI Native: Show MCP Status**.
-6. Open `examples/document_processing_service.semantic.md`.
+6. Open `examples/team_knowledge_publishing_service.semantic.md`.
 7. Run **AI Native: Validate Active Semantic Markdown**.
 8. Run **AI Native: Generate Canonical Graph**.
 9. Run **AI Native: Generate Spring Boot Skeleton**.
