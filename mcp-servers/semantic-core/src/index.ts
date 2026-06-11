@@ -8,6 +8,8 @@ import {
   startMcpServer,
   saveArtifact,
   graphPreview,
+  validateSemanticDocument,
+  validationPolicyText,
 } from '@ai-native/semantic-shared';
 
 function createServer() {
@@ -19,6 +21,7 @@ function createServer() {
   const semanticInputSchema = z.object({
     path: z.string().optional(),
     content: z.string().optional(),
+    policyText: z.string().optional(),
     persist: z.boolean().optional().default(true),
   });
 
@@ -28,7 +31,7 @@ function createServer() {
       description: 'Parse Semantic Markdown into section blocks.',
       inputSchema: semanticInputSchema,
     },
-    async ({ path, content, persist }) => {
+    async ({ path, content, policyText, persist }) => {
       const document = content ? parseSemanticMarkdown(content, path) : await parseSemanticMarkdownFromFile(path ?? '');
       const cachePath =
         persist === false
@@ -80,9 +83,10 @@ function createServer() {
       description: 'Generate the canonical graph model from Semantic Markdown.',
       inputSchema: semanticInputSchema,
     },
-    async ({ path, content, persist }) => {
+    async ({ path, content, policyText, persist }) => {
       const document = content ? parseSemanticMarkdown(content, path) : await parseSemanticMarkdownFromFile(path ?? '');
       const graph = generateCanonicalGraph(document);
+      const report = validateSemanticDocument(document, graph, { policyText: policyText ?? validationPolicyText });
       const graphText = JSON.stringify(graph, null, 2);
       const graphPath = persist === false ? undefined : await saveArtifact(undefined, 'graph', graph.metadata.title ?? 'graph', 'json', graphText);
 
@@ -95,6 +99,11 @@ function createServer() {
                 graphPath,
                 graphPreview: graphPreview(graph),
                 graph,
+                validation: {
+                  status: report.status,
+                  summary: report.summary,
+                  issues: report.issues,
+                },
               },
               null,
               2,

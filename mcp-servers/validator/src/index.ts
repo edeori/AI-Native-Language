@@ -7,6 +7,7 @@ import {
   startMcpServer,
   saveArtifact,
   validateSemanticDocument,
+  validationPolicyText,
 } from '@ai-native/semantic-shared';
 
 function createServer() {
@@ -23,6 +24,29 @@ function createServer() {
   });
 
   server.registerTool(
+    'get_validation_policy',
+    {
+      description: 'Return the canonical validation policy used by the MCP validator.',
+      inputSchema: z.object({}),
+    },
+    async () => ({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              policyId: 'mcp-validation-policy-v1',
+              policyText: validationPolicyText,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    }),
+  );
+
+  server.registerTool(
     'validate_semantic_markdown',
     {
       description: 'Validate Semantic Markdown against semantic and security rules.',
@@ -31,7 +55,7 @@ function createServer() {
     async ({ path, content, policyText, persist }) => {
       const document = content ? parseSemanticMarkdown(content, path) : await parseSemanticMarkdownFromFile(path ?? '');
       const graph = generateCanonicalGraph(document);
-      const report = validateSemanticDocument(document, graph, { policyText });
+      const report = validateSemanticDocument(document, graph, { policyText: policyText ?? validationPolicyText });
       const reportText = JSON.stringify(report, null, 2);
       const reportPath = persist === false ? undefined : await saveArtifact(undefined, 'validation', report.graph.metadata.title ?? 'validation', 'json', reportText);
 

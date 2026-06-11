@@ -9,6 +9,13 @@ export interface MpcConfigFile {
   artifactRoot?: string;
   javaBasePackage?: string;
   autoValidateOnSave?: boolean;
+  reviewProvider?: 'codex' | 'claude';
+  reviewMode?: 'local' | 'cli' | 'endpoint' | 'command' | 'prompt-file';
+  reviewModel?: string;
+  reviewEndpoint?: string;
+  reviewCommandId?: string;
+  reviewCommandArgsJson?: string;
+  reviewPromptFileName?: string;
 }
 
 let configStorageRoot: vscode.Uri | undefined;
@@ -55,6 +62,24 @@ export async function writeMcpConfigFile(values: MpcConfigFile): Promise<void> {
   await fs.promises.writeFile(configPath, JSON.stringify(values, null, 2), 'utf8');
 }
 
+export function getDefaultMcpConfigFile(): MpcConfigFile {
+  return {
+    semanticCoreUrl: 'http://10.9.0.2:3001/mcp',
+    validatorUrl: 'http://10.9.0.2:3002/mcp',
+    compilerUrl: 'http://10.9.0.2:3003/mcp',
+    artifactRoot: '.ai-native',
+    javaBasePackage: 'com.example.generated',
+    autoValidateOnSave: false,
+    reviewProvider: 'codex',
+    reviewMode: 'cli',
+    reviewModel: 'gpt-5.5',
+    reviewEndpoint: '',
+    reviewCommandId: '',
+    reviewCommandArgsJson: '{"prompt":"${prompt}"}',
+    reviewPromptFileName: '.github/prompts/ai-native-review.prompt.md',
+  };
+}
+
 export async function ensureMcpConfigFile(): Promise<vscode.Uri | undefined> {
   const configPath = resolveMcpConfigPath();
   if (!configPath) {
@@ -66,14 +91,7 @@ export async function ensureMcpConfigFile(): Promise<vscode.Uri | undefined> {
     await fs.promises.writeFile(
       configPath,
       JSON.stringify(
-        {
-          semanticCoreUrl: 'http://10.9.0.2:3001/mcp',
-          validatorUrl: 'http://10.9.0.2:3002/mcp',
-          compilerUrl: 'http://10.9.0.2:3003/mcp',
-          artifactRoot: '.ai-native',
-          javaBasePackage: 'com.example.generated',
-          autoValidateOnSave: false,
-        },
+        getDefaultMcpConfigFile(),
         null,
         2,
       ),

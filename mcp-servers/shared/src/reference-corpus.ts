@@ -131,7 +131,8 @@ export function isEnterpriseLikeDocument(summary: {
     'feature policy',
     'turnstile',
   ]);
-  const hasEnterpriseMarker = enterpriseMarkers.some((marker) => normalized.includes(marker));
+  const markerHits = enterpriseMarkers.filter((marker) => normalized.includes(marker));
+  const hasEnterpriseMarker = markerHits.length >= 2;
 
   return (
     hasEnterpriseMarker ||

@@ -15,6 +15,7 @@ import { GraphPreviewPanel } from './webviews/graphPreview.js';
 import { resolveArtifactRoot } from './workspaceArtifacts.js';
 import { initializeMcpConfigStorage } from './mcpConfigStore.js';
 import { importSourceProjectState } from '@ai-native/semantic-shared';
+import { runAgenticReview } from './agenticReview.js';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const outputChannel = vscode.window.createOutputChannel('AI Native Semantic Workflow');
@@ -74,7 +75,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await createSemanticSourceTemplate();
     }),
     vscode.commands.registerCommand(commandIds.importSourceProject, async () => {
-      await importSourceProject(context, outputChannel, refreshViews);
+      await importSourceProject(context, diagnostics, registry, outputChannel, refreshViews);
     }),
     vscode.commands.registerCommand(commandIds.openTutorial, async () => {
       await openExampleSlice();
@@ -99,7 +100,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await runValidation(context, diagnostics, registry, outputChannel);
     }),
     vscode.commands.registerCommand(commandIds.generateCanonicalGraph, async () => {
-      await runGraphGeneration(context, registry, outputChannel);
+      await runGraphGeneration(context, diagnostics, registry, outputChannel);
     }),
     vscode.commands.registerCommand(commandIds.openGraphPreview, async () => {
       await openGraphPreview(context, registry, outputChannel);
@@ -136,65 +137,290 @@ async function runValidation(
   outputChannel: vscode.OutputChannel,
   document?: vscode.TextDocument,
 ): Promise<void> {
-  const source = await resolveSemanticSourceDocument(document);
-  if (!source) {
-    vscode.window.showWarningMessage('Open a Semantic Markdown file first.');
-    return;
-  }
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'Validating semantic source',
+      cancellable: false,
+    },
+    async (progress) => {
+      const report = (message: string, increment = 0): void => {
+        progress.report({ message, increment });
+        outputChannel.appendLine(`[validation] ${message}`);
+      };
 
-  const response = await registry.callTool('validator', 'validate_semantic_markdown', {
-    content: source.getText(),
-    persist: false,
-  });
+      const source = await resolveSemanticSourceDocument(document);
+      if (!source) {
+        vscode.window.showWarningMessage('Open a Semantic Markdown file first.');
+        return;
+      }
 
-  const payload = asValidationPayload(response.json);
-  const logLines = publishValidationDiagnostics(diagnostics, source, payload);
-  outputChannel.show(true);
-  outputChannel.appendLine(`[validation] ${path.basename(source.fileName)}`);
-  outputChannel.appendLine(
-    `  summary: gaps=${payload.summary.gaps}, conflicts=${payload.summary.conflicts}, warnings=${payload.summary.warnings}, violations=${payload.summary.violations}`,
-  );
-  for (const line of logLines) {
-    outputChannel.appendLine(line);
-  }
-  await vscode.window.showTextDocument(source, { preview: false });
-  await vscode.window.showInformationMessage(
-    `Validation completed: ${payload.summary.gaps} gaps, ${payload.summary.conflicts} conflicts, ${payload.summary.warnings} warnings, ${payload.summary.violations} violations.`,
+      report('Loading validation policy from MCP...');
+      const validationPolicy = await resolveValidationPolicyText(registry);
+
+      report('Running MCP validation...');
+      const response = await registry.callTool('validator', 'validate_semantic_markdown', {
+        content: source.getText(),
+        policyText: validationPolicy,
+        persist: false,
+      });
+
+      const payload = asValidationPayload(response.json);
+      const validationStatus = deriveValidationStatus(payload.summary);
+      const logLines = publishValidationDiagnostics(diagnostics, source, payload, 'AI Native Validation');
+      outputChannel.show(true);
+      outputChannel.appendLine(`[validation] ${path.basename(source.fileName)}`);
+      outputChannel.appendLine(
+        `  summary: gaps=${payload.summary.gaps}, conflicts=${payload.summary.conflicts}, warnings=${payload.summary.warnings}, violations=${payload.summary.violations}`,
+      );
+      for (const line of logLines) {
+        outputChannel.appendLine(line);
+      }
+
+      const config = getConfig();
+      report(`Running AI review with ${config.reviewProvider}...`);
+      const agenticReview = await runAgenticReview({
+        provider: config.reviewProvider,
+        mode: config.reviewMode,
+        model: config.reviewModel,
+        endpoint: config.reviewEndpoint,
+        commandId: config.reviewCommandId,
+        commandArgsJson: config.reviewCommandArgsJson,
+        promptFileName: config.reviewPromptFileName,
+        workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+        sourcePath: source.fileName,
+        semanticSource: source.getText(),
+        expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
+        graph: payload.graph,
+        validation: {
+          status: validationStatus,
+          summary: payload.summary,
+          issues: payload.issues,
+        },
+      });
+
+      const combinedIssues = [
+        ...payload.issues.map((issue) => ({
+          severity: issue.severity,
+          code: issue.code,
+          message: issue.message,
+          sourceRef: issue.sourceRef,
+          sourceLine: issue.sourceLine,
+          sourceLabel: 'AI Native Validation',
+        })),
+        ...agenticReview.issues.map((issue) => ({
+          severity: issue.severity,
+          code: issue.code,
+          message: issue.message,
+          sourceRef: issue.sourceRef,
+          sourceLine: issue.sourceLine,
+          sourceLabel: 'AI Native Review',
+        })),
+      ];
+      publishValidationDiagnostics(
+        diagnostics,
+        source,
+        {
+          issues: combinedIssues,
+          summary: payload.summary,
+        },
+        'AI Native Review',
+      );
+
+      outputChannel.appendLine(`  expectations: mcp-validation-policy.md`);
+      outputChannel.appendLine(
+        `[agentic-validation] provider=${agenticReview.provider} mode=${agenticReview.mode} model=${agenticReview.model}${agenticReview.usedEndpoint ? ` endpoint=${agenticReview.usedEndpoint}` : ''}`,
+      );
+      outputChannel.appendLine(`  bridge: ${agenticReview.bridgeAction}`);
+      outputChannel.appendLine(`  summary: ${agenticReview.summary}`);
+      for (const note of agenticReview.notes) {
+        outputChannel.appendLine(`  note: ${note}`);
+      }
+      if (agenticReview.issues.length > 0) {
+        outputChannel.appendLine(`  issues: ${agenticReview.issues.length}`);
+      }
+
+      report('Validation finished.');
+      await vscode.window.showTextDocument(source, { preview: false });
+      await vscode.window.showInformationMessage(
+        `Validation completed: ${payload.summary.gaps} gaps, ${payload.summary.conflicts} conflicts, ${payload.summary.warnings} warnings, ${payload.summary.violations} violations.`,
+      );
+    },
   );
 }
 
 async function runGraphGeneration(
   context: vscode.ExtensionContext,
+  diagnostics: vscode.DiagnosticCollection,
   registry: McpRegistry,
   outputChannel: vscode.OutputChannel,
   document?: vscode.TextDocument,
 ): Promise<void> {
-  const source = await resolveSemanticSourceDocument(document);
-  if (!source) {
-    vscode.window.showWarningMessage('Open a Semantic Markdown file first.');
-    return;
-  }
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'Generating reviewed graph',
+      cancellable: false,
+    },
+    async (progress) => {
+      const report = (message: string, increment = 0): void => {
+        progress.report({ message, increment });
+        outputChannel.appendLine(`[graph-generation] ${message}`);
+      };
 
-  const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
-    content: source.getText(),
-    persist: true,
-  });
+      report('Resolving semantic source...');
+      const source = await resolveSemanticSourceDocument(document);
+      if (!source) {
+        vscode.window.showWarningMessage('Open a Semantic Markdown file first.');
+        return;
+      }
 
-  const payload = asObject(response.json);
-  const graph = asGraphObject(payload?.graph);
-  const artifactRoot = await resolveArtifactRoot();
-  if (artifactRoot) {
-    const graphFolder = vscode.Uri.joinPath(artifactRoot, 'graph');
-    await vscode.workspace.fs.createDirectory(graphFolder);
-    const outputPath = vscode.Uri.joinPath(graphFolder, `${slug(source.fileName)}.graph.json`);
-    await vscode.workspace.fs.writeFile(outputPath, Buffer.from(response.text, 'utf8'));
-  }
+      report('Generating canonical graph...');
+      const validationPolicy = await resolveValidationPolicyText(registry);
+      const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
+        content: source.getText(),
+        policyText: validationPolicy,
+        persist: true,
+      });
 
-  outputChannel.appendLine(JSON.stringify({ tool: 'generate_canonical_graph', payload }, null, 2));
-  if (graph) {
-    GraphPreviewPanel.show(context, graph, path.basename(source.fileName));
-  }
-  await vscode.window.showInformationMessage('Graph generation completed.');
+      const payload = asObject(response.json);
+      const graph = asGraphObject(payload?.graph);
+      const graphValidation = asValidationPayload(payload?.validation);
+      const artifactRoot = await resolveArtifactRoot();
+
+      outputChannel.appendLine(JSON.stringify({ tool: 'generate_canonical_graph', payload }, null, 2));
+      report('Running validation...');
+      const logLines = publishValidationDiagnostics(diagnostics, source, graphValidation, 'AI Native Validation');
+      outputChannel.appendLine(
+        `[graph-review] ${path.basename(source.fileName)}: gaps=${graphValidation.summary.gaps}, conflicts=${graphValidation.summary.conflicts}, warnings=${graphValidation.summary.warnings}, violations=${graphValidation.summary.violations}`,
+      );
+      for (const line of logLines) {
+        outputChannel.appendLine(line);
+      }
+      if (graph) {
+        const config = getConfig();
+        report(`Running AI review with ${config.reviewProvider}...`);
+        const agenticReview = await runAgenticReview({
+          provider: config.reviewProvider,
+          mode: config.reviewMode,
+          model: config.reviewModel,
+          endpoint: config.reviewEndpoint,
+          commandId: config.reviewCommandId,
+          commandArgsJson: config.reviewCommandArgsJson,
+          promptFileName: config.reviewPromptFileName,
+          workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+          sourcePath: source.fileName,
+          semanticSource: source.getText(),
+          expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
+          graph,
+          validation: {
+            status: deriveValidationStatus(graphValidation.summary),
+            summary: graphValidation.summary,
+            issues: graphValidation.issues,
+          },
+        });
+        const reviewedIssues = [
+          ...graphValidation.issues.map((issue) => ({
+            severity: issue.severity,
+            code: issue.code,
+            message: issue.message,
+            sourceRef: issue.sourceRef,
+            sourceLine: issue.sourceLine,
+            sourceLabel: 'AI Native Validation',
+          })),
+          ...agenticReview.issues.map((issue) => ({
+            severity: issue.severity,
+            code: issue.code,
+            message: issue.message,
+            sourceRef: issue.sourceRef,
+            sourceLine: issue.sourceLine,
+            sourceLabel: 'AI Native Review',
+          })),
+        ];
+        publishValidationDiagnostics(
+          diagnostics,
+          source,
+          {
+            issues: reviewedIssues,
+            summary: graphValidation.summary,
+          },
+          'AI Native Review',
+        );
+        const reviewedGraph = applyReviewToGraph(graph, agenticReview);
+        if (artifactRoot) {
+          report('Writing reviewed graph artifact...');
+          const graphFolder = vscode.Uri.joinPath(artifactRoot, 'graph');
+          await vscode.workspace.fs.createDirectory(graphFolder);
+          const reviewedPath = vscode.Uri.joinPath(graphFolder, `${slug(source.fileName)}.graph.json`);
+          await vscode.workspace.fs.writeFile(reviewedPath, Buffer.from(JSON.stringify(reviewedGraph, null, 2), 'utf8'));
+          outputChannel.appendLine(`  reviewed graph: ${reviewedPath.fsPath}`);
+        }
+        report('Opening reviewed graph...');
+        GraphPreviewPanel.show(context, reviewedGraph, `${path.basename(source.fileName)} · reviewed`);
+        outputChannel.appendLine(
+          `[agentic-review] provider=${agenticReview.provider} mode=${agenticReview.mode} model=${agenticReview.model}${agenticReview.usedEndpoint ? ` endpoint=${agenticReview.usedEndpoint}` : ''}${agenticReview.promptPath ? ` prompt=${agenticReview.promptPath}` : ''}`,
+        );
+        outputChannel.appendLine(`  bridge: ${agenticReview.bridgeAction}`);
+        outputChannel.appendLine(`  summary: ${agenticReview.summary}`);
+        if (agenticReview.reviewArtifactPath) {
+          outputChannel.appendLine(`  review artifact: ${agenticReview.reviewArtifactPath}`);
+        }
+        if (agenticReview.promptArtifactPath) {
+          outputChannel.appendLine(`  prompt artifact: ${agenticReview.promptArtifactPath}`);
+        }
+        for (const note of agenticReview.notes) {
+          outputChannel.appendLine(`  note: ${note}`);
+        }
+        if (agenticReview.issues.length > 0) {
+          outputChannel.appendLine(`  issues: ${agenticReview.issues.length}`);
+        }
+      }
+      await vscode.window.showInformationMessage('Graph generation completed.');
+    },
+  );
+}
+
+function applyReviewToGraph(
+  graph: {
+    schemaVersion?: string;
+    nodes: Array<{ id: string; type: string; name: string; description?: string; sourceRef?: string }>;
+    edges: Array<{ from: string; to: string; type: string }>;
+    metadata?: { title?: string; sourcePath?: string; createdAt?: string };
+  },
+  review: {
+    provider: string;
+    mode: string;
+    model: string;
+    bridgeAction: string;
+    usedEndpoint?: string;
+    promptPath?: string;
+    reviewArtifactPath?: string;
+    promptArtifactPath?: string;
+    summary: string;
+    notes: string[];
+    issues: Array<{ severity: string; code: string; message: string; sourceRef?: string; sourceLine?: number }>;
+  },
+): typeof graph {
+  return {
+    ...graph,
+    metadata: {
+      ...(graph.metadata ?? {}),
+      reviewedAt: new Date().toISOString(),
+      review: {
+        provider: review.provider,
+        mode: review.mode,
+        model: review.model,
+        bridgeAction: review.bridgeAction,
+        usedEndpoint: review.usedEndpoint,
+        promptPath: review.promptPath,
+        reviewArtifactPath: review.reviewArtifactPath,
+        promptArtifactPath: review.promptArtifactPath,
+        summary: review.summary,
+        notes: review.notes,
+        issues: review.issues,
+      },
+    } as typeof graph.metadata & { reviewedAt: string; review: unknown },
+  } as typeof graph;
 }
 
 async function runSpringGeneration(
@@ -235,8 +461,23 @@ async function openGraphPreview(
   registry: McpRegistry,
   outputChannel: vscode.OutputChannel,
 ): Promise<void> {
+  const artifactRoot = await resolveArtifactRoot();
   const source = await resolveSemanticSourceDocument();
   if (source) {
+    const reviewedArtifact = artifactRoot
+      ? vscode.Uri.joinPath(artifactRoot, 'graph', `${slug(source.fileName)}.graph.json`)
+      : undefined;
+    if (reviewedArtifact && (await pathExists(reviewedArtifact))) {
+      const document = await vscode.workspace.openTextDocument(reviewedArtifact);
+      const reviewedGraph = parseGraphFromText(document.getText());
+      if (reviewedGraph) {
+        GraphPreviewPanel.show(context, reviewedGraph, `${path.basename(source.fileName)} · reviewed`);
+        outputChannel.show(true);
+        outputChannel.appendLine(`[graph-preview] reviewed artifact: ${reviewedArtifact.fsPath}`);
+        return;
+      }
+    }
+
     const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
       content: source.getText(),
       persist: false,
@@ -251,7 +492,6 @@ async function openGraphPreview(
     }
   }
 
-  const artifactRoot = await resolveArtifactRoot();
   const candidates: vscode.Uri[] = [];
 
   if (artifactRoot) {
@@ -288,8 +528,18 @@ async function openGraphPreview(
   vscode.window.showWarningMessage('No generated graph artifact was found yet.');
 }
 
+function deriveValidationStatus(summary: { gaps: number; conflicts: number; warnings: number; violations: number }): string {
+  return summary.violations > 0 || summary.conflicts > 0 || summary.gaps > 0
+    ? 'draft'
+    : summary.warnings > 0
+      ? 'ready'
+      : 'validated';
+}
+
 async function importSourceProject(
   context: vscode.ExtensionContext,
+  diagnostics: vscode.DiagnosticCollection,
+  registry: McpRegistry,
   outputChannel: vscode.OutputChannel,
   refreshViews: () => Promise<void>,
 ): Promise<void> {
@@ -324,7 +574,12 @@ async function importSourceProject(
       title: `Importing ${projectName} into source-to-semantic state`,
       cancellable: false,
     },
-    async () => {
+    async (progress) => {
+      const report = (message: string, increment = 0): void => {
+        progress.report({ message, increment });
+        outputChannel.appendLine(`[source-to-semantic] ${message}`);
+      };
+
       const result = await importSourceProjectState({
         projectRoot: sourceRoot,
         projectName,
@@ -332,6 +587,122 @@ async function importSourceProject(
       });
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.semanticPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.graphPath}`);
+      const semanticDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(result.semanticPath));
+
+      const validationPolicy = await resolveValidationPolicyText(registry);
+      const semanticText = await fs.readFile(result.semanticPath, 'utf8');
+      report('Running MCP validation on imported semantic...');
+      const validationResponse = await registry.callTool('validator', 'validate_semantic_markdown', {
+        content: semanticText,
+        policyText: validationPolicy,
+        persist: false,
+      });
+      const validationPayload = asValidationPayload(validationResponse.json);
+      const validationLines = publishValidationDiagnostics(
+        diagnostics,
+        semanticDocument,
+        validationPayload,
+        'AI Native Validation',
+      );
+      for (const line of validationLines) {
+        outputChannel.appendLine(line);
+      }
+
+      report(`Running AI review with ${getConfig().reviewProvider}...`);
+      const config = getConfig();
+      const agenticReview = await runAgenticReview({
+        provider: config.reviewProvider,
+        mode: config.reviewMode,
+        model: config.reviewModel,
+        endpoint: config.reviewEndpoint,
+        commandId: config.reviewCommandId,
+        commandArgsJson: config.reviewCommandArgsJson,
+        promptFileName: config.reviewPromptFileName,
+        workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+        sourcePath: result.semanticPath,
+        semanticSource: semanticText,
+        expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
+        graph: result.graph,
+        validation: {
+          status: deriveValidationStatus(validationPayload.summary),
+          summary: validationPayload.summary,
+          issues: validationPayload.issues,
+        },
+      });
+
+      const reviewArtifactPath = path.join(outputDir, 'source.review.json');
+      const reviewMarkdownPath = path.join(outputDir, 'source.review.md');
+      await fs.writeFile(
+        reviewArtifactPath,
+        JSON.stringify(
+          {
+            sourcePath: result.semanticPath,
+            provider: agenticReview.provider,
+            mode: agenticReview.mode,
+            model: agenticReview.model,
+            bridgeAction: agenticReview.bridgeAction,
+            summary: agenticReview.summary,
+            notes: agenticReview.notes,
+            issues: agenticReview.issues,
+            refinedSemanticMarkdown: agenticReview.refinedSemanticMarkdown,
+            validation: validationPayload,
+          },
+          null,
+          2,
+        ) + '\n',
+        'utf8',
+      );
+      await fs.writeFile(
+        reviewMarkdownPath,
+        [
+          '# AI Review',
+          '',
+          `- provider: ${agenticReview.provider}`,
+          `- mode: ${agenticReview.mode}`,
+          `- model: ${agenticReview.model}`,
+          `- bridge: ${agenticReview.bridgeAction}`,
+          '',
+          '## Summary',
+          agenticReview.summary,
+          '',
+          '## Notes',
+          ...agenticReview.notes.map((note) => `- ${note}`),
+          '',
+          '## Issues',
+          ...agenticReview.issues.map((issue) => `- [${issue.severity}] ${issue.code}: ${issue.message}`),
+          '',
+          '## Validation summary',
+          JSON.stringify(validationPayload.summary, null, 2),
+        ].join('\n'),
+        'utf8',
+      );
+
+      if (agenticReview.refinedSemanticMarkdown) {
+        const reviewedSemanticPath = path.join(outputDir, 'source.semantic.reviewed.md');
+        await fs.writeFile(reviewedSemanticPath, agenticReview.refinedSemanticMarkdown, 'utf8');
+        if (result.createdSemantic) {
+          await fs.writeFile(result.semanticPath, agenticReview.refinedSemanticMarkdown, 'utf8');
+        }
+        outputChannel.appendLine(`[source-to-semantic] wrote ${reviewedSemanticPath}`);
+      }
+
+      const reviewedGraph = applyReviewToGraph(result.graph, agenticReview);
+      const reviewedGraphPath = path.join(outputDir, 'source.graph.reviewed.json');
+      await fs.writeFile(reviewedGraphPath, JSON.stringify(reviewedGraph, null, 2) + '\n', 'utf8');
+      outputChannel.appendLine(`[source-to-semantic] wrote ${reviewedGraphPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${reviewArtifactPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${reviewMarkdownPath}`);
+      outputChannel.appendLine(
+        `[source-to-semantic-review] provider=${agenticReview.provider} mode=${agenticReview.mode} model=${agenticReview.model}`,
+      );
+      outputChannel.appendLine(`  bridge: ${agenticReview.bridgeAction}`);
+      outputChannel.appendLine(`  summary: ${agenticReview.summary}`);
+      for (const note of agenticReview.notes) {
+        outputChannel.appendLine(`  note: ${note}`);
+      }
+      if (agenticReview.issues.length > 0) {
+        outputChannel.appendLine(`  issues: ${agenticReview.issues.length}`);
+      }
     },
   );
 
@@ -340,8 +711,8 @@ async function importSourceProject(
   await vscode.window.showTextDocument(semanticDocument, { preview: false });
 
   try {
-    const graphPath = path.join(outputDir, 'source.graph.json');
-    const rawGraph = await fs.readFile(graphPath, 'utf8');
+    const graphPath = path.join(outputDir, 'source.graph.reviewed.json');
+    const rawGraph = await fs.readFile(graphPath, 'utf8').catch(async () => fs.readFile(path.join(outputDir, 'source.graph.json'), 'utf8'));
     const graph = JSON.parse(rawGraph) as {
       schemaVersion?: string;
       nodes: Array<{ id: string; type: string; name: string; description?: string; sourceRef?: string }>;
@@ -477,9 +848,19 @@ function publishValidationDiagnostics(
   diagnostics: vscode.DiagnosticCollection,
   document: vscode.TextDocument,
   payload: {
-    issues: Array<{ severity?: string; code?: string; message?: string; sourceRef?: string; nodeId?: string }>;
+    issues: Array<{
+      severity?: string;
+      code?: string;
+      message?: string;
+      sourceRef?: string;
+      sourceLine?: number;
+      sourceColumn?: number;
+      nodeId?: string;
+      sourceLabel?: string;
+    }>;
     summary: { gaps: number; conflicts: number; warnings: number; violations: number };
   },
+  sourceLabel = 'AI Native Semantic Workflow',
 ): string[] {
   const diagnosticsList: vscode.Diagnostic[] = [];
   const logLines: string[] = [];
@@ -490,12 +871,23 @@ function publishValidationDiagnostics(
       continue;
     }
     diagnosticsList.push(resolved.diagnostic);
+    const effectiveSourceLabel = issue.sourceLabel ?? sourceLabel;
+    resolved.diagnostic.source = effectiveSourceLabel;
     const location = `${document.fileName}:${resolved.diagnostic.range.start.line + 1}:${resolved.diagnostic.range.start.character + 1}`;
-    logLines.push(`  ${issue.severity?.toUpperCase() ?? 'INFO'} ${issue.code ?? 'issue'} (${location}): ${issue.message ?? ''}`);
+    logLines.push(`  [${effectiveSourceLabel}] ${issue.severity?.toUpperCase() ?? 'INFO'} ${issue.code ?? 'issue'} (${location}): ${issue.message ?? ''}`);
   }
-
   diagnostics.set(document.uri, diagnosticsList);
   return logLines;
+}
+
+async function resolveValidationPolicyText(registry: McpRegistry): Promise<string> {
+  const response = await registry.callTool('validator', 'get_validation_policy', {});
+  const payload = asObject(response.json);
+  const policyText = typeof payload?.policyText === 'string' ? payload.policyText : undefined;
+  if (policyText) {
+    return policyText;
+  }
+  throw new Error('Unable to load validation policy from the MCP validator.');
 }
 
 function issueToDiagnostic(
@@ -514,7 +906,6 @@ function issueToDiagnostic(
     [issue.code, issue.message].filter(Boolean).join(': '),
     severity,
   );
-  diagnostic.source = 'AI Native Semantic Workflow';
   return { diagnostic, range };
 }
 
@@ -731,18 +1122,20 @@ function parseGraphFromText(text: string): ReturnType<typeof asGraphObject> {
 function asValidationPayload(
   value: unknown,
 ): {
-  issues: Array<{ severity?: string; code?: string; message?: string; sourceRef?: string; nodeId?: string }>;
+  issues: Array<{ severity?: string; code?: string; message?: string; sourceRef?: string; sourceLine?: number; sourceColumn?: number; nodeId?: string }>;
   summary: { gaps: number; conflicts: number; warnings: number; violations: number };
+  graph: unknown;
 } {
   const object = asObject(value) ?? {};
   const summaryObject = asObject(object.summary) ?? {};
   return {
-    issues: Array.isArray(object.issues) ? (object.issues as Array<{ severity?: string; code?: string; message?: string; sourceRef?: string; nodeId?: string }>) : [],
+    issues: Array.isArray(object.issues) ? (object.issues as Array<{ severity?: string; code?: string; message?: string; sourceRef?: string; sourceLine?: number; sourceColumn?: number; nodeId?: string }>) : [],
     summary: {
       gaps: typeof summaryObject.gaps === 'number' ? summaryObject.gaps : 0,
       conflicts: typeof summaryObject.conflicts === 'number' ? summaryObject.conflicts : 0,
       warnings: typeof summaryObject.warnings === 'number' ? summaryObject.warnings : 0,
       violations: typeof summaryObject.violations === 'number' ? summaryObject.violations : 0,
     },
+    graph: object.graph,
   };
 }

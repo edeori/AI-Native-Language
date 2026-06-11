@@ -1,14 +1,14 @@
 import * as vscode from 'vscode';
-import { getConfig } from '../config.js';
-import type { McpRegistry, ServerConnectionStatus } from '../mcpRegistry.js';
-import { ensureMcpConfigFile, resolveMcpConfigUri, writeMcpConfigFile } from '../mcpConfigStore.js';
-
-type ConnectionStatus = Array<ServerConnectionStatus>;
+import { defaultReviewMode, defaultReviewModel, getConfig } from '../config.js';
+import { writeMcpConfigFile } from '../mcpConfigStore.js';
+import { probeAgentRuntime, resolveAgentCliPath } from '../agenticReview.js';
+import type { McpRegistry } from '../mcpRegistry.js';
 
 export class ConfigurationPanel {
   private static currentPanel: ConfigurationPanel | undefined;
-  private lastConnectionStatus: ConnectionStatus = [];
   private currentValues = getConfig();
+  private lastMcpStatus: string[] = [];
+  private lastAgentProbe: string[] = [];
 
   static show(
     context: vscode.ExtensionContext,
@@ -23,7 +23,7 @@ export class ConfigurationPanel {
 
     const panel = vscode.window.createWebviewPanel(
       'aiNativeConfiguration',
-      'AI Native Configuration',
+      'AI Agent Configuration',
       vscode.ViewColumn.One,
       {
         enableScripts: true,
@@ -49,12 +49,12 @@ export class ConfigurationPanel {
           await this.saveSettings(message.values);
           return;
         }
-        if (message?.command === 'testConnections') {
-          await this.testConnections();
+        if (message?.command === 'test-mcp') {
+          await this.testMcpServers();
           return;
         }
-        if (message?.command === 'openMcpConfig') {
-          await this.openMcpConfig();
+        if (message?.command === 'test-agent') {
+          await this.testAgent();
           return;
         }
       },
@@ -76,14 +76,8 @@ export class ConfigurationPanel {
   private render(): void {
     const nonce = createNonce();
     const config = this.currentValues;
-    const currentStatus = {
-      semanticCoreUrl: config.semanticCoreUrl,
-      validatorUrl: config.validatorUrl,
-      compilerUrl: config.compilerUrl,
-      artifactRoot: config.artifactRoot,
-      javaBasePackage: config.javaBasePackage,
-      autoValidateOnSave: config.autoValidateOnSave,
-    };
+    const agentCliPath = resolveAgentCliPath(config.reviewProvider);
+    const agentStatus = agentCliPath ? `available at ${agentCliPath}` : 'not found on this machine';
 
     this.panel.webview.html = /* html */ `<!doctype html>
 <html lang="en">
@@ -91,13 +85,13 @@ export class ConfigurationPanel {
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Native Configuration</title>
+    <title>AI Agent Configuration</title>
     <style>
       body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 24px; }
       .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
       .card { border: 1px solid var(--vscode-panel-border); border-radius: 10px; padding: 16px; background: var(--vscode-editor-background); }
       label { display: block; margin-top: 12px; font-weight: 600; }
-      input[type="text"] { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 8px; }
+      input[type="text"], select { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 8px; }
       .row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
       .actions { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
       button { padding: 8px 12px; }
@@ -109,126 +103,131 @@ export class ConfigurationPanel {
     </style>
   </head>
   <body>
-    <h2>AI Native MCP Configuration</h2>
-    <p class="muted">This panel controls the remote MCP endpoints used by the VSCode extension.</p>
+    <h2>AI Agent Configuration</h2>
+    <p class="muted">Choose the agent once. Configure MCP endpoints below.</p>
     <div class="grid">
       <div class="card">
-        <h3>Endpoints</h3>
+        <label for="reviewProvider">AI agent</label>
+        <select id="reviewProvider">
+          <option value="codex" ${config.reviewProvider !== 'claude' ? 'selected' : ''}>codex</option>
+          <option value="claude" ${config.reviewProvider === 'claude' ? 'selected' : ''}>claude</option>
+        </select>
+        <p class="muted">The plugin auto-selects the review path for this agent.</p>
+        <p class="muted"><strong>Agent CLI:</strong> ${escapeHtml(agentStatus)}</p>
+      </div>
+      <div class="card">
         <label for="semanticCoreUrl">semantic-core URL</label>
         <input id="semanticCoreUrl" type="text" value="${escapeAttr(config.semanticCoreUrl)}" />
+
         <label for="validatorUrl">validator URL</label>
         <input id="validatorUrl" type="text" value="${escapeAttr(config.validatorUrl)}" />
+
         <label for="compilerUrl">compiler URL</label>
         <input id="compilerUrl" type="text" value="${escapeAttr(config.compilerUrl)}" />
+
         <label for="artifactRoot">artifact root</label>
         <input id="artifactRoot" type="text" value="${escapeAttr(config.artifactRoot)}" />
+
         <label for="javaBasePackage">Java base package</label>
         <input id="javaBasePackage" type="text" value="${escapeAttr(config.javaBasePackage)}" />
-        <div class="row">
+
+        <label class="row">
           <input id="autoValidateOnSave" type="checkbox" ${config.autoValidateOnSave ? 'checked' : ''} />
-          <label for="autoValidateOnSave">auto validate on save</label>
-        </div>
-        <div class="actions">
-          <button id="save">Save</button>
-          <button id="testConnections">Test connections</button>
-          <button id="openMcpConfig">Open MCP config file</button>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Current values</h3>
-        <pre id="current">${escapeHtml(JSON.stringify(currentStatus, null, 2))}</pre>
-      </div>
-      <div class="card">
-        <h3>Connection status</h3>
-        ${this.renderConnectionStatus()}
+          <span>Auto validate on save</span>
+        </label>
       </div>
     </div>
+    <div class="actions">
+      <button id="save">Save</button>
+      <button id="testMcp">Test MCP servers</button>
+      <button id="testAgent">Test AI agent</button>
+    </div>
+    <pre>${escapeHtml(this.lastMcpStatus.join('\n') || 'MCP test not run yet.')}</pre>
+    <pre>${escapeHtml(this.lastAgentProbe.join('\n') || 'AI agent test not run yet.')}</pre>
     <script nonce="${nonce}">
       const vscode = acquireVsCodeApi();
-      document.getElementById('save').addEventListener('click', () => {
+      const reviewProvider = document.getElementById('reviewProvider');
+      const semanticCoreUrl = document.getElementById('semanticCoreUrl');
+      const validatorUrl = document.getElementById('validatorUrl');
+      const compilerUrl = document.getElementById('compilerUrl');
+      const artifactRoot = document.getElementById('artifactRoot');
+      const javaBasePackage = document.getElementById('javaBasePackage');
+      const autoValidateOnSave = document.getElementById('autoValidateOnSave');
+      const saveButton = document.getElementById('save');
+      const testMcpButton = document.getElementById('testMcp');
+      const testAgentButton = document.getElementById('testAgent');
+      saveButton.addEventListener('click', () => {
         vscode.postMessage({
           command: 'save',
           values: {
-            semanticCoreUrl: document.getElementById('semanticCoreUrl').value,
-            validatorUrl: document.getElementById('validatorUrl').value,
-            compilerUrl: document.getElementById('compilerUrl').value,
-            artifactRoot: document.getElementById('artifactRoot').value,
-            javaBasePackage: document.getElementById('javaBasePackage').value,
-            autoValidateOnSave: document.getElementById('autoValidateOnSave').checked,
+            reviewProvider: reviewProvider.value,
+            semanticCoreUrl: semanticCoreUrl.value,
+            validatorUrl: validatorUrl.value,
+            compilerUrl: compilerUrl.value,
+            artifactRoot: artifactRoot.value,
+            javaBasePackage: javaBasePackage.value,
+            autoValidateOnSave: autoValidateOnSave.checked
           }
         });
       });
-      document.getElementById('testConnections').addEventListener('click', () => {
-        vscode.postMessage({ command: 'testConnections' });
-      });
-      document.getElementById('openMcpConfig').addEventListener('click', () => {
-        vscode.postMessage({ command: 'openMcpConfig' });
-      });
+      testMcpButton.addEventListener('click', () => vscode.postMessage({ command: 'test-mcp' }));
+      testAgentButton.addEventListener('click', () => vscode.postMessage({ command: 'test-agent' }));
     </script>
   </body>
 </html>`;
   }
 
-  private renderConnectionStatus(): string {
-    if (this.lastConnectionStatus.length === 0) {
-      return `<p class="muted">Run <strong>Test connections</strong> to verify the MCP endpoints.</p>`;
-    }
-
-    const items = this.lastConnectionStatus
-      .map((item) => {
-        const icon = item.connected ? '✅' : '❌';
-        const label = item.connected ? 'connected' : 'failed';
-        const details = item.connected ? `tools: ${item.tools ?? 0}` : escapeHtml(item.error ?? 'unknown error');
-        return `<li><span class="status-icon">${icon}</span> <strong>${escapeHtml(item.server)}</strong> — ${label}<br/><code>${escapeHtml(item.url)}</code><br/><span class="muted">${details}</span></li>`;
-      })
-      .join('');
-
-    return `<ul class="status-list">${items}</ul>`;
-  }
-
-  private async testConnections(): Promise<void> {
-    try {
-      this.lastConnectionStatus = await this.registry.pingAll();
-      this.render();
-      await this.onChange?.();
-      const connectedCount = this.lastConnectionStatus.filter((item) => item.connected).length;
-      const total = this.lastConnectionStatus.length;
-      if (connectedCount === total) {
-        void vscode.window.showInformationMessage(`All MCP servers are reachable (${connectedCount}/${total}).`);
-      } else {
-        void vscode.window.showWarningMessage(`Some MCP servers are unreachable (${connectedCount}/${total}).`);
-      }
-    } catch (error) {
-      void vscode.window.showErrorMessage(`Failed to test MCP connections: ${String(error)}`);
-    }
-  }
-
-  private async openMcpConfig(): Promise<void> {
-    const configUri = (await ensureMcpConfigFile()) ?? resolveMcpConfigUri();
-    if (!configUri) {
-      vscode.window.showWarningMessage('Open a workspace first to access the MCP config file.');
-      return;
-    }
-
-    const document = await vscode.workspace.openTextDocument(configUri);
-    await vscode.window.showTextDocument(document, { preview: false });
-  }
-
   private async saveSettings(values: Record<string, unknown>): Promise<void> {
+    const reviewProvider = String(values.reviewProvider ?? 'codex') as 'codex' | 'claude';
     const persistedValues = {
-      semanticCoreUrl: String(values.semanticCoreUrl ?? ''),
-      validatorUrl: String(values.validatorUrl ?? ''),
-      compilerUrl: String(values.compilerUrl ?? ''),
-      artifactRoot: String(values.artifactRoot ?? '.ai-native'),
-      javaBasePackage: String(values.javaBasePackage ?? 'com.example.generated'),
-      autoValidateOnSave: Boolean(values.autoValidateOnSave),
+      ...this.currentValues,
+      semanticCoreUrl: String(values.semanticCoreUrl ?? this.currentValues.semanticCoreUrl),
+      validatorUrl: String(values.validatorUrl ?? this.currentValues.validatorUrl),
+      compilerUrl: String(values.compilerUrl ?? this.currentValues.compilerUrl),
+      artifactRoot: String(values.artifactRoot ?? this.currentValues.artifactRoot),
+      javaBasePackage: String(values.javaBasePackage ?? this.currentValues.javaBasePackage),
+      autoValidateOnSave: Boolean(values.autoValidateOnSave ?? this.currentValues.autoValidateOnSave),
+      reviewProvider,
+      reviewMode: defaultReviewMode(reviewProvider),
+      reviewModel: defaultReviewModel(reviewProvider),
     };
 
     await writeMcpConfigFile(persistedValues);
     this.currentValues = persistedValues;
     await this.onChange?.();
-    vscode.window.showInformationMessage('AI Native MCP configuration saved.');
+    vscode.window.showInformationMessage('AI agent configuration saved.');
     this.render();
+  }
+
+  private async testMcpServers(): Promise<void> {
+    const results = await this.registry.pingAll();
+    this.lastMcpStatus = results.map((result) => {
+      if (result.connected) {
+        return `${result.server}: ok (${result.tools ?? 0} tools)`;
+      }
+      return `${result.server}: failed (${result.error ?? 'unreachable'})`;
+    });
+    this.render();
+    vscode.window.showInformationMessage('MCP connection test completed.');
+  }
+
+  private async testAgent(): Promise<void> {
+    const probe = await probeAgentRuntime(
+      this.currentValues.reviewProvider,
+      this.currentValues.reviewModel,
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    );
+    this.lastAgentProbe = [
+      `${probe.provider}: ${probe.ok ? 'ok' : 'failed'}`,
+      probe.bridgeAction,
+      probe.ok ? (probe.rawOutput ? probe.rawOutput.slice(0, 1200) : 'OK') : (probe.error ?? 'unknown error'),
+    ];
+    this.render();
+    if (probe.ok) {
+      vscode.window.showInformationMessage(`${probe.provider} agent test completed.`);
+    } else {
+      vscode.window.showWarningMessage(`${probe.provider} agent test failed.`);
+    }
   }
 }
 

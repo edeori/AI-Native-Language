@@ -1,6 +1,7 @@
 import type { CanonicalGraph, SemanticDocument, ValidationIssue, ValidationReport } from './models.js';
 import { isEnterpriseLikeDocument, loadReferenceCorpus } from './reference-corpus.js';
 import { getSectionItemLine, getSectionItems, getSectionText, hasRequiredSections } from './semantic-markdown.js';
+import { validationPolicyText } from './validation-policy.js';
 
 function normalizeText(value: string): string {
   return value.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -94,7 +95,10 @@ function assessSecurity(document: SemanticDocument, policyText: string | undefin
     );
   }
 
-  if (containsAny(combined, ['ui', 'api', 'role', 'permission']) && !containsAny(combined, ['authorization', 'role', 'permission'])) {
+  if (
+    containsAny(combined, ['ui', 'api', 'role', 'permission', 'access control', 'ownership']) &&
+    !containsAny(combined, ['authorization', 'authorize', 'authz', 'role', 'permission', 'access control', 'ownership'])
+  ) {
     issues.push(
       createIssue(
         'violation',
@@ -198,7 +202,7 @@ export function validateSemanticDocument(
   assessSectionCompleteness(document, issues);
   assessQuality(document, issues);
   assessContradictions(document, issues);
-  assessSecurity(document, options?.policyText, issues);
+  assessSecurity(document, options?.policyText ?? validationPolicyText, issues);
   assessDependencies(document, issues);
 
   const gaps = issues.filter((issue) => issue.severity === 'gap').length;

@@ -18,9 +18,9 @@ export class McpTreeDataProvider implements vscode.TreeDataProvider<McpTreeItem>
 
   async getChildren(element?: McpTreeItem): Promise<McpTreeItem[]> {
     return [
-      new McpTreeItem('Configure MCP servers', 'Open the connection form and test endpoint availability.', vscode.TreeItemCollapsibleState.None, {
+      new McpTreeItem('Configure MCP & AI agent', 'Open the agent selector and the MCP endpoints.', vscode.TreeItemCollapsibleState.None, {
         command: commandIds.openConfiguration,
-        title: 'Configure MCP servers',
+        title: 'Configure MCP & AI agent',
       }),
       ...(await this.renderConnections()),
     ];
@@ -35,7 +35,7 @@ export class McpTreeDataProvider implements vscode.TreeDataProvider<McpTreeItem>
       const description = item.connected ? `tools: ${item.tools ?? 0}` : item.error ?? 'unreachable';
       return new McpTreeItem(item.server, description, vscode.TreeItemCollapsibleState.None, {
         command: commandIds.openConfiguration,
-        title: 'Open MCP configuration',
+        title: 'Open MCP & AI agent configuration',
       }, icon);
     });
   }

@@ -51,7 +51,7 @@
       },
       {
         "command": "aiNative.openConfiguration",
-        "title": "AI Native: Configure MCP Servers"
+        "title": "AI Native: Configure AI Agent"
       },
       {
         "command": "aiNative.openTutorial",
@@ -129,7 +129,7 @@
       "activitybar": [
         {
           "id": "aiNativeSemantic",
-          "title": "AI Native",
+          "title": "AI Agent",
           "icon": "media/ai-native.svg"
         }
       ]

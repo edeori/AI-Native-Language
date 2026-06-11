@@ -1,0 +1,18 @@
+export const validationPolicyText = [
+  '# AI Native validation policy',
+  '',
+  'This policy is owned by the MCP validation layer. Do not depend on workspace-local markdown files.',
+  '',
+  'The semantic slice must be checked against these expectations:',
+  '',
+  '- describe the system boundary, purpose, interfaces, processes, security, dependencies, persistence, examples, and acceptance criteria',
+  '- make inbound interfaces, outbound dependencies, persistence, and security boundaries explicit',
+  '- keep outbound services and adapters modeled as dependencies, not inbound interfaces',
+  '- require delete, read, write, list, search, and synchronization flows to be described when they exist',
+  '- make authentication, authorization, ownership, and read/write access rules explicit',
+  '- keep audit, persistence, and external calls in the correct execution order',
+  '- keep module boundaries explicit when the slice looks layered or modular',
+  '- avoid inferring unsupported infrastructure or components unless the source makes them explicit',
+  '- make every important change traceable to a semantic source line or section',
+  '- if a requirement is ambiguous, surface it as a warning instead of silently assuming intent',
+].join('\n');

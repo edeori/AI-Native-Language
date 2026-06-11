@@ -107,7 +107,7 @@ export class DashboardPanel {
         <div>semantic-core: <code>${escapeHtml(config.semanticCoreUrl)}</code></div>
         <div>validator: <code>${escapeHtml(config.validatorUrl)}</code></div>
         <div>compiler: <code>${escapeHtml(config.compilerUrl)}</code></div>
-        <button data-command="${commandIds.openConfiguration}">Configure MCP servers</button>
+        <button data-command="${commandIds.openConfiguration}">Configure MCP & AI agent</button>
         <button data-command="${commandIds.refreshAll}">Refresh views</button>
       </div>
       <div class="card">

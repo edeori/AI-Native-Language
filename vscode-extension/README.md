@@ -14,7 +14,7 @@ It is intentionally thin:
 - a dedicated activity bar container
 - Actions, Inputs, Model, Generate, Review, and MCP views under the same AI Native icon
 - a sidebar Actions view with the primary workflow buttons
-- a dedicated MCP configuration panel
+- a compact AI agent configuration panel
 - a source-to-semantic import flow for turning an existing source repository into an editable learning state
 - commands for validation, graph generation, and Spring Boot generation
 - remote MCP configuration through a global MCP config file
@@ -26,28 +26,24 @@ It is intentionally thin:
 - **Model**: parse, validate, and inspect the canonical graph
 - **Generate**: produce the Spring Boot skeleton and inspect generated files
 - **Review**: browse local artifacts and review outputs
-- **MCP**: check connections and open the MCP configuration panel
+- **MCP**: check connections and open the agent selector
 
 ## Commands
 
 - `AI Native: Open Actions View`
-- `AI Native: Configure MCP Servers`
+- `AI Native: Configure AI Agent`
 - `AI Native: Open Tutorial`
 - `AI Native: Refresh Views`
 - `AI Native: Validate Active Semantic Markdown`
 - `AI Native: Generate Canonical Graph`
 - `AI Native: Generate Spring Boot Skeleton`
 - `AI Native: Open Artifact Folder`
-- `AI Native: Show MCP Status`
 - `AI Native: Import Source Project`
 
 ## Settings
 
-The extension reads its remote services from a global MCP config file, and it can also write them from the built-in configuration panel:
+The extension reads its remote services from a global MCP config file. The built-in configuration panel now only chooses the AI agent:
 
-- `aiNative.mcp.semanticCoreUrl`
-- `aiNative.mcp.validatorUrl`
-- `aiNative.mcp.compilerUrl`
 - `aiNative.artifactRoot`
 - `aiNative.java.basePackage`
 - `aiNative.autoValidateOnSave`
@@ -103,13 +99,12 @@ Default URLs point at the local Docker ports:
 4. Keep the artifacts local or in the mounted workspace volume.
 5. Use the extension as the control plane, not as the execution engine.
 
-## Tutorial 4: configure MCP servers
+## Tutorial 4: choose the AI agent
 
-1. Open **AI Native: Configure MCP Servers**.
-2. Set the `semantic-core`, `validator`, and `compiler` URLs.
-3. Optionally change the artifact root and Java base package.
-4. Save the settings into the global MCP config file.
-5. Re-run the connection test in the MCP section.
+1. Open **AI Native: Configure AI Agent**.
+2. Pick `codex` or `claude`.
+3. Save the setting.
+4. Re-run the graph / review flow with that agent selection.
 
 ## Build the extension package
 

@@ -8,3 +8,4 @@ export * from './compiler.js';
 export * from './mcp-runtime.js';
 export * from './reference-corpus.js';
 export * from './source-learning.js';
+export * from './validation-policy.js';

@@ -155,11 +155,10 @@ export class GraphPreviewPanel {
   private render(): void {
     const cspSource = this.panel.webview.cspSource;
     const nonce = createNonce();
-    const layout = layoutRelationGraph(this.graph);
-    const svg = renderSvg(layout);
     const insights = deriveInsights(this.graph);
     const graphJson = escapeHtml(JSON.stringify(this.graph, null, 2));
     const summary = `nodes=${this.graph.nodes.length}, edges=${this.graph.edges.length}`;
+    const schematic = renderSchematic(insights);
 
     this.panel.webview.html = /* html */ `<!doctype html>
 <html lang="en">
@@ -271,12 +270,172 @@ export class GraphPreviewPanel {
         overflow: auto;
         padding: 8px;
       }
+      .schematic {
+        display: grid;
+        gap: 14px;
+        min-width: 1180px;
+      }
+      .schematic-topbar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .schematic-rail {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(220px, 1fr));
+        gap: 12px;
+        align-items: stretch;
+      }
+      .schematic-column {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 16px;
+        background: var(--vscode-sideBar-background);
+        padding: 12px;
+        min-height: 150px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .schematic-top-note {
+        min-height: 92px;
+      }
+      .schematic-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .schematic-title {
+        font-size: 13px;
+        font-weight: 800;
+      }
+      .schematic-subtitle {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.35;
+      }
+      .schematic-items {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .schematic-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        padding: 5px 10px;
+        background: var(--vscode-editor-inactiveSelectionBackground);
+        font-size: 12px;
+        line-height: 1.2;
+        max-width: 100%;
+      }
+      .schematic-pill strong {
+        font-weight: 700;
+      }
+      .schematic-arrow-row {
+        display: grid;
+        grid-template-columns: repeat(7, auto);
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+        color: var(--vscode-descriptionForeground);
+        font-size: 22px;
+        line-height: 1;
+        margin-top: -4px;
+      }
+      .schematic-arrow-label {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--vscode-descriptionForeground);
+        text-align: center;
+      }
+      .schematic-footer {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 12px;
+      }
+      .schematic-note {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 14px;
+        background: var(--vscode-sideBar-background);
+        padding: 12px;
+      }
+      .schematic-note-title {
+        font-weight: 800;
+        margin-bottom: 8px;
+      }
+      .schematic-relations {
+        display: grid;
+        gap: 8px;
+      }
+      .schematic-relation {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        line-height: 1.35;
+      }
+      .schematic-relation code {
+        flex: 0 0 auto;
+        font-size: 11px;
+        background: var(--vscode-editor-inactiveSelectionBackground);
+        padding: 2px 6px;
+        border-radius: 999px;
+      }
+      .schematic-flow-summary {
+        display: grid;
+        gap: 8px;
+      }
       .flow-panel {
         margin-top: 14px;
         border: 1px solid var(--vscode-panel-border);
         border-radius: 12px;
         padding: 12px;
         background: var(--vscode-sideBar-background);
+      }
+      .flow-grid {
+        display: grid;
+        gap: 12px;
+      }
+      .flow-card {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 12px;
+        padding: 12px;
+        background: var(--vscode-editor-background);
+      }
+      .flow-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+      .flow-card-title {
+        font-size: 14px;
+        font-weight: 800;
+      }
+      .flow-card-subtitle {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .flow-card-steps {
+        display: grid;
+        gap: 6px;
+      }
+      .flow-step {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        line-height: 1.35;
+      }
+      .flow-step code {
+        flex: 0 0 auto;
+        font-size: 11px;
+        background: var(--vscode-editor-inactiveSelectionBackground);
+        padding: 2px 6px;
+        border-radius: 999px;
       }
       .timeline {
         display: flex;
@@ -445,31 +604,22 @@ export class GraphPreviewPanel {
 
     <div class="legend">
       <div class="legend-group">
-        ${layout.regionLegend
-          .map(
-            (entry) =>
-              `<span class="legend-item"><span class="swatch" style="background:${entry.color}"></span>${escapeHtml(entry.label)}</span>`,
-          )
-          .join('')}
-      </div>
-      <div class="legend-group">
-        ${layout.edgeLegend
-          .map(
-            (entry) =>
-              `<span class="legend-item"><span class="swatch" style="background:${entry.color}"></span>${escapeHtml(entry.label)}</span>`,
-          )
-          .join('')}
+        <span class="legend-item"><span class="swatch" style="background:#0ea5e9"></span>Ingress</span>
+        <span class="legend-item"><span class="swatch" style="background:#ef4444"></span>Security gate</span>
+        <span class="legend-item"><span class="swatch" style="background:#22c55e"></span>Service core</span>
+        <span class="legend-item"><span class="swatch" style="background:#8b5cf6"></span>External call</span>
+        <span class="legend-item"><span class="swatch" style="background:#f59e0b"></span>Persistence / outcome</span>
       </div>
     </div>
 
     <div class="canvas">
-      ${svg}
+      ${schematic}
     </div>
 
     <div class="flow-panel">
-      <div class="panel-title">Execution path</div>
-      <div class="timeline">
-        ${renderTimeline(insights.flowTrace)}
+      <div class="panel-title">Execution flows</div>
+      <div class="flow-grid">
+        ${renderFlowScenarios(insights.flowScenarios)}
       </div>
     </div>
 
@@ -750,6 +900,151 @@ function renderSvg(layout: ReturnType<typeof layoutRelationGraph>): string {
   `;
 }
 
+function renderSchematic(insights: ReturnType<typeof deriveInsights>): string {
+  const layers = [
+    {
+      title: 'Data Access Layer',
+      subtitle: 'Repositories, databases, stores, and durable state.',
+      items: insights.persistence,
+      accent: '#0ea5e9',
+      empty: 'No persistence boundary found.',
+    },
+    {
+      title: 'Business Logic',
+      subtitle: 'Services, modules, rules, and orchestration.',
+      items: [...insights.services, ...insights.modules, ...insights.security].filter(Boolean),
+      accent: '#22c55e',
+      empty: 'No service or module boundary found.',
+    },
+    {
+      title: 'Flow Logic',
+      subtitle: 'Processes, transformations, and execution steps.',
+      items: [...insights.flowTrace],
+      accent: '#8b5cf6',
+      empty: 'No flow trace found.',
+    },
+    {
+      title: 'Presentation Logic',
+      subtitle: 'REST, UI, inbound endpoints, and entry points.',
+      items: insights.interfaces,
+      accent: '#f59e0b',
+      empty: 'No inbound interface found.',
+    },
+  ];
+
+  const layerCards = layers
+    .map(
+      (layer) => `
+        <div class="schematic-column" style="box-shadow: inset 0 0 0 1px ${layer.accent}22;">
+          <div class="schematic-header">
+            <div class="schematic-title">${escapeHtml(layer.title)}</div>
+            <span class="schematic-pill" style="border: 1px solid ${layer.accent}55;">
+              <strong>${layer.items.length}</strong>
+            </span>
+          </div>
+          <div class="schematic-subtitle">${escapeHtml(layer.subtitle)}</div>
+          <div class="schematic-items">
+            ${
+              layer.items.length > 0
+                ? layer.items.slice(0, 6).map((item) => `<span class="schematic-pill">${escapeHtml(item)}</span>`).join('')
+                : `<span class="schematic-pill">${escapeHtml(layer.empty)}</span>`
+            }
+            ${
+              layer.items.length > 6
+                ? `<span class="schematic-pill">+${layer.items.length - 6} more</span>`
+                : ''
+            }
+          </div>
+        </div>
+      `,
+    )
+    .join('');
+
+  const flowSketch = insights.flowScenarios.slice(0, 3);
+
+  const flowRail = flowSketch
+    .map(
+      (flow) => `
+        <div class="schematic-note">
+          <div class="schematic-note-title">${escapeHtml(flow.title)}</div>
+          <div class="schematic-subtitle">${escapeHtml(flow.summary)}</div>
+        </div>
+      `,
+    )
+    .join('<div style="font-size:18px;color:var(--vscode-descriptionForeground);align-self:center;">→</div>');
+
+  const relations = insights.relationships.slice(0, 5);
+  const relationList =
+    relations.length > 0
+      ? relations
+          .map(
+            (relation) => `
+              <div class="schematic-relation">
+                <code>relation</code>
+                <div>${escapeHtml(relation)}</div>
+              </div>
+            `,
+          )
+          .join('')
+      : '<div class="schematic-subtitle">No explicit relations were inferred from the source slice.</div>';
+
+  const flowTrace = insights.flowTrace.slice(0, 8);
+  const traceList =
+    flowTrace.length > 0
+      ? flowTrace
+          .map(
+            (step, index) => `
+              <div class="schematic-relation">
+                <code>${index + 1}</code>
+                <div>${escapeHtml(step)}</div>
+              </div>
+            `,
+          )
+          .join('')
+      : '<div class="schematic-subtitle">No explicit flow trace was inferred from the source slice.</div>';
+
+  return `
+    <div class="schematic">
+      <div class="schematic-topbar">
+        <div class="schematic-note schematic-top-note">
+          <div class="schematic-note-title">External dependencies</div>
+          <div class="schematic-items">
+            ${insights.externalDependencies.length > 0 ? insights.externalDependencies.slice(0, 5).map((item) => `<span class="schematic-pill">${escapeHtml(item)}</span>`).join('') : '<span class="schematic-pill">none detected</span>'}
+          </div>
+        </div>
+        <div class="schematic-note schematic-top-note">
+          <div class="schematic-note-title">Security gate</div>
+          <div class="schematic-items">
+            ${insights.security.length > 0 ? insights.security.slice(0, 5).map((item) => `<span class="schematic-pill">${escapeHtml(item)}</span>`).join('') : '<span class="schematic-pill">none detected</span>'}
+          </div>
+        </div>
+      </div>
+      <div class="schematic-arrow-row" aria-hidden="true">
+        <span>◉</span><span>→</span><span>◉</span><span>→</span><span>◉</span><span>→</span><span>◉</span>
+      </div>
+      <div class="schematic-arrow-row" style="margin-top:-6px; grid-template-columns: repeat(4, auto);">
+        <div class="schematic-arrow-label">Presentation</div>
+        <div class="schematic-arrow-label">Business</div>
+        <div class="schematic-arrow-label">Flow</div>
+        <div class="schematic-arrow-label">Data access</div>
+      </div>
+      <div class="schematic-rail">${layerCards}</div>
+      <div class="schematic-footer">
+        <div class="schematic-note">
+          <div class="schematic-note-title">Execution sketch</div>
+          <div class="schematic-flow-summary">${flowRail}</div>
+        </div>
+        <div class="schematic-note">
+          <div class="schematic-note-title">Key relations</div>
+          <div class="schematic-relations">${relationList}</div>
+          <div class="schematic-note-title" style="margin-top:12px;">Flow trace</div>
+          <div class="schematic-relations">${traceList}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function regionPanel(region: Region, x: number, y: number, width: number, height: number, label: string): string {
   return `
     <g>
@@ -953,6 +1248,7 @@ function deriveInsights(graph: CanonicalGraph): {
   persistence: string[];
   security: string[];
   relationships: string[];
+  flowScenarios: Array<{ title: string; summary: string; steps: string[] }>;
   flowTrace: string[];
 } {
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node] as const));
@@ -1026,13 +1322,45 @@ function deriveInsights(graph: CanonicalGraph): {
     }),
   );
 
-  const flowTrace = expandFlowTrace(
-    graph.nodes
-      .filter((node) => node.type === 'DataFlow' || node.type === 'Process')
-      .flatMap((node) => splitFlowText(node.name || node.description || '')),
-  );
+  const flowTexts = [
+    ...graph.nodes.filter((node) => node.type === 'DataFlow').map((node) => node.description || node.name),
+    ...graph.nodes.filter((node) => node.type === 'Process').map((node) => node.description || node.name),
+  ].filter(Boolean) as string[];
+  const flowScenarios = buildFlowScenarios(flowTexts);
+  const flowTrace = expandFlowTrace(flowScenarios.flatMap((scenario) => scenario.steps));
 
-  return { externalDependencies, interfaces, modules, services, persistence, security, relationships, flowTrace };
+  return { externalDependencies, interfaces, modules, services, persistence, security, relationships, flowScenarios, flowTrace };
+}
+
+function buildFlowScenarios(flowTexts: string[]): Array<{ title: string; summary: string; steps: string[] }> {
+  const uniqueTexts = unique(flowTexts.map((text) => text.replace(/\s+/g, ' ').trim()).filter(Boolean));
+  if (uniqueTexts.length === 0) {
+    return [
+      {
+        title: 'No explicit flow',
+        summary: 'No explicit data flow or process narrative was described in the semantic source.',
+        steps: ['Add more data_flow and process detail to expose multiple execution paths.'],
+      },
+    ];
+  }
+
+  return uniqueTexts.slice(0, 6).map((text, index) => {
+    const steps = splitFlowText(text);
+    const title = classifyFlowScenarioTitle(text, index);
+    const summary = steps.length > 0 ? steps[0] : text;
+    return { title, summary, steps };
+  });
+}
+
+function classifyFlowScenarioTitle(value: string, index: number): string {
+  const normalized = value.toLowerCase();
+  if (/create|add|new/i.test(normalized)) return `Create flow ${index + 1}`;
+  if (/update|edit|modify/i.test(normalized)) return `Update flow ${index + 1}`;
+  if (/delete|remove|archive/i.test(normalized)) return `Delete flow ${index + 1}`;
+  if (/search|list|query|read/i.test(normalized)) return `Read/search flow ${index + 1}`;
+  if (/auth|login|permission|role|authorize/i.test(normalized)) return `Security flow ${index + 1}`;
+  if (/import|sync|batch|job/i.test(normalized)) return `Batch flow ${index + 1}`;
+  return `Flow ${index + 1}`;
 }
 
 function splitFlowText(value: string): string[] {
@@ -1085,6 +1413,28 @@ function renderList(items: string[]): string {
 
 function renderFlowSteps(items: string[]): string {
   return items.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
+}
+
+function renderFlowScenarios(items: Array<{ title: string; summary: string; steps: string[] }>): string {
+  return items
+    .map(
+      (scenario, index) => `
+        <div class="flow-card">
+          <div class="flow-card-header">
+            <div class="flow-card-title">${escapeHtml(scenario.title)}</div>
+            <div class="flow-card-subtitle">Flow ${index + 1} · ${scenario.steps.length} step${scenario.steps.length === 1 ? '' : 's'}</div>
+          </div>
+          <div class="flow-card-subtitle">${escapeHtml(scenario.summary)}</div>
+          <div class="flow-card-steps">
+            ${scenario.steps
+              .slice(0, 8)
+              .map((step, stepIndex) => `<div class="flow-step"><code>${stepIndex + 1}</code><div>${escapeHtml(step)}</div></div>`)
+              .join('')}
+          </div>
+        </div>
+      `,
+    )
+    .join('');
 }
 
 function renderTimeline(items: string[]): string {
