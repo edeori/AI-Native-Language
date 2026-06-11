@@ -6,7 +6,7 @@ This document describes the current MVP tool contracts for the AI-native semanti
 
 - transport: `stdio`
 - provider-neutral behavior
-- workspace-local artifact persistence
+- workspace-local artifact persistence for graph and generated code
 - JSON output payloads wrapped as text responses
 - strict separation between semantic source, canonical graph, validation, and code generation
 
@@ -55,11 +55,11 @@ This document describes the current MVP tool contracts for the AI-native semanti
 - warnings
 - security violations
 - graph preview
-- local validation report path
+- diagnostics payload for the editor and Problems panel
 
 ### Local artifacts
 
-- `.ai-native/validation/`
+- none by default; validation is surfaced inline in the editor and Problems panel
 
 ## `compiler`
 
@@ -87,4 +87,3 @@ This document describes the current MVP tool contracts for the AI-native semanti
 
 - `.ai-native/generated/`
 - chosen target output directory
-

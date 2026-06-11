@@ -6,6 +6,14 @@ import { serverNames } from './constants.js';
 
 export type RemoteServerId = keyof typeof serverNames;
 
+export interface ServerConnectionStatus {
+  server: RemoteServerId;
+  url: string;
+  connected: boolean;
+  tools?: number;
+  error?: string;
+}
+
 export interface ToolCallResult {
   raw: unknown;
   json: unknown;
@@ -23,15 +31,16 @@ export class McpRegistry {
 
   constructor(private readonly outputChannel: vscode.OutputChannel) {}
 
-  async pingAll(): Promise<Array<{ server: RemoteServerId; ok: boolean; tools?: number; error?: string }>> {
-    const results: Array<{ server: RemoteServerId; ok: boolean; tools?: number; error?: string }> = [];
+  async pingAll(): Promise<Array<ServerConnectionStatus>> {
+    const results: Array<ServerConnectionStatus> = [];
     for (const server of Object.keys(serverNames) as RemoteServerId[]) {
+      const url = this.resolveUrl(server);
       try {
         const connected = await this.ensureClient(server);
         const tools = await connected.client.listTools();
-        results.push({ server, ok: true, tools: tools.tools.length });
+        results.push({ server, url, connected: true, tools: tools.tools.length });
       } catch (error) {
-        results.push({ server, ok: false, error: stringifyError(error) });
+        results.push({ server, url, connected: false, error: stringifyError(error) });
       }
     }
     return results;
@@ -74,13 +83,22 @@ export class McpRegistry {
   }
 
   private async ensureClient(server: RemoteServerId): Promise<ConnectedClient> {
+    const config = getConfig();
+    const url = this.resolveUrl(server, config);
     const existing = this.clients.get(server);
-    if (existing) {
+    if (existing && existing.url === url) {
       return existing;
     }
 
-    const config = getConfig();
-    const url = this.resolveUrl(server, config);
+    if (existing) {
+      try {
+        await existing.transport.close?.();
+      } catch {
+        // ignore close noise on reconnect
+      }
+      this.clients.delete(server);
+    }
+
     const client = new Client(
       {
         name: 'ai-native-vscode-extension',
@@ -94,7 +112,6 @@ export class McpRegistry {
     await client.connect(transport);
     const connected = { client, transport, url };
     this.clients.set(server, connected);
-    this.outputChannel.appendLine(`[mcp] connected to ${server} at ${url}`);
     return connected;
   }
 

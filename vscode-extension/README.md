@@ -12,21 +12,25 @@ It is intentionally thin:
 ## What you get in v0
 
 - a dedicated activity bar container
-- workflow, artifacts, and tutorial views
-- a dashboard panel with quick actions
+- Actions, Inputs, Model, Generate, Review, and MCP views under the same AI Native icon
+- a sidebar Actions view with the primary workflow buttons
 - a dedicated MCP configuration panel
+- a source-to-semantic import flow for turning an existing source repository into an editable learning state
 - commands for validation, graph generation, and Spring Boot generation
-- remote MCP configuration through VSCode settings
+- remote MCP configuration through a global MCP config file
 
 ## Views
 
-- **Workflow**: the recommended execution path from Semantic Markdown to Java output
-- **Artifacts**: local `.ai-native` cache, graph, validation, and generated outputs
-- **Tutorials**: a guided starting point for using the repo and the extension
+- **Actions**: import a source project, start from scratch, validate, generate graph, or generate Spring Boot output
+- **Inputs**: create a semantic source from scratch or run from the active input
+- **Model**: parse, validate, and inspect the canonical graph
+- **Generate**: produce the Spring Boot skeleton and inspect generated files
+- **Review**: browse local artifacts and review outputs
+- **MCP**: check connections and open the MCP configuration panel
 
 ## Commands
 
-- `AI Native: Open Dashboard`
+- `AI Native: Open Actions View`
 - `AI Native: Configure MCP Servers`
 - `AI Native: Open Tutorial`
 - `AI Native: Refresh Views`
@@ -35,10 +39,11 @@ It is intentionally thin:
 - `AI Native: Generate Spring Boot Skeleton`
 - `AI Native: Open Artifact Folder`
 - `AI Native: Show MCP Status`
+- `AI Native: Import Source Project`
 
 ## Settings
 
-The extension reads its remote services from VSCode settings, and it can also write them from the built-in configuration panel:
+The extension reads its remote services from a global MCP config file, and it can also write them from the built-in configuration panel:
 
 - `aiNative.mcp.semanticCoreUrl`
 - `aiNative.mcp.validatorUrl`
@@ -57,26 +62,38 @@ Default URLs point at the local Docker ports:
 
 1. Start the MCP services:
    ```bash
-   docker compose -f docker/compose.yaml up --build
+   ./deploy/remote-sync-and-start.sh
    ```
 2. Open the repository in VSCode.
 3. Open the AI Native view container.
-4. Open the dashboard.
-5. Run **AI Native: Show MCP Status**.
-6. Open `examples/team_knowledge_publishing_service.semantic.md`.
-7. Run **AI Native: Validate Active Semantic Markdown**.
-8. Run **AI Native: Generate Canonical Graph**.
-9. Run **AI Native: Generate Spring Boot Skeleton**.
+4. Use the **Actions** section for the primary workflow buttons.
+5. Open the **Inputs** section if you want to create a structured source file.
+6. Run **AI Native: Create Semantic Source Template**.
+7. Open or save a semantic source.
+8. Run **AI Native: Validate Active Semantic Markdown**.
+   - Findings appear inline in the editor and in the Problems panel.
+9. Run **AI Native: Generate Canonical Graph**.
+10. Run **AI Native: Generate Spring Boot Skeleton**.
+   - If you want a prefilled example, open `examples/simple_notes_service.semantic.md`.
 
 ## Tutorial 2: day-to-day loop
 
 1. Edit a system slice in Semantic Markdown.
-2. Re-run validation.
-3. Inspect security violations and gaps.
-4. Generate the canonical graph.
+2. Re-run graph generation when the input changes.
+3. Re-run validation.
+4. Inspect security violations and gaps.
 5. Generate the Spring Boot skeleton.
 6. Review generated artifacts under `.ai-native/generated/`.
 7. Refine the semantic source if the output diverges.
+
+## Tutorial 2b: source-to-semantic import loop
+
+1. Open the **Actions** view.
+2. Click **Import source project**.
+3. Pick a Java source repository.
+4. The extension writes a new editable learning state under the active target workspace root in `learning-projects/<project>/`. That folder belongs to the project you are importing, not to this tooling repo.
+5. Open `source.semantic.md` and refine it for the project you want to model.
+6. Re-run the import when the source changes to refresh the analysis and suggested semantic slice without overwriting the curated file.
 
 ## Tutorial 3: working with remote MCP servers
 
@@ -91,8 +108,8 @@ Default URLs point at the local Docker ports:
 1. Open **AI Native: Configure MCP Servers**.
 2. Set the `semantic-core`, `validator`, and `compiler` URLs.
 3. Optionally change the artifact root and Java base package.
-4. Save the settings into the workspace configuration.
-5. Re-run **AI Native: Show MCP Status**.
+4. Save the settings into the global MCP config file.
+5. Re-run the connection test in the MCP section.
 
 ## Build the extension package
 
@@ -100,10 +117,16 @@ Default URLs point at the local Docker ports:
 npm run build:vscode-extension
 ```
 
+## Run locally in VSCode
+
+1. Open the repository root in VSCode.
+2. Run the `Run AI Native Extension` launch configuration from the Run and Debug panel.
+3. VSCode will build the extension and open an Extension Development Host.
+4. Use the AI Native activity bar entry inside the new window.
+
 ## Recommended local layout
 
 - semantic source: `examples/` or the application repo’s `semantic/`
-- validation snapshots: `.ai-native/validation/`
 - graph snapshots: `.ai-native/graph/`
 - generated Java: `.ai-native/generated/`
 - local cache: `.ai-native/cache/`

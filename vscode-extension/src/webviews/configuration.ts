@@ -1,11 +1,20 @@
 import * as vscode from 'vscode';
 import { getConfig } from '../config.js';
-import { commandIds } from '../constants.js';
+import type { McpRegistry, ServerConnectionStatus } from '../mcpRegistry.js';
+import { ensureMcpConfigFile, resolveMcpConfigUri, writeMcpConfigFile } from '../mcpConfigStore.js';
+
+type ConnectionStatus = Array<ServerConnectionStatus>;
 
 export class ConfigurationPanel {
   private static currentPanel: ConfigurationPanel | undefined;
+  private lastConnectionStatus: ConnectionStatus = [];
+  private currentValues = getConfig();
 
-  static show(context: vscode.ExtensionContext): ConfigurationPanel {
+  static show(
+    context: vscode.ExtensionContext,
+    registry: Pick<McpRegistry, 'pingAll'>,
+    onChange?: () => Promise<void> | void,
+  ): ConfigurationPanel {
     if (ConfigurationPanel.currentPanel) {
       ConfigurationPanel.currentPanel.panel.reveal(vscode.ViewColumn.One);
       ConfigurationPanel.currentPanel.render();
@@ -21,7 +30,7 @@ export class ConfigurationPanel {
       },
     );
 
-    ConfigurationPanel.currentPanel = new ConfigurationPanel(panel, context);
+    ConfigurationPanel.currentPanel = new ConfigurationPanel(panel, context, registry, onChange);
     return ConfigurationPanel.currentPanel;
   }
 
@@ -30,6 +39,8 @@ export class ConfigurationPanel {
   private constructor(
     private readonly panel: vscode.WebviewPanel,
     private readonly context: vscode.ExtensionContext,
+    private readonly registry: Pick<McpRegistry, 'pingAll'>,
+    private readonly onChange?: () => Promise<void> | void,
   ) {
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     this.panel.webview.onDidReceiveMessage(
@@ -38,8 +49,13 @@ export class ConfigurationPanel {
           await this.saveSettings(message.values);
           return;
         }
-        if (message?.command === 'openSettingsJson') {
-          await vscode.commands.executeCommand('workbench.action.openSettingsJson');
+        if (message?.command === 'testConnections') {
+          await this.testConnections();
+          return;
+        }
+        if (message?.command === 'openMcpConfig') {
+          await this.openMcpConfig();
+          return;
         }
       },
       null,
@@ -58,8 +74,8 @@ export class ConfigurationPanel {
   }
 
   private render(): void {
-    const config = getConfig();
     const nonce = createNonce();
+    const config = this.currentValues;
     const currentStatus = {
       semanticCoreUrl: config.semanticCoreUrl,
       validatorUrl: config.validatorUrl,
@@ -87,6 +103,9 @@ export class ConfigurationPanel {
       button { padding: 8px 12px; }
       code, pre { background: var(--vscode-textBlockQuote-background); padding: 8px; border-radius: 6px; overflow-x: auto; }
       .muted { color: var(--vscode-descriptionForeground); }
+      .status-list { list-style: none; padding-left: 0; margin: 0; display: grid; gap: 12px; }
+      .status-list li { border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 12px; }
+      .status-icon { margin-right: 6px; }
     </style>
   </head>
   <body>
@@ -111,12 +130,17 @@ export class ConfigurationPanel {
         </div>
         <div class="actions">
           <button id="save">Save</button>
-          <button id="openSettingsJson">Open settings.json</button>
+          <button id="testConnections">Test connections</button>
+          <button id="openMcpConfig">Open MCP config file</button>
         </div>
       </div>
       <div class="card">
         <h3>Current values</h3>
         <pre id="current">${escapeHtml(JSON.stringify(currentStatus, null, 2))}</pre>
+      </div>
+      <div class="card">
+        <h3>Connection status</h3>
+        ${this.renderConnectionStatus()}
       </div>
     </div>
     <script nonce="${nonce}">
@@ -134,22 +158,75 @@ export class ConfigurationPanel {
           }
         });
       });
-      document.getElementById('openSettingsJson').addEventListener('click', () => {
-        vscode.postMessage({ command: 'openSettingsJson' });
+      document.getElementById('testConnections').addEventListener('click', () => {
+        vscode.postMessage({ command: 'testConnections' });
+      });
+      document.getElementById('openMcpConfig').addEventListener('click', () => {
+        vscode.postMessage({ command: 'openMcpConfig' });
       });
     </script>
   </body>
 </html>`;
   }
 
+  private renderConnectionStatus(): string {
+    if (this.lastConnectionStatus.length === 0) {
+      return `<p class="muted">Run <strong>Test connections</strong> to verify the MCP endpoints.</p>`;
+    }
+
+    const items = this.lastConnectionStatus
+      .map((item) => {
+        const icon = item.connected ? '✅' : '❌';
+        const label = item.connected ? 'connected' : 'failed';
+        const details = item.connected ? `tools: ${item.tools ?? 0}` : escapeHtml(item.error ?? 'unknown error');
+        return `<li><span class="status-icon">${icon}</span> <strong>${escapeHtml(item.server)}</strong> — ${label}<br/><code>${escapeHtml(item.url)}</code><br/><span class="muted">${details}</span></li>`;
+      })
+      .join('');
+
+    return `<ul class="status-list">${items}</ul>`;
+  }
+
+  private async testConnections(): Promise<void> {
+    try {
+      this.lastConnectionStatus = await this.registry.pingAll();
+      this.render();
+      await this.onChange?.();
+      const connectedCount = this.lastConnectionStatus.filter((item) => item.connected).length;
+      const total = this.lastConnectionStatus.length;
+      if (connectedCount === total) {
+        void vscode.window.showInformationMessage(`All MCP servers are reachable (${connectedCount}/${total}).`);
+      } else {
+        void vscode.window.showWarningMessage(`Some MCP servers are unreachable (${connectedCount}/${total}).`);
+      }
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Failed to test MCP connections: ${String(error)}`);
+    }
+  }
+
+  private async openMcpConfig(): Promise<void> {
+    const configUri = (await ensureMcpConfigFile()) ?? resolveMcpConfigUri();
+    if (!configUri) {
+      vscode.window.showWarningMessage('Open a workspace first to access the MCP config file.');
+      return;
+    }
+
+    const document = await vscode.workspace.openTextDocument(configUri);
+    await vscode.window.showTextDocument(document, { preview: false });
+  }
+
   private async saveSettings(values: Record<string, unknown>): Promise<void> {
-    const configuration = vscode.workspace.getConfiguration('aiNative');
-    await configuration.update('mcp.semanticCoreUrl', String(values.semanticCoreUrl ?? ''), vscode.ConfigurationTarget.Workspace);
-    await configuration.update('mcp.validatorUrl', String(values.validatorUrl ?? ''), vscode.ConfigurationTarget.Workspace);
-    await configuration.update('mcp.compilerUrl', String(values.compilerUrl ?? ''), vscode.ConfigurationTarget.Workspace);
-    await configuration.update('artifactRoot', String(values.artifactRoot ?? '.ai-native'), vscode.ConfigurationTarget.Workspace);
-    await configuration.update('java.basePackage', String(values.javaBasePackage ?? 'com.example.generated'), vscode.ConfigurationTarget.Workspace);
-    await configuration.update('autoValidateOnSave', Boolean(values.autoValidateOnSave), vscode.ConfigurationTarget.Workspace);
+    const persistedValues = {
+      semanticCoreUrl: String(values.semanticCoreUrl ?? ''),
+      validatorUrl: String(values.validatorUrl ?? ''),
+      compilerUrl: String(values.compilerUrl ?? ''),
+      artifactRoot: String(values.artifactRoot ?? '.ai-native'),
+      javaBasePackage: String(values.javaBasePackage ?? 'com.example.generated'),
+      autoValidateOnSave: Boolean(values.autoValidateOnSave),
+    };
+
+    await writeMcpConfigFile(persistedValues);
+    this.currentValues = persistedValues;
+    await this.onChange?.();
     vscode.window.showInformationMessage('AI Native MCP configuration saved.');
     this.render();
   }
@@ -164,8 +241,8 @@ function escapeHtml(value: string): string {
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
 }
 
 function escapeAttr(value: string): string {

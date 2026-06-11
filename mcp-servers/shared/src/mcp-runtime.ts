@@ -1,5 +1,4 @@
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -14,7 +13,7 @@ export interface StartServerOptions {
 }
 
 export async function startMcpServer(
-  server: McpServer,
+  createServerInstance: () => McpServer,
   options: StartServerOptions = {},
 ): Promise<void> {
   const transportMode = options.transportMode || (process.env.MCP_TRANSPORT_MODE as TransportMode | undefined) || 'stdio';
@@ -23,14 +22,26 @@ export async function startMcpServer(
   if (transportMode === 'http') {
     const port = options.port || Number(process.env.PORT || 3000);
     const path = options.path || process.env.MCP_PATH || '/mcp';
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: randomUUID,
-      enableJsonResponse: true,
-    });
-
-    await server.connect(transport);
-
     const httpServer = createServer(async (req, res) => {
+      const server = createServerInstance();
+      const transport = new StreamableHTTPServerTransport({
+        enableJsonResponse: true,
+        sessionIdGenerator: undefined,
+      });
+
+      if (req.url === '/health' || req.url === '/healthz' || req.url === '/_health') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(
+          JSON.stringify({
+            ok: true,
+            service: serviceName,
+            transportMode: 'http',
+          }),
+        );
+        return;
+      }
+
       if (!req.url?.startsWith(path)) {
         res.statusCode = 404;
         res.setHeader('content-type', 'application/json');
@@ -38,7 +49,24 @@ export async function startMcpServer(
         return;
       }
 
-      await transport.handleRequest(req, res);
+      try {
+        await server.connect(transport);
+        await transport.handleRequest(req, res);
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('content-type', 'application/json');
+        res.end(
+          JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      } finally {
+        try {
+          await server.close();
+        } catch {
+          // ignore shutdown noise
+        }
+      }
     });
 
     await new Promise<void>((resolve) => {
@@ -52,5 +80,5 @@ export async function startMcpServer(
   }
 
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await createServerInstance().connect(transport);
 }

@@ -6,3 +6,5 @@ export * from './graph.js';
 export * from './validator.js';
 export * from './compiler.js';
 export * from './mcp-runtime.js';
+export * from './reference-corpus.js';
+export * from './source-learning.js';

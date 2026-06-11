@@ -1,5 +1,6 @@
 import type { CanonicalGraph, SemanticDocument, ValidationIssue, ValidationReport } from './models.js';
-import { getSectionItems, getSectionText, hasRequiredSections } from './semantic-markdown.js';
+import { isEnterpriseLikeDocument, loadReferenceCorpus } from './reference-corpus.js';
+import { getSectionItemLine, getSectionItems, getSectionText, hasRequiredSections } from './semantic-markdown.js';
 
 function normalizeText(value: string): string {
   return value.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -15,9 +16,10 @@ function createIssue(
   code: string,
   message: string,
   sourceRef?: string,
+  sourceLine?: number,
   nodeId?: string,
 ): ValidationIssue {
-  return { severity, code, message, sourceRef, nodeId };
+  return { severity, code, message, sourceRef, sourceLine, nodeId };
 }
 
 function extractPolicyRequirements(policyText: string): string[] {
@@ -127,11 +129,18 @@ function assessDependencies(document: SemanticDocument, issues: ValidationIssue[
   const interfaceText = getSectionText(document, 'interfaces').toLowerCase();
   const combined = `${processText}\n${interfaceText}`;
 
-  for (const dependency of dependencyItems) {
+  for (const [index, dependency] of dependencyItems.entries()) {
     const normalized = normalizeText(dependency);
     if (!combined.includes(normalized.split(/\s+/)[0] ?? normalized)) {
+      const sourceLine = getSectionItemLine(document, 'dependencies', index);
       issues.push(
-        createIssue('warning', 'dependency_unreferenced', `Dependency "${dependency}" is not referenced in processes or interfaces.`, '#dependencies'),
+        createIssue(
+          'warning',
+          'dependency_unreferenced',
+          `Dependency "${dependency}" is not referenced in processes or interfaces.`,
+          `#dependencies:${index}`,
+          sourceLine,
+        ),
       );
     }
   }
@@ -146,6 +155,36 @@ function assessQuality(document: SemanticDocument, issues: ValidationIssue[]): v
   const interfaces = getSectionItems(document, 'interfaces');
   if (interfaces.length === 0) {
     issues.push(createIssue('gap', 'missing_interfaces', 'No interfaces were defined.', '#interfaces'));
+  }
+
+  const modules = getSectionItems(document, 'modules');
+  const referenceCorpus = loadReferenceCorpus();
+  const combinedText = [
+    getSectionText(document, 'context'),
+    getSectionText(document, 'interfaces'),
+    getSectionText(document, 'data_flows'),
+    getSectionText(document, 'processes'),
+    getSectionText(document, 'rules'),
+    getSectionText(document, 'security'),
+    getSectionText(document, 'dependencies'),
+  ].join('\n');
+  const enterpriseLike = isEnterpriseLikeDocument({
+    interfaceCount: interfaces.length,
+    dependencyCount: getSectionItems(document, 'dependencies').length,
+    processCount: processItems.length,
+    securityCount: getSectionItems(document, 'security').length,
+    dataFlowCount: getSectionItems(document, 'data_flows').length,
+  }, combinedText);
+
+  if (enterpriseLike && modules.length === 0 && referenceCorpus.primary) {
+    issues.push(
+      createIssue(
+        'warning',
+        'missing_modules',
+        `The slice looks enterprise-like, but no modules section was defined. The reference corpus shows layered architectures, so describe module boundaries explicitly.`,
+        '#modules',
+      ),
+    );
   }
 }
 

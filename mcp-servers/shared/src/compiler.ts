@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import type { CanonicalGraph, CompilerOptions, GeneratedArtifactSet } from './models.js';
+import { normalizeArtifactName } from './artifacts.js';
 import { getWorkspaceRoot, writeTextFile } from './paths.js';
 
 function pascalCase(value: string): string {
@@ -26,7 +27,8 @@ function javaPackage(basePackage: string): string {
 }
 
 function inferArtifactName(graph: CanonicalGraph, fallback = 'SemanticApplication'): string {
-  return graph.metadata.title ? pascalCase(graph.metadata.title) : fallback;
+  const source = graph.metadata.title || fallback;
+  return pascalCase(normalizeArtifactName(source, fallback, 48));
 }
 
 function inferBasePackage(graph: CanonicalGraph, requested?: string): string {
@@ -37,7 +39,8 @@ function inferBasePackage(graph: CanonicalGraph, requested?: string): string {
     .replace(/[^a-z0-9]+/g, '.')
     .replace(/\.+/g, '.')
     .replace(/^\.+|\.+$/g, '');
-  return `com.generated.${slug || 'semantic'}`;
+  const safeSlug = normalizeArtifactName(slug || 'semantic', 'semantic', 40).replace(/-/g, '.');
+  return `com.generated.${safeSlug}`;
 }
 
 function collectNames(graph: CanonicalGraph, type: string): string[] {
@@ -280,15 +283,27 @@ management:
 }
 
 function renderReadme(artifactName: string, graph: CanonicalGraph): string {
+  const modules = collectNames(graph, 'Module').map((name) => `- ${name}`).join('\n');
   const interfaces = collectNames(graph, 'Interface').map((name) => `- ${name}`).join('\n');
+  const processes = collectNames(graph, 'Process').map((name) => `- ${name}`).join('\n');
+  const flows = collectNames(graph, 'DataFlow').map((name) => `- ${name}`).join('\n');
   const dependencies = collectNames(graph, 'Dependency').map((name) => `- ${name}`).join('\n');
   const externalSystems = collectNames(graph, 'ExternalSystem').map((name) => `- ${name}`).join('\n');
   return `# ${artifactName}
 
 Generated Spring Boot skeleton produced from the canonical semantic graph.
 
+## Detected modules
+${modules || '- none'}
+
 ## Detected interfaces
 ${interfaces || '- none'}
+
+## Detected processes
+${processes || '- none'}
+
+## Detected data flows
+${flows || '- none'}
 
 ## Detected dependencies
 ${dependencies || '- none'}
@@ -357,7 +372,8 @@ export async function persistGeneratedSpringBootSkeleton(
     writtenFiles.push(file.path);
   }
 
-  const manifestPath = join(root, '.ai-native', 'generated', `${artifactName.replace(/[^a-zA-Z0-9._-]+/g, '-').toLowerCase()}.json`);
+  const safeManifestName = normalizeArtifactName(artifactName, 'generated-application', 64).toLowerCase();
+  const manifestPath = join(root, '.ai-native', 'generated', `${safeManifestName}.json`);
   await writeTextFile(
     manifestPath,
     JSON.stringify(

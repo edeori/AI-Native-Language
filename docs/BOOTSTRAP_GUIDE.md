@@ -18,7 +18,7 @@ This guide describes how to turn this repository into a working pilot later.
 - Java 17+ Spring Boot generator
 - validation engine
 - security policy adapters
-- Docker orchestration for local execution
+- Docker orchestration for local execution and remote deployment
 
 ## Recommended build order
 
@@ -35,7 +35,7 @@ The extension is the developer-facing control plane:
 
 - it renders workflow, artifact, and tutorial views
 - it calls the remote MCP services over Streamable HTTP
-- it writes validation and graph outputs back into `.ai-native/`
+- it surfaces validation diagnostics inline in the editor and writes graph and generated outputs under `.ai-native/`
 - it keeps the semantic source in the workspace and the execution logic in services
 - it includes a configuration panel for remote MCP URLs and local artifact settings
 
@@ -44,7 +44,7 @@ The extension is the developer-facing control plane:
 1. start the MCP services with Docker
 2. open the repository in VSCode
 3. configure the remote URLs if they are not local defaults
-4. open the AI Native dashboard
+4. open the AI Native Actions view
 5. run validation and generation commands from the command palette or the views
 
 ## Repo usage model
@@ -79,7 +79,63 @@ These commands assume the repository root is the workspace root.
   - `validator` on `3002`
   - `compiler` on `3003`
 - The HTTP path is `/mcp` by default.
-- Local artifact output is mounted through `.ai-native/` so the workspace keeps a reproducible audit trail.
+- Local graph and generated output is mounted through `.ai-native/` so the workspace keeps a reproducible audit trail.
+
+### SSH deployment to a remote host
+
+If Docker runs on a remote host such as `10.9.0.2`, the repository includes SSH helper scripts under `deploy/`:
+
+- `deploy/remote-sync-and-start.sh`
+- `deploy/remote-mcp-start.sh`
+- `deploy/remote-mcp-stop.sh`
+- `deploy/remote-mcp-status.sh`
+
+The scripts assume:
+
+- SSH key-based access is configured
+- Docker Compose is available on the remote host
+- the remote host can create `/srv/ai-native-language-mcp`
+- the repository can be copied to the remote host over SSH
+
+Example:
+
+```bash
+REMOTE_HOST=10.9.0.2 REMOTE_USER=myuser \
+  ./deploy/remote-sync-and-start.sh
+```
+
+The sync script copies only the build inputs to `/srv/ai-native-language-mcp`, keeps the remote `.ai-native/` artifact directory, and runs `docker compose -f /srv/ai-native-language-mcp/docker/compose.yaml up -d --build` on the remote host.
+
+### Smoke test
+
+- Health check:
+
+```bash
+curl -sS http://10.9.0.2:3001/health | jq .
+curl -sS http://10.9.0.2:3002/health | jq .
+curl -sS http://10.9.0.2:3003/health | jq .
+```
+
+- MCP initialize:
+
+```bash
+curl -sS -X POST "http://10.9.0.2:3001/mcp" \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":1,
+    "method":"initialize",
+    "params":{
+      "protocolVersion":"2024-11-05",
+      "capabilities":{},
+      "clientInfo":{
+        "name":"smoke-test",
+        "version":"0.1.0"
+      }
+    }
+  }' | jq .
+```
 
 ## Current MVP server tool set
 
@@ -102,13 +158,12 @@ These commands assume the repository root is the workspace root.
 
 ## Local artifact storage model
 
-- store generated outputs and validation reports locally in the workspace
+- store generated outputs locally in the workspace and validation results in the editor Problems panel
 - keep cache and snapshot files close to the repo for traceability
 - evolve the MCP server implementations over time without changing the semantic source contract
 
 ## Local file layout for generated artifacts
 
 - `.ai-native/graph/`
-- `.ai-native/validation/`
 - `.ai-native/generated/`
 - target output directory chosen by the compiler

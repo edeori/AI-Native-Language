@@ -20,6 +20,17 @@ This directory contains the modular MCP server contracts that support the semant
 - `cache`: store IR snapshots and generated artifacts
 - `legacy-introspection`: ingest existing code, docs, and system context
 
+## Reference projects
+
+The repository now keeps a growing reference corpus under `reference-projects/`.
+
+- These reference slices are used to improve graph heuristics, validation behavior, and future MCP tools.
+- The first complex enterprise reference is `reference-projects/event-app-be/`.
+- Future projects can be added in the same format to keep training material reproducible.
+- The ingest command is `npm run reference:ingest -- --root <project-root> --name <project-name> --out reference-projects/<project-name>`.
+- The batch command is `npm run reference:ingest:batch` and replays every project listed in `reference-projects/manifest.json`.
+- The `semantic-core` and `validator` servers consult the reference corpus when inferring module boundaries and enterprise-level warnings.
+
 ## Implemented v0 tools
 
 ### `semantic-core`

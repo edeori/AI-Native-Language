@@ -61,7 +61,7 @@ flowchart LR
   end
 
   subgraph V["VSCode Extension"]
-    V1[Open dashboard / tutorials]:::editor
+    V1[Open Actions / tutorials]:::editor
     V2[Edit system slice]:::editor
     V3[Trigger validate / generate]:::editor
     V4[Show local artifacts]:::editor
@@ -74,7 +74,7 @@ flowchart LR
   end
 
   subgraph A["Local Artifacts"]
-    A1[Validation report<br/>.ai-native/validation/]:::artifact
+    A1[Editor diagnostics<br/>Problems panel]:::artifact
     A2[Graph snapshot<br/>.ai-native/graph/]:::artifact
     A3[Generated Java<br/>.ai-native/generated/]:::artifact
     A4[Traceable cache<br/>.ai-native/cache/]:::artifact
@@ -109,6 +109,20 @@ The value proposition is simple: faster change, clearer review, better traceabil
 - security-aware service generation with SSO and role-based access rules
 - dependency-driven generation where existing internal modules must be used
 
+### Reference Corpus
+
+The repo also carries complex real-world reference material under `reference-projects/`.
+
+- `reference-projects/event-app-be/` is a complex Spring Boot / Maven enterprise slice used to improve graph extraction and MCP heuristics.
+- `reference-projects/manifest.json` controls the batch ingest list.
+- New reference projects can be added later in the same format to expand the corpus and rerun `npm run reference:ingest:batch`.
+
+Editable source-derived learning states are created in the currently opened target workspace under its own `learning-projects/` folder, not in this tooling repo.
+
+- `learning-projects/<project>/source.semantic.md` is the editable semantic state produced from a source scan in the currently opened target workspace.
+- `learning-projects/<project>/source.semantic.suggested.md` is the current source-derived suggestion.
+- Import a source project from the VSCode side panel or run `npm run source:semantic -- --root <project-root> --name <project-name> --out <target-workspace>/learning-projects/<project-name>`.
+
 This is not just documentation. The semantic source is intended to become the editable contract that drives validation, generation, and review.
 
 ## Core Documents
@@ -124,6 +138,9 @@ This is not just documentation. The semantic source is intended to become the ed
 
 - [examples/team_knowledge_publishing_service.semantic.md](./examples/team_knowledge_publishing_service.semantic.md)
 - [examples/team_knowledge_publishing_service.graph.json](./examples/team_knowledge_publishing_service.graph.json)
+- [reference-projects/event-app-be/event-app-be.reference.semantic.md](./reference-projects/event-app-be/event-app-be.reference.semantic.md)
+- [reference-projects/event-app-be/event-app-be.analysis.md](./reference-projects/event-app-be/event-app-be.analysis.md)
+- [reference-projects/event-app-be/event-app-be.reference.graph.json](./reference-projects/event-app-be/event-app-be.reference.graph.json)
 
 ## Repository Layout
 
@@ -192,7 +209,6 @@ npm run dev:compiler
 
 - `.ai-native/cache/`
 - `.ai-native/graph/`
-- `.ai-native/validation/`
 - `.ai-native/generated/`
 
 ### Containerized run
@@ -203,6 +219,17 @@ docker compose -f docker/compose.yaml up --build
 
 Each MCP server is exposed as a separate remote HTTP service on its own port.
 
+### Remote SSH deployment
+
+If you have SSH access to a host such as `10.9.0.2`, you can sync only the build inputs to that host and let the remote machine build and run the MCP stack with the helper scripts in `deploy/`:
+
+- `deploy/remote-sync-and-start.sh`
+- `deploy/remote-mcp-start.sh`
+- `deploy/remote-mcp-stop.sh`
+- `deploy/remote-mcp-status.sh`
+
+These scripts expect SSH access, Docker Compose to be installed on the remote host, and a writable `/srv/ai-native-language-mcp` directory on the host.
+
 ### VSCode extension
 
 The `vscode-extension/` package is the developer-facing control plane:
@@ -210,7 +237,7 @@ The `vscode-extension/` package is the developer-facing control plane:
 - workflow tree view
 - artifacts tree view
 - tutorial tree view
-- dashboard webview
+- actions sidebar view
 - MCP configuration panel
 - commands for validation, graph generation, and Spring Boot generation
 
@@ -241,7 +268,7 @@ The workflow is input-driven. The developer writes a system slice in `Semantic M
 From that input, the toolchain produces:
 
 1. a canonical graph IR
-2. a validation report with gaps, contradictions, and security violations
+2. inline validation diagnostics in the editor and Problems panel, plus a graph snapshot and output log with gaps, contradictions, and security violations
 3. a Spring Boot skeleton or target implementation
 4. local artifact snapshots for review
 

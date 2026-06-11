@@ -5,24 +5,30 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "icon": "media/ai-native.svg",
   "main": "./out/extension.js",
   "engines": {
     "vscode": "^1.97.0"
   },
   "activationEvents": [
     "onStartupFinished",
-    "onCommand:aiNative.openDashboard",
     "onCommand:aiNative.openConfiguration",
+    "onCommand:aiNative.openDashboard",
     "onCommand:aiNative.openTutorial",
     "onCommand:aiNative.refreshAll",
+    "onCommand:aiNative.createSemanticSourceTemplate",
     "onCommand:aiNative.validateActiveSemanticMarkdown",
     "onCommand:aiNative.generateCanonicalGraph",
+    "onCommand:aiNative.openGraphPreview",
     "onCommand:aiNative.generateSpringBootSkeleton",
     "onCommand:aiNative.openArtifactsFolder",
     "onCommand:aiNative.showMcpStatus",
-    "onView:aiNativeWorkflow",
-    "onView:aiNativeArtifacts",
-    "onView:aiNativeTutorials"
+    "onView:aiNativeActions",
+    "onView:aiNativeInputs",
+    "onView:aiNativeModel",
+    "onView:aiNativeGenerate",
+    "onView:aiNativeReview",
+    "onView:aiNativeMcpHub"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -41,7 +47,7 @@
     "commands": [
       {
         "command": "aiNative.openDashboard",
-        "title": "AI Native: Open Dashboard"
+        "title": "AI Native: Open Actions View"
       },
       {
         "command": "aiNative.openConfiguration",
@@ -56,12 +62,20 @@
         "title": "AI Native: Refresh Views"
       },
       {
+        "command": "aiNative.createSemanticSourceTemplate",
+        "title": "AI Native: Create Semantic Source Template"
+      },
+      {
         "command": "aiNative.validateActiveSemanticMarkdown",
         "title": "AI Native: Validate Active Semantic Markdown"
       },
       {
         "command": "aiNative.generateCanonicalGraph",
         "title": "AI Native: Generate Canonical Graph"
+      },
+      {
+        "command": "aiNative.openGraphPreview",
+        "title": "AI Native: Show Graph"
       },
       {
         "command": "aiNative.generateSpringBootSkeleton",
@@ -123,16 +137,29 @@
     "views": {
       "aiNativeSemantic": [
         {
-          "id": "aiNativeWorkflow",
-          "name": "Workflow"
+          "type": "webview",
+          "id": "aiNativeActions",
+          "name": "Actions"
         },
         {
-          "id": "aiNativeArtifacts",
-          "name": "Artifacts"
+          "id": "aiNativeInputs",
+          "name": "Inputs"
         },
         {
-          "id": "aiNativeTutorials",
-          "name": "Tutorials"
+          "id": "aiNativeModel",
+          "name": "Model"
+        },
+        {
+          "id": "aiNativeGenerate",
+          "name": "Generate"
+        },
+        {
+          "id": "aiNativeReview",
+          "name": "Review"
+        },
+        {
+          "id": "aiNativeMcpHub",
+          "name": "MCP"
         }
       ]
     }

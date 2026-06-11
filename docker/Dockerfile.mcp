@@ -6,6 +6,7 @@ COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
 COPY mcp-servers ./mcp-servers
 COPY examples ./examples
 COPY docs ./docs
+COPY reference-projects ./reference-projects
 COPY README.md ./
 COPY AI_Native_Semantic_Pilot_Spec.md ./
 COPY AI_Native_Semantic_Pilot_Notes.md ./
@@ -27,6 +28,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/mcp-servers ./mcp-servers
 COPY --from=build /app/examples ./examples
 COPY --from=build /app/docs ./docs
+COPY --from=build /app/reference-projects ./reference-projects
 COPY --from=build /app/README.md ./
 COPY --from=build /app/AI_Native_Semantic_Pilot_Spec.md ./
 COPY --from=build /app/AI_Native_Semantic_Pilot_Notes.md ./

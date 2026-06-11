@@ -1,0 +1,9 @@
+{
+  "projects": [
+    {
+      "name": "event-app-be",
+      "root": "../Event-App-BE",
+      "out": "reference-projects/event-app-be"
+    }
+  ]
+}

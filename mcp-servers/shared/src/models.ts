@@ -31,6 +31,8 @@ export interface SemanticSection {
   raw: string;
   lines: string[];
   items: string[];
+  startLine: number;
+  endLine: number;
 }
 
 export interface SemanticDocument {
@@ -76,6 +78,8 @@ export interface ValidationIssue {
   code: string;
   message: string;
   sourceRef?: string;
+  sourceLine?: number;
+  sourceColumn?: number;
   nodeId?: string;
 }
 

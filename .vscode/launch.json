@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run AI Native Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensions-dir=${workspaceFolder}/.vscode/extensions-dev",
+        "--extensionDevelopmentPath=${workspaceFolder}/vscode-extension"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/vscode-extension/out/**/*.js"
+      ],
+      "preLaunchTask": "build:vscode-extension"
+    }
+  ]
+}

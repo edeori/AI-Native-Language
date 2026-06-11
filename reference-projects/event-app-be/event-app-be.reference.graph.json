@@ -1,0 +1,1479 @@
+{
+  "schemaVersion": "1.0.0",
+  "nodes": [
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "type": "SystemSlice",
+      "name": "Enterprise event platform backend with a layered Maven architecture and a separa",
+      "description": "Model events, organizers, users, media, RSVPs, search, tracking, and notifications in a Spring Boot backend.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#system",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "Service",
+      "name": "Enterprise event platform backend",
+      "description": "- authenticate the request with JWT or cookie-backed access\n- authorize feature-gated actions\n- validate and transform incoming DTOs\n- load and update event, organizer, user, media, or RSVP state\n- persist transactional changes through the repository layer\n- publish notification events for downstream consumers\n- dispatch mail, storage, or background jobs when needed\n- expose data back through REST or websocket responses",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#system",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.rest-api-events-users-organizers-tags-search-stats-tracking-auth.1",
+      "type": "Interface",
+      "name": "rest api: events, users, organizers, tags, search, stats, tracking, auth",
+      "description": "rest api: events, users, organizers, tags, search, stats, tracking, auth",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.websocket-real-time-notification-channel.2",
+      "type": "Interface",
+      "name": "websocket: real-time notification channel",
+      "description": "websocket: real-time notification channel",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.application-config-security-cors-mail-minio-and-runtime-wiring.3",
+      "type": "Interface",
+      "name": "application config: security, cors, mail, minio, and runtime wiring",
+      "description": "application config: security, cors, mail, minio, and runtime wiring",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.persistence-repositories-and-query-interfaces.4",
+      "type": "Interface",
+      "name": "persistence: repositories and query interfaces",
+      "description": "persistence: repositories and query interfaces",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.a-user-request-enters-the-rest-api.1",
+      "type": "DataFlow",
+      "name": "A user request enters the REST API.",
+      "description": "A user request enters the REST API.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.security-and-feature-guards-validate-access.2",
+      "type": "DataFlow",
+      "name": "Security and feature guards validate access.",
+      "description": "Security and feature guards validate access.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-service-layer-orchestrates-domain-work.3",
+      "type": "DataFlow",
+      "name": "The service layer orchestrates domain work.",
+      "description": "The service layer orchestrates domain work.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-persistence-layer-loads-and-stores-records.4",
+      "type": "DataFlow",
+      "name": "The persistence layer loads and stores records.",
+      "description": "The persistence layer loads and stores records.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.optional-mail-object-storage-or-redis-interactions-support-side-.5",
+      "type": "DataFlow",
+      "name": "Optional mail, object storage, or Redis interactions support side effects.",
+      "description": "Optional mail, object storage, or Redis interactions support side effects.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.notification-events-are-published-for-real-time-delivery.6",
+      "type": "DataFlow",
+      "name": "Notification events are published for real-time delivery.",
+      "description": "Notification events are published for real-time delivery.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-api-returns-an-updated-resource-statistics-or-an-error-respo.7",
+      "type": "DataFlow",
+      "name": "The API returns an updated resource, statistics, or an error response.",
+      "description": "The API returns an updated resource, statistics, or an error response.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#data_flows",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authenticate-the-request-with-jwt-or-cookie-backed-access.1",
+      "type": "Process",
+      "name": "authenticate the request with JWT or cookie-backed access",
+      "description": "authenticate the request with JWT or cookie-backed access",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authorize-feature-gated-actions.2",
+      "type": "Process",
+      "name": "authorize feature-gated actions",
+      "description": "authorize feature-gated actions",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.validate-and-transform-incoming-dtos.3",
+      "type": "Process",
+      "name": "validate and transform incoming DTOs",
+      "description": "validate and transform incoming DTOs",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.load-and-update-event-organizer-user-media-or-rsvp-state.4",
+      "type": "Process",
+      "name": "load and update event, organizer, user, media, or RSVP state",
+      "description": "load and update event, organizer, user, media, or RSVP state",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.persist-transactional-changes-through-the-repository-layer.5",
+      "type": "Process",
+      "name": "persist transactional changes through the repository layer",
+      "description": "persist transactional changes through the repository layer",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.publish-notification-events-for-downstream-consumers.6",
+      "type": "Process",
+      "name": "publish notification events for downstream consumers",
+      "description": "publish notification events for downstream consumers",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.dispatch-mail-storage-or-background-jobs-when-needed.7",
+      "type": "Process",
+      "name": "dispatch mail, storage, or background jobs when needed",
+      "description": "dispatch mail, storage, or background jobs when needed",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.expose-data-back-through-rest-or-websocket-responses.8",
+      "type": "Process",
+      "name": "expose data back through REST or websocket responses",
+      "description": "expose data back through REST or websocket responses",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.api-openapi-facing-contract-and-dto-layer.1",
+      "type": "Module",
+      "name": "api: OpenAPI-facing contract and DTO layer",
+      "description": "api: OpenAPI-facing contract and DTO layer",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#modules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.web-rest-controllers-and-http-entry-points.2",
+      "type": "Module",
+      "name": "web: REST controllers and HTTP entry points",
+      "description": "web: REST controllers and HTTP entry points",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#modules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.service-business-orchestration-guards-jobs-listeners-and-notific.3",
+      "type": "Module",
+      "name": "service: business orchestration, guards, jobs, listeners, and notification dispatch",
+      "description": "service: business orchestration, guards, jobs, listeners, and notification dispatch",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#modules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.persistence-repositories-entities-row-mappers-and-query-objects.4",
+      "type": "Module",
+      "name": "persistence: repositories, entities, row mappers, and query objects",
+      "description": "persistence: repositories, entities, row mappers, and query objects",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#modules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.common-security-notification-redis-and-shared-utilities.5",
+      "type": "Module",
+      "name": "common: security, notification, redis, and shared utilities",
+      "description": "common: security, notification, redis, and shared utilities",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#modules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.app-spring-boot-bootstrap-and-application-wiring.6",
+      "type": "Module",
+      "name": "app: Spring Boot bootstrap and application wiring",
+      "description": "app: Spring Boot bootstrap and application wiring",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#modules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.notification-separate-real-time-notification-microservice.7",
+      "type": "Module",
+      "name": "notification: separate real-time notification microservice",
+      "description": "notification: separate real-time notification microservice",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#modules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.write-actions-require-authenticated-access.1",
+      "type": "Rule",
+      "name": "write actions require authenticated access",
+      "description": "write actions require authenticated access",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#rules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.feature-policies-can-block-specific-actions.2",
+      "type": "Rule",
+      "name": "feature policies can block specific actions",
+      "description": "feature policies can block specific actions",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#rules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.invalid-payloads-must-be-rejected-before-persistence.3",
+      "type": "Rule",
+      "name": "invalid payloads must be rejected before persistence",
+      "description": "invalid payloads must be rejected before persistence",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#rules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.protected-resources-must-not-leak-across-ownership-boundaries.4",
+      "type": "Rule",
+      "name": "protected resources must not leak across ownership boundaries",
+      "description": "protected resources must not leak across ownership boundaries",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#rules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.notification-side-effects-must-not-break-the-main-transaction-pa.5",
+      "type": "Rule",
+      "name": "notification side effects must not break the main transaction path",
+      "description": "notification side effects must not break the main transaction path",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#rules",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "type": "SecurityPolicy",
+      "name": "Security policy",
+      "description": "JWT-based authentication boundary feature guards for protected actions resource-level authorization notification and admin flows require explicit access checks",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#security",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.spring-boot.1",
+      "type": "Dependency",
+      "name": "Spring Boot",
+      "description": "Spring Boot",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.spring-security.2",
+      "type": "Dependency",
+      "name": "Spring Security",
+      "description": "Spring Security",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.persistence.postgresql.3",
+      "type": "Persistence",
+      "name": "PostgreSQL",
+      "description": "PostgreSQL",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.redis.4",
+      "type": "Dependency",
+      "name": "Redis",
+      "description": "Redis",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.flyway.5",
+      "type": "Dependency",
+      "name": "Flyway",
+      "description": "Flyway",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.websocket-runtime.6",
+      "type": "Dependency",
+      "name": "WebSocket runtime",
+      "description": "WebSocket runtime",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.mail-service.7",
+      "type": "Dependency",
+      "name": "mail service",
+      "description": "mail service",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.persistence.object-storage.8",
+      "type": "Persistence",
+      "name": "object storage",
+      "description": "object storage",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.openapi-tooling.9",
+      "type": "Dependency",
+      "name": "OpenAPI tooling",
+      "description": "OpenAPI tooling",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.feature-policy-layer.10",
+      "type": "Dependency",
+      "name": "feature policy layer",
+      "description": "feature policy layer",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#dependencies",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.redis",
+      "type": "ExternalSystem",
+      "name": "Redis",
+      "description": "External system inferred from the semantic source: Redis.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#generated",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.websocket-gateway",
+      "type": "ExternalSystem",
+      "name": "WebSocket gateway",
+      "description": "External system inferred from the semantic source: WebSocket gateway.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#generated",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.mail-service",
+      "type": "ExternalSystem",
+      "name": "Mail service",
+      "description": "External system inferred from the semantic source: Mail service.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#generated",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.object-storage",
+      "type": "ExternalSystem",
+      "name": "Object storage",
+      "description": "External system inferred from the semantic source: Object storage.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#generated",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.oauth-provider",
+      "type": "ExternalSystem",
+      "name": "OAuth provider",
+      "description": "External system inferred from the semantic source: OAuth provider.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#generated",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.feature-policy-service",
+      "type": "ExternalSystem",
+      "name": "Feature policy service",
+      "description": "External system inferred from the semantic source: Feature policy service.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#generated",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.notification-service",
+      "type": "ExternalSystem",
+      "name": "Notification service",
+      "description": "External system inferred from the semantic source: Notification service.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#generated",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.relational-database",
+      "type": "ExternalSystem",
+      "name": "Relational Database",
+      "description": "External system inferred from the semantic source: Relational Database.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#generated",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.endpoint.rest-api-events-users-organizers-tags-search-stats-tracking-auth.1",
+      "type": "IntegrationEndpoint",
+      "name": "rest api: events, users, organizers, tags, search, stats, tracking, auth",
+      "description": "rest api: events, users, organizers, tags, search, stats, tracking, auth",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.endpoint.persistence-repositories-and-query-interfaces.2",
+      "type": "IntegrationEndpoint",
+      "name": "persistence: repositories and query interfaces",
+      "description": "persistence: repositories and query interfaces",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.transformation.validate-and-transform-incoming-dtos.1",
+      "type": "Transformation",
+      "name": "validate and transform incoming DTOs",
+      "description": "validate and transform incoming DTOs",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#processes",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.alert.processing-failure-alert",
+      "type": "Alert",
+      "name": "Processing failure alert",
+      "description": "Alert inferred from failure and alert language in the semantic source.",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#generated",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.example.a-user-creates-an-event-and-receives-a-refreshed-event-view.1",
+      "type": "Example",
+      "name": "a user creates an event and receives a refreshed event view",
+      "description": "a user creates an event and receives a refreshed event view",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#examples",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.example.a-follow-or-rsvp-action-emits-a-notification-event.2",
+      "type": "Example",
+      "name": "a follow or RSVP action emits a notification event",
+      "description": "a follow or RSVP action emits a notification event",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#examples",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.example.a-protected-admin-action-is-rejected-without-the-right-feature-p.3",
+      "type": "Example",
+      "name": "a protected admin action is rejected without the right feature policy",
+      "description": "a protected admin action is rejected without the right feature policy",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#examples",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.the-graph-shows-module-boundaries-external-systems-and-security-.1",
+      "type": "AcceptanceCriterion",
+      "name": "the graph shows module boundaries, external systems, and security gates",
+      "description": "the graph shows module boundaries, external systems, and security gates",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#acceptance_criteria",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.the-flow-trace-shows-request-auth-service-persistence-side-effec.2",
+      "type": "AcceptanceCriterion",
+      "name": "the flow trace shows request → auth → service → persistence → side effects → response",
+      "description": "the flow trace shows request → auth → service → persistence → side effects → response",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#acceptance_criteria",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.notification-behavior-is-visible-as-a-separate-path.3",
+      "type": "AcceptanceCriterion",
+      "name": "notification behavior is visible as a separate path",
+      "description": "notification behavior is visible as a separate path",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#acceptance_criteria",
+      "version": "1.0.0"
+    },
+    {
+      "id": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.the-model-is-useful-for-both-review-and-code-generation.4",
+      "type": "AcceptanceCriterion",
+      "name": "the model is useful for both review and code generation",
+      "description": "the model is useful for both review and code generation",
+      "status": "draft",
+      "sourceRef": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md#acceptance_criteria",
+      "version": "1.0.0"
+    }
+  ],
+  "edges": [
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.rest-api-events-users-organizers-tags-search-stats-tracking-auth.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.websocket-real-time-notification-channel.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.application-config-security-cors-mail-minio-and-runtime-wiring.3",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.persistence-repositories-and-query-interfaces.4",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.a-user-request-enters-the-rest-api.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.security-and-feature-guards-validate-access.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-service-layer-orchestrates-domain-work.3",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-persistence-layer-loads-and-stores-records.4",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.optional-mail-object-storage-or-redis-interactions-support-side-.5",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.notification-events-are-published-for-real-time-delivery.6",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-api-returns-an-updated-resource-statistics-or-an-error-respo.7",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authenticate-the-request-with-jwt-or-cookie-backed-access.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authorize-feature-gated-actions.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.validate-and-transform-incoming-dtos.3",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.load-and-update-event-organizer-user-media-or-rsvp-state.4",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.persist-transactional-changes-through-the-repository-layer.5",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.publish-notification-events-for-downstream-consumers.6",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.dispatch-mail-storage-or-background-jobs-when-needed.7",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.expose-data-back-through-rest-or-websocket-responses.8",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.api-openapi-facing-contract-and-dto-layer.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.web-rest-controllers-and-http-entry-points.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.service-business-orchestration-guards-jobs-listeners-and-notific.3",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.persistence-repositories-entities-row-mappers-and-query-objects.4",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.common-security-notification-redis-and-shared-utilities.5",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.app-spring-boot-bootstrap-and-application-wiring.6",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.notification-separate-real-time-notification-microservice.7",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.write-actions-require-authenticated-access.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.feature-policies-can-block-specific-actions.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.invalid-payloads-must-be-rejected-before-persistence.3",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.protected-resources-must-not-leak-across-ownership-boundaries.4",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.notification-side-effects-must-not-break-the-main-transaction-pa.5",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.spring-boot.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.spring-security.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.persistence.postgresql.3",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.redis.4",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.flyway.5",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.websocket-runtime.6",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.mail-service.7",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.persistence.object-storage.8",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.openapi-tooling.9",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.feature-policy-layer.10",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.example.a-user-creates-an-event-and-receives-a-refreshed-event-view.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.example.a-follow-or-rsvp-action-emits-a-notification-event.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.example.a-protected-admin-action-is-rejected-without-the-right-feature-p.3",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.the-graph-shows-module-boundaries-external-systems-and-security-.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.the-flow-trace-shows-request-auth-service-persistence-side-effec.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.notification-behavior-is-visible-as-a-separate-path.3",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.the-model-is-useful-for-both-review-and-code-generation.4",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.redis",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.websocket-gateway",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.mail-service",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.object-storage",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.oauth-provider",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.feature-policy-service",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.notification-service",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.relational-database",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.endpoint.rest-api-events-users-organizers-tags-search-stats-tracking-auth.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.endpoint.persistence-repositories-and-query-interfaces.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.transformation.validate-and-transform-incoming-dtos.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.alert.processing-failure-alert",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "guardedBy"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.rest-api-events-users-organizers-tags-search-stats-tracking-auth.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.rest-api-events-users-organizers-tags-search-stats-tracking-auth.1",
+      "type": "exposes"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.websocket-real-time-notification-channel.2",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.websocket-real-time-notification-channel.2",
+      "type": "exposes"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.application-config-security-cors-mail-minio-and-runtime-wiring.3",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.application-config-security-cors-mail-minio-and-runtime-wiring.3",
+      "type": "exposes"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.persistence-repositories-and-query-interfaces.4",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.interface.persistence-repositories-and-query-interfaces.4",
+      "type": "exposes"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.a-user-request-enters-the-rest-api.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authenticate-the-request-with-jwt-or-cookie-backed-access.1",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authenticate-the-request-with-jwt-or-cookie-backed-access.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.a-user-request-enters-the-rest-api.1",
+      "type": "describes"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.a-user-request-enters-the-rest-api.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.security-and-feature-guards-validate-access.2",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authorize-feature-gated-actions.2",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authorize-feature-gated-actions.2",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.security-and-feature-guards-validate-access.2",
+      "type": "describes"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.security-and-feature-guards-validate-access.2",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-service-layer-orchestrates-domain-work.3",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.validate-and-transform-incoming-dtos.3",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.validate-and-transform-incoming-dtos.3",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-service-layer-orchestrates-domain-work.3",
+      "type": "describes"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-service-layer-orchestrates-domain-work.3",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-persistence-layer-loads-and-stores-records.4",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.load-and-update-event-organizer-user-media-or-rsvp-state.4",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.load-and-update-event-organizer-user-media-or-rsvp-state.4",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-persistence-layer-loads-and-stores-records.4",
+      "type": "describes"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-persistence-layer-loads-and-stores-records.4",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.optional-mail-object-storage-or-redis-interactions-support-side-.5",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.persist-transactional-changes-through-the-repository-layer.5",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.persist-transactional-changes-through-the-repository-layer.5",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.optional-mail-object-storage-or-redis-interactions-support-side-.5",
+      "type": "describes"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.optional-mail-object-storage-or-redis-interactions-support-side-.5",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.notification-events-are-published-for-real-time-delivery.6",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.publish-notification-events-for-downstream-consumers.6",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.publish-notification-events-for-downstream-consumers.6",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.notification-events-are-published-for-real-time-delivery.6",
+      "type": "describes"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.notification-events-are-published-for-real-time-delivery.6",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-api-returns-an-updated-resource-statistics-or-an-error-respo.7",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.dispatch-mail-storage-or-background-jobs-when-needed.7",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.dispatch-mail-storage-or-background-jobs-when-needed.7",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-api-returns-an-updated-resource-statistics-or-an-error-respo.7",
+      "type": "describes"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.the-api-returns-an-updated-resource-statistics-or-an-error-respo.7",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authenticate-the-request-with-jwt-or-cookie-backed-access.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authorize-feature-gated-actions.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.validate-and-transform-incoming-dtos.3",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.load-and-update-event-organizer-user-media-or-rsvp-state.4",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.persist-transactional-changes-through-the-repository-layer.5",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.publish-notification-events-for-downstream-consumers.6",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.publish-notification-events-for-downstream-consumers.6",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.notification-service",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.dispatch-mail-storage-or-background-jobs-when-needed.7",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.expose-data-back-through-rest-or-websocket-responses.8",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.api-openapi-facing-contract-and-dto-layer.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.api-openapi-facing-contract-and-dto-layer.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.api-openapi-facing-contract-and-dto-layer.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.websocket-runtime.6",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.api-openapi-facing-contract-and-dto-layer.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.openapi-tooling.9",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.web-rest-controllers-and-http-entry-points.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.web-rest-controllers-and-http-entry-points.2",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.web-rest-controllers-and-http-entry-points.2",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.websocket-runtime.6",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.web-rest-controllers-and-http-entry-points.2",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.openapi-tooling.9",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.service-business-orchestration-guards-jobs-listeners-and-notific.3",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.service-business-orchestration-guards-jobs-listeners-and-notific.3",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.service-business-orchestration-guards-jobs-listeners-and-notific.3",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.mail-service.7",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.service-business-orchestration-guards-jobs-listeners-and-notific.3",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.feature-policy-layer.10",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.persistence-repositories-entities-row-mappers-and-query-objects.4",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.persistence-repositories-entities-row-mappers-and-query-objects.4",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.persistence-repositories-entities-row-mappers-and-query-objects.4",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.persistence.postgresql.3",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.common-security-notification-redis-and-shared-utilities.5",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.common-security-notification-redis-and-shared-utilities.5",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.common-security-notification-redis-and-shared-utilities.5",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.redis.4",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.app-spring-boot-bootstrap-and-application-wiring.6",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.app-spring-boot-bootstrap-and-application-wiring.6",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.app-spring-boot-bootstrap-and-application-wiring.6",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.spring-boot.1",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.notification-separate-real-time-notification-microservice.7",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.notification-separate-real-time-notification-microservice.7",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.notification-separate-real-time-notification-microservice.7",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.mail-service.7",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.module.notification-separate-real-time-notification-microservice.7",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.feature-policy-layer.10",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.endpoint.rest-api-events-users-organizers-tags-search-stats-tracking-auth.1",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.endpoint.persistence-repositories-and-query-interfaces.2",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.a-user-request-enters-the-rest-api.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.transformation.validate-and-transform-incoming-dtos.1",
+      "type": "flowsTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.transformation.validate-and-transform-incoming-dtos.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.flow.security-and-feature-guards-validate-access.2",
+      "type": "transformsInto"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.transformation.validate-and-transform-incoming-dtos.1",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authenticate-the-request-with-jwt-or-cookie-backed-access.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.alert.processing-failure-alert",
+      "type": "triggers"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authorize-feature-gated-actions.2",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.alert.processing-failure-alert",
+      "type": "triggers"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.validate-and-transform-incoming-dtos.3",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.alert.processing-failure-alert",
+      "type": "triggers"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.load-and-update-event-organizer-user-media-or-rsvp-state.4",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.alert.processing-failure-alert",
+      "type": "triggers"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.persist-transactional-changes-through-the-repository-layer.5",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.alert.processing-failure-alert",
+      "type": "triggers"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.publish-notification-events-for-downstream-consumers.6",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.alert.processing-failure-alert",
+      "type": "triggers"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.dispatch-mail-storage-or-background-jobs-when-needed.7",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.alert.processing-failure-alert",
+      "type": "triggers"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.expose-data-back-through-rest-or-websocket-responses.8",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.alert.processing-failure-alert",
+      "type": "triggers"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.alert.processing-failure-alert",
+      "type": "emits"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.write-actions-require-authenticated-access.1",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.feature-policies-can-block-specific-actions.2",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.invalid-payloads-must-be-rejected-before-persistence.3",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.protected-resources-must-not-leak-across-ownership-boundaries.4",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.rule.notification-side-effects-must-not-break-the-main-transaction-pa.5",
+      "type": "contains"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.spring-boot.1",
+      "type": "requires"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.spring-boot.1",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.spring-security.2",
+      "type": "requires"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.spring-security.2",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.persistence.postgresql.3",
+      "type": "requires"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.persistence.postgresql.3",
+      "type": "writesTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.redis.4",
+      "type": "requires"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.redis.4",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.flyway.5",
+      "type": "requires"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.flyway.5",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.websocket-runtime.6",
+      "type": "requires"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.websocket-runtime.6",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.mail-service.7",
+      "type": "requires"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.mail-service.7",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.persistence.object-storage.8",
+      "type": "requires"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.persistence.object-storage.8",
+      "type": "writesTo"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.openapi-tooling.9",
+      "type": "requires"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.openapi-tooling.9",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.security",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.feature-policy-layer.10",
+      "type": "requires"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.dependency.feature-policy-layer.10",
+      "type": "dependsOn"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.redis",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.websocket-gateway",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.mail-service",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.object-storage",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.oauth-provider",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.feature-policy-service",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.notification-service",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.service",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.externalsystem.relational-database",
+      "type": "uses"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.example.a-user-creates-an-event-and-receives-a-refreshed-event-view.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authenticate-the-request-with-jwt-or-cookie-backed-access.1",
+      "type": "refines"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.example.a-follow-or-rsvp-action-emits-a-notification-event.2",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authenticate-the-request-with-jwt-or-cookie-backed-access.1",
+      "type": "refines"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.example.a-protected-admin-action-is-rejected-without-the-right-feature-p.3",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.process.authenticate-the-request-with-jwt-or-cookie-backed-access.1",
+      "type": "refines"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.the-graph-shows-module-boundaries-external-systems-and-security-.1",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "type": "supports"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.the-flow-trace-shows-request-auth-service-persistence-side-effec.2",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "type": "supports"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.notification-behavior-is-visible-as-a-separate-path.3",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "type": "supports"
+    },
+    {
+      "from": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect.acceptance.the-model-is-useful-for-both-review-and-code-generation.4",
+      "to": "sys.enterprise-event-platform-backend-with-a-layered-maven-architect",
+      "type": "supports"
+    }
+  ],
+  "metadata": {
+    "sourcePath": "/Users/mothproduction/Documents/VSCode/AI-Native-Language/reference-projects/event-app-be/event-app-be.reference.semantic.md",
+    "title": "Enterprise event platform backend with a layered Maven architecture and a separa",
+    "createdAt": "2026-06-11T14:40:24.178Z"
+  }
+}

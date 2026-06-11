@@ -22,18 +22,26 @@ export class ArtifactTreeDataProvider implements vscode.TreeDataProvider<Artifac
       const root = await resolveArtifactRoot();
       if (!root) {
         return [
-          new ArtifactTreeItem('.ai-native is not available', 'Open a workspace to inspect artifacts.', vscode.TreeItemCollapsibleState.None),
+          new ArtifactTreeItem('Open graph preview', 'Render the latest generated canonical graph.', vscode.TreeItemCollapsibleState.None, undefined, commandIds.openGraphPreview),
+          new ArtifactTreeItem('Open artifact folder', 'Open a workspace to inspect generated outputs.', vscode.TreeItemCollapsibleState.None, undefined, commandIds.openArtifactsFolder),
         ];
       }
 
       const exists = await pathExists(root.fsPath);
       if (!exists) {
         return [
-          new ArtifactTreeItem('.ai-native folder is empty', 'Run validate or compile to populate local artifacts.', vscode.TreeItemCollapsibleState.None),
+          new ArtifactTreeItem('Open graph preview', 'Render the latest generated canonical graph.', vscode.TreeItemCollapsibleState.None, undefined, commandIds.openGraphPreview),
+          new ArtifactTreeItem('Open artifact folder', 'Browse local outputs.', vscode.TreeItemCollapsibleState.None, undefined, commandIds.openArtifactsFolder),
+          new ArtifactTreeItem('No local artifacts yet', 'Run validation or generation to populate the review area.', vscode.TreeItemCollapsibleState.None),
         ];
       }
 
-      return this.readDirectory(root.fsPath);
+      const directoryItems = await this.readDirectory(root.fsPath);
+      return [
+        new ArtifactTreeItem('Open graph preview', 'Render the latest generated canonical graph.', vscode.TreeItemCollapsibleState.None, undefined, commandIds.openGraphPreview),
+        new ArtifactTreeItem('Open artifact folder', 'Browse local outputs.', vscode.TreeItemCollapsibleState.None, undefined, commandIds.openArtifactsFolder),
+        ...directoryItems,
+      ];
     }
 
     if (element.kind !== 'directory') {
@@ -74,11 +82,17 @@ class ArtifactTreeItem extends vscode.TreeItem {
     public readonly kind: 'directory' | 'file' | string,
     collapsibleState: vscode.TreeItemCollapsibleState,
     public readonly path?: string,
+    commandId?: string,
   ) {
     super(label, collapsibleState);
     this.description = kind;
     const resolvedPath = path;
-    if (kind === 'file' && resolvedPath) {
+    if (commandId) {
+      this.command = {
+        command: commandId,
+        title: label,
+      };
+    } else if (kind === 'file' && resolvedPath) {
       this.command = {
         command: 'vscode.open',
         title: 'Open artifact file',

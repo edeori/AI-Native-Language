@@ -10,35 +10,54 @@ import {
   graphPreview,
 } from '@ai-native/semantic-shared';
 
-const server = new McpServer({
-  name: 'ai-native-semantic-core',
-  version: '0.1.0',
-});
+function createServer() {
+  const server = new McpServer({
+    name: 'ai-native-semantic-core',
+    version: '0.1.0',
+  });
 
-const semanticInputSchema = z.object({
-  path: z.string().optional(),
-  content: z.string().optional(),
-  persist: z.boolean().optional().default(true),
-});
+  const semanticInputSchema = z.object({
+    path: z.string().optional(),
+    content: z.string().optional(),
+    persist: z.boolean().optional().default(true),
+  });
 
-server.registerTool(
-  'parse_semantic_markdown',
-  {
-    description: 'Parse Semantic Markdown into section blocks.',
-    inputSchema: semanticInputSchema,
-  },
-  async ({ path, content, persist }) => {
-    const document = path ? await parseSemanticMarkdownFromFile(path) : parseSemanticMarkdown(content ?? '', path);
-    const cachePath =
-      persist === false
-        ? undefined
-        : await saveArtifact(
-            undefined,
-            'cache',
-            document.sourcePath ? basename(document.sourcePath, '.md') || 'semantic-document' : 'semantic-document',
-            'json',
-            JSON.stringify(
+  server.registerTool(
+    'parse_semantic_markdown',
+    {
+      description: 'Parse Semantic Markdown into section blocks.',
+      inputSchema: semanticInputSchema,
+    },
+    async ({ path, content, persist }) => {
+      const document = content ? parseSemanticMarkdown(content, path) : await parseSemanticMarkdownFromFile(path ?? '');
+      const cachePath =
+        persist === false
+          ? undefined
+          : await saveArtifact(
+              undefined,
+              'cache',
+              document.sourcePath ? basename(document.sourcePath, '.md') || 'semantic-document' : 'semantic-document',
+              'json',
+              JSON.stringify(
+                {
+                  sourcePath: document.sourcePath,
+                  sections: document.orderedSections.map((section) => ({
+                    name: section.name,
+                    title: section.title,
+                    items: section.items,
+                  })),
+                },
+                null,
+                2,
+              ),
+            );
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
               {
+                cachePath,
                 sourcePath: document.sourcePath,
                 sections: document.orderedSections.map((section) => ({
                   name: section.name,
@@ -49,63 +68,48 @@ server.registerTool(
               null,
               2,
             ),
-          );
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              cachePath,
-              sourcePath: document.sourcePath,
-              sections: document.orderedSections.map((section) => ({
-                name: section.name,
-                title: section.title,
-                items: section.items,
-              })),
-            },
-            null,
-            2,
-          ),
-        },
-      ],
-    };
-  },
-);
+          },
+        ],
+      };
+    },
+  );
 
-server.registerTool(
-  'generate_canonical_graph',
-  {
-    description: 'Generate the canonical graph model from Semantic Markdown.',
-    inputSchema: semanticInputSchema,
-  },
-  async ({ path, content, persist }) => {
-    const document = path ? await parseSemanticMarkdownFromFile(path) : parseSemanticMarkdown(content ?? '', path);
-    const graph = generateCanonicalGraph(document);
-    const graphText = JSON.stringify(graph, null, 2);
-    const graphPath = persist === false ? undefined : await saveArtifact(undefined, 'graph', graph.metadata.title ?? 'graph', 'json', graphText);
+  server.registerTool(
+    'generate_canonical_graph',
+    {
+      description: 'Generate the canonical graph model from Semantic Markdown.',
+      inputSchema: semanticInputSchema,
+    },
+    async ({ path, content, persist }) => {
+      const document = content ? parseSemanticMarkdown(content, path) : await parseSemanticMarkdownFromFile(path ?? '');
+      const graph = generateCanonicalGraph(document);
+      const graphText = JSON.stringify(graph, null, 2);
+      const graphPath = persist === false ? undefined : await saveArtifact(undefined, 'graph', graph.metadata.title ?? 'graph', 'json', graphText);
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              graphPath,
-              graphPreview: graphPreview(graph),
-              graph,
-            },
-            null,
-            2,
-          ),
-        },
-      ],
-    };
-  },
-);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                graphPath,
+                graphPreview: graphPreview(graph),
+                graph,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
+
+  return server;
+}
 
 async function main() {
-  await startMcpServer(server, { serviceName: 'semantic-core' });
+  await startMcpServer(createServer, { serviceName: 'semantic-core' });
 }
 
 main().catch((error) => {

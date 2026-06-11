@@ -81,7 +81,9 @@ export class DashboardPanel {
       .card { border: 1px solid var(--vscode-panel-border); border-radius: 10px; padding: 16px; background: var(--vscode-editor-background); }
       .title { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
       .muted { color: var(--vscode-descriptionForeground); }
-      button { margin: 6px 8px 0 0; padding: 8px 12px; }
+      .primary-actions { display: grid; gap: 10px; margin-top: 12px; }
+      button { margin: 0; padding: 10px 14px; }
+      button.primary { width: 100%; font-size: 14px; font-weight: 600; }
       code { background: var(--vscode-textBlockQuote-background); padding: 1px 4px; border-radius: 4px; }
       pre { white-space: pre-wrap; }
     </style>
@@ -91,18 +93,22 @@ export class DashboardPanel {
     <p class="muted">Remote MCP services: semantic-core, validator, compiler. Local artifact root: <code>${escapeHtml(config.artifactRoot)}</code>.</p>
     <div class="grid">
       <div class="card">
-        <h3>Quick actions</h3>
-        <button data-command="${commandIds.validateActiveSemanticMarkdown}">Validate active file</button>
-        <button data-command="${commandIds.generateCanonicalGraph}">Generate graph</button>
-        <button data-command="${commandIds.generateSpringBootSkeleton}">Generate Spring Boot</button>
-        <button data-command="${commandIds.openConfiguration}">Configure MCP servers</button>
-        <button data-command="${commandIds.refreshAll}">Refresh views</button>
+        <h3>Primary flow</h3>
+        <p class="muted">Use these buttons to move from input to model to code.</p>
+        <div class="primary-actions">
+          <button class="primary" data-command="${commandIds.createSemanticSourceTemplate}">Start from scratch</button>
+          <button class="primary" data-command="${commandIds.validateActiveSemanticMarkdown}">Validate input</button>
+          <button class="primary" data-command="${commandIds.generateCanonicalGraph}">Generate / refresh graph</button>
+          <button class="primary" data-command="${commandIds.generateSpringBootSkeleton}">Generate Spring Boot</button>
+        </div>
       </div>
       <div class="card">
-        <h3>Server config</h3>
+        <h3>Configuration</h3>
         <div>semantic-core: <code>${escapeHtml(config.semanticCoreUrl)}</code></div>
         <div>validator: <code>${escapeHtml(config.validatorUrl)}</code></div>
         <div>compiler: <code>${escapeHtml(config.compilerUrl)}</code></div>
+        <button data-command="${commandIds.openConfiguration}">Configure MCP servers</button>
+        <button data-command="${commandIds.refreshAll}">Refresh views</button>
       </div>
       <div class="card">
         <h3>Status</h3>

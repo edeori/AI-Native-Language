@@ -5,17 +5,22 @@ export const commandIds = {
   openConfiguration: 'aiNative.openConfiguration',
   openTutorial: 'aiNative.openTutorial',
   refreshAll: 'aiNative.refreshAll',
+  createSemanticSourceTemplate: 'aiNative.createSemanticSourceTemplate',
   validateActiveSemanticMarkdown: 'aiNative.validateActiveSemanticMarkdown',
   generateCanonicalGraph: 'aiNative.generateCanonicalGraph',
+  openGraphPreview: 'aiNative.openGraphPreview',
   generateSpringBootSkeleton: 'aiNative.generateSpringBootSkeleton',
   openArtifactsFolder: 'aiNative.openArtifactsFolder',
   showMcpStatus: 'aiNative.showMcpStatus',
+  importSourceProject: 'aiNative.importSourceProject',
 } as const;
 
 export const viewIds = {
-  workflow: 'aiNativeWorkflow',
-  artifacts: 'aiNativeArtifacts',
-  tutorials: 'aiNativeTutorials',
+  inputs: 'aiNativeInputs',
+  model: 'aiNativeModel',
+  generate: 'aiNativeGenerate',
+  review: 'aiNativeReview',
+  mcp: 'aiNativeMcpHub',
 } as const;
 
 export const serverNames = {
