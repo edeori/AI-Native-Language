@@ -103,8 +103,8 @@ export class ConfigurationPanel {
     </style>
   </head>
   <body>
-    <h2>AI Agent Configuration</h2>
-    <p class="muted">Choose the agent once. Configure MCP endpoints below.</p>
+    <h2>Settings</h2>
+    <p class="muted">Choose the agent once. Configure service endpoints below.</p>
     <div class="grid">
       <div class="card">
         <label for="reviewProvider">AI agent</label>
@@ -131,10 +131,6 @@ export class ConfigurationPanel {
         <label for="javaBasePackage">Java base package</label>
         <input id="javaBasePackage" type="text" value="${escapeAttr(config.javaBasePackage)}" />
 
-        <label class="row">
-          <input id="autoValidateOnSave" type="checkbox" ${config.autoValidateOnSave ? 'checked' : ''} />
-          <span>Auto validate on save</span>
-        </label>
       </div>
     </div>
     <div class="actions">
@@ -152,7 +148,6 @@ export class ConfigurationPanel {
       const compilerUrl = document.getElementById('compilerUrl');
       const artifactRoot = document.getElementById('artifactRoot');
       const javaBasePackage = document.getElementById('javaBasePackage');
-      const autoValidateOnSave = document.getElementById('autoValidateOnSave');
       const saveButton = document.getElementById('save');
       const testMcpButton = document.getElementById('testMcp');
       const testAgentButton = document.getElementById('testAgent');
@@ -165,8 +160,7 @@ export class ConfigurationPanel {
             validatorUrl: validatorUrl.value,
             compilerUrl: compilerUrl.value,
             artifactRoot: artifactRoot.value,
-            javaBasePackage: javaBasePackage.value,
-            autoValidateOnSave: autoValidateOnSave.checked
+            javaBasePackage: javaBasePackage.value
           }
         });
       });
@@ -186,7 +180,6 @@ export class ConfigurationPanel {
       compilerUrl: String(values.compilerUrl ?? this.currentValues.compilerUrl),
       artifactRoot: String(values.artifactRoot ?? this.currentValues.artifactRoot),
       javaBasePackage: String(values.javaBasePackage ?? this.currentValues.javaBasePackage),
-      autoValidateOnSave: Boolean(values.autoValidateOnSave ?? this.currentValues.autoValidateOnSave),
       reviewProvider,
       reviewMode: defaultReviewMode(reviewProvider),
       reviewModel: defaultReviewModel(reviewProvider),

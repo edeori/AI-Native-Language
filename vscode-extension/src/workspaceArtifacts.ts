@@ -17,7 +17,11 @@ export async function resolveArtifactRoot(): Promise<vscode.Uri | undefined> {
   }
 
   const config = getConfig();
-  return vscode.Uri.joinPath(folders[0].uri, config.artifactRoot);
+  const activeDocument = vscode.window.activeTextEditor?.document;
+  const matchingFolder = activeDocument
+    ? folders.find((folder) => activeDocument.uri.fsPath.startsWith(folder.uri.fsPath))
+    : undefined;
+  return vscode.Uri.joinPath((matchingFolder ?? folders[0]).uri, config.artifactRoot);
 }
 
 export async function listArtifactNodes(maxDepth = 2): Promise<ArtifactNode[]> {

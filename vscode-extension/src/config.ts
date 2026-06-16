@@ -7,7 +7,6 @@ export interface ExtensionConfig {
   compilerUrl: string;
   artifactRoot: string;
   javaBasePackage: string;
-  autoValidateOnSave: boolean;
   reviewProvider: 'codex' | 'claude';
   reviewMode: 'local' | 'cli' | 'endpoint' | 'command' | 'prompt-file';
   reviewModel: string;
@@ -31,7 +30,6 @@ export function getConfig(): ExtensionConfig {
     compilerUrl: fileConfig.compilerUrl ?? configuration.get<string>('mcp.compilerUrl', 'http://localhost:3003/mcp'),
     artifactRoot: fileConfig.artifactRoot ?? configuration.get<string>('artifactRoot', '.ai-native'),
     javaBasePackage: fileConfig.javaBasePackage ?? configuration.get<string>('java.basePackage', 'com.example.generated'),
-    autoValidateOnSave: fileConfig.autoValidateOnSave ?? configuration.get<boolean>('autoValidateOnSave', false),
     reviewProvider,
     reviewMode: reviewMode === 'local' || reviewMode === 'prompt-file' ? 'cli' : reviewMode,
     reviewModel: normalizeReviewModel(reviewProvider, reviewModel),

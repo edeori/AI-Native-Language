@@ -14,6 +14,47 @@ export interface AgenticReviewIssue {
   sourceLine?: number;
 }
 
+export interface AgenticDiagramItem {
+  name: string;
+  detail?: string;
+  sourceRef?: string;
+}
+
+export interface AgenticDiagramLayer {
+  title: string;
+  description?: string;
+  accent?: string;
+  items: AgenticDiagramItem[];
+}
+
+export interface AgenticDiagramClassification {
+  title?: string;
+  summary?: string;
+  layers: AgenticDiagramLayer[];
+  databaseSchema?: {
+    title?: string;
+    summary?: string;
+    tables: Array<{
+      name: string;
+      description?: string;
+      primaryKey?: string[];
+      columns: Array<{
+        name: string;
+        type?: string;
+        detail?: string;
+      }>;
+    }>;
+    relationships?: Array<{
+      fromTable: string;
+      fromColumn: string;
+      toTable: string;
+      toColumn: string;
+      cardinality: string;
+      description?: string;
+    }>;
+  };
+}
+
 export interface AgenticReviewContext {
   provider: ExtensionConfig['reviewProvider'];
   mode: ExtensionConfig['reviewMode'];
@@ -24,6 +65,8 @@ export interface AgenticReviewContext {
   promptFileName: string;
   workspaceRoot?: string;
   sourcePath: string;
+  artifactDir?: string;
+  artifactName?: string;
   semanticSource: string;
   expectationDocuments?: Array<{ path: string; content: string }>;
   graph: unknown;
@@ -54,6 +97,7 @@ export interface AgenticReviewResult {
   notes: string[];
   issues: AgenticReviewIssue[];
   refinedSemanticMarkdown?: string;
+  diagramClassification?: AgenticDiagramClassification;
 }
 
 export interface AgentRuntimeProbeResult {
@@ -68,6 +112,10 @@ export interface AgentRuntimeProbeResult {
 
 export async function runAgenticReview(context: AgenticReviewContext): Promise<AgenticReviewResult> {
   const prompt = buildPrompt(context);
+  return runAgenticPrompt(context, prompt);
+}
+
+export async function runAgenticPrompt(context: AgenticReviewContext, prompt: string): Promise<AgenticReviewResult> {
   let result: AgenticReviewResult;
 
   if (context.mode === 'endpoint' && context.endpoint) {
@@ -300,10 +348,10 @@ async function persistReviewArtifacts(
     return result;
   }
 
-  const reviewDir = path.join(context.workspaceRoot, '.ai-native', 'review');
+  const reviewDir = context.artifactDir ?? path.join(context.workspaceRoot, '.ai-native', 'review');
   await fs.mkdir(reviewDir, { recursive: true });
 
-  const baseName = `${slugify(path.basename(context.sourcePath))}.${slugify(result.provider)}.${slugify(result.mode)}`;
+  const baseName = `${slugify(context.artifactName ?? path.basename(context.sourcePath))}.${slugify(result.provider)}.${slugify(result.mode)}`;
   const jsonPath = path.join(reviewDir, `${baseName}.json`);
   const mdPath = path.join(reviewDir, `${baseName}.md`);
   const promptPath = path.join(reviewDir, `${baseName}.prompt.md`);
@@ -322,6 +370,7 @@ async function persistReviewArtifacts(
     notes: result.notes,
     issues: result.issues,
     refinedSemanticMarkdown: result.refinedSemanticMarkdown,
+    diagramClassification: result.diagramClassification,
     graph: context.graph,
   };
 
@@ -344,6 +393,49 @@ async function persistReviewArtifacts(
   ];
   if (result.refinedSemanticMarkdown) {
     markdownLines.push('', '## Refined Semantic Markdown', result.refinedSemanticMarkdown);
+  }
+  if (result.diagramClassification?.layers?.length) {
+    markdownLines.push('', '## Diagram Classification');
+    if (result.diagramClassification.title) {
+      markdownLines.push(`- title: ${result.diagramClassification.title}`);
+    }
+    if (result.diagramClassification.summary) {
+      markdownLines.push(`- summary: ${result.diagramClassification.summary}`);
+    }
+    for (const layer of result.diagramClassification.layers) {
+      markdownLines.push(
+        '',
+        `### ${layer.title}`,
+        layer.description ? layer.description : '',
+        ...layer.items.map((item) => `- ${item.name}${item.detail ? ` — ${item.detail}` : ''}`),
+      );
+    }
+  }
+  if (result.diagramClassification?.databaseSchema?.tables?.length) {
+    markdownLines.push('', '## Database Schema');
+    if (result.diagramClassification.databaseSchema.title) {
+      markdownLines.push(`- title: ${result.diagramClassification.databaseSchema.title}`);
+    }
+    if (result.diagramClassification.databaseSchema.summary) {
+      markdownLines.push(`- summary: ${result.diagramClassification.databaseSchema.summary}`);
+    }
+    for (const table of result.diagramClassification.databaseSchema.tables) {
+      markdownLines.push(
+        '',
+        `### ${table.name}`,
+        table.description ? table.description : '',
+        ...(table.primaryKey?.length ? [`- primary key: ${table.primaryKey.join(', ')}`] : []),
+        ...table.columns.map((column) => `- ${column.name}${column.type ? `: ${column.type}` : ''}${column.detail ? ` — ${column.detail}` : ''}`),
+      );
+    }
+    if (result.diagramClassification.databaseSchema.relationships?.length) {
+      markdownLines.push('', '### Relationships');
+      for (const relationship of result.diagramClassification.databaseSchema.relationships) {
+        markdownLines.push(
+          `- ${relationship.fromTable}.${relationship.fromColumn} -> ${relationship.toTable}.${relationship.toColumn} (${relationship.cardinality})${relationship.description ? ` — ${relationship.description}` : ''}`,
+        );
+      }
+    }
   }
   markdownLines.push(
     '',
@@ -607,12 +699,13 @@ function buildPrompt(context: AgenticReviewContext): string {
     '',
     'Task:',
     'Review the slice against the policy and the graph. Return ONLY valid JSON with this schema:',
-    '{ "summary": "string", "notes": ["string"], "issues": [{ "severity": "info|warning|gap|conflict|violation", "code": "string", "message": "string", "sourceRef": "string?", "sourceLine": 0? }], "refinedSemanticMarkdown": "string?" }',
+    '{ "summary": "string", "notes": ["string"], "issues": [{ "severity": "info|warning|gap|conflict|violation", "code": "string", "message": "string", "sourceRef": "string?", "sourceLine": 0? }], "refinedSemanticMarkdown": "string?", "diagramClassification": { "title": "string?", "summary": "string?", "layers": [{ "title": "string", "description": "string?", "accent": "string?", "items": [{ "name": "string", "detail": "string?", "sourceRef": "string?" }] }], "databaseSchema": { "title": "string?", "summary": "string?", "tables": [{ "name": "string", "description": "string?", "primaryKey": ["string?"]?, "columns": [{ "name": "string", "type": "string?", "detail": "string?" }] }], "relationships": [{ "fromTable": "string", "fromColumn": "string", "toTable": "string", "toColumn": "string", "cardinality": "1:1|1:N|N:1|N:M", "description": "string?" }] } } }',
+    'The diagramClassification must group the graph into a software architecture diagram and a database schema diagram. Use software architecture lanes named: Web / HTTP ingress, Integration interfaces, Security, Services, Persistence / storage. Do not use a Logic layer or API documentation lane in the architecture diagram. Put websocket, redis, mail, object storage, message queues, and external HTTP clients under integration interfaces or persistence, not web ingress. Put scheduled jobs and async listeners under processes or service responsibilities, not web ingress. Include all significant components. Do not truncate with "+more". Flow scenarios must be separate rows with steps listed vertically.',
     'Do not wrap the JSON in markdown fences. Do not echo the input. Report only findings that are supported by the semantic source and policy.',
   ].join('\n');
 }
 
-function parseStructuredReviewOutput(output: string, fallbackSummary: string): { summary: string; notes: string[]; issues: AgenticReviewIssue[]; refinedSemanticMarkdown?: string } {
+function parseStructuredReviewOutput(output: string, fallbackSummary: string): { summary: string; notes: string[]; issues: AgenticReviewIssue[]; refinedSemanticMarkdown?: string; diagramClassification?: AgenticDiagramClassification } {
   const candidates = extractJsonCandidates(output);
   for (const candidate of candidates) {
     const parsed = safeJsonParse(candidate);
@@ -626,6 +719,7 @@ function parseStructuredReviewOutput(output: string, fallbackSummary: string): {
       notes: extractStringArray(item.notes),
       issues: normalizeIssues(item.issues),
       refinedSemanticMarkdown: extractString(item.refinedSemanticMarkdown),
+      diagramClassification: normalizeDiagramClassification(item.diagramClassification),
     };
   }
 
@@ -635,6 +729,102 @@ function parseStructuredReviewOutput(output: string, fallbackSummary: string): {
     notes: lines.slice(1),
     issues: [],
     refinedSemanticMarkdown: undefined,
+    diagramClassification: undefined,
+  };
+}
+
+function normalizeDiagramClassification(value: unknown): AgenticDiagramClassification | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const item = value as Record<string, unknown>;
+  const layers = Array.isArray(item.layers)
+    ? item.layers
+        .map((layer) => (layer && typeof layer === 'object' ? (layer as Record<string, unknown>) : undefined))
+        .filter((layer): layer is Record<string, unknown> => Boolean(layer))
+        .map((layer) => ({
+          title: extractString(layer.title) ?? 'Layer',
+          description: extractString(layer.description),
+          accent: extractString(layer.accent),
+          items: Array.isArray(layer.items)
+            ? layer.items
+                .map((entry) => (entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : undefined))
+                .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+                .map((entry) => ({
+                  name: extractString(entry.name) ?? extractString(entry.label) ?? 'Unnamed component',
+                  detail: extractString(entry.detail),
+                  sourceRef: extractString(entry.sourceRef),
+                }))
+            : [],
+        }))
+    : [];
+
+  const databaseSchema = item.databaseSchema && typeof item.databaseSchema === 'object'
+    ? normalizeDatabaseSchema(item.databaseSchema)
+    : undefined;
+
+  if (layers.length === 0 && !databaseSchema) {
+    return undefined;
+  }
+
+  return {
+    title: extractString(item.title),
+    summary: extractString(item.summary),
+    layers,
+    databaseSchema,
+  };
+}
+
+function normalizeDatabaseSchema(value: unknown): AgenticDiagramClassification['databaseSchema'] | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const item = value as Record<string, unknown>;
+  const tables = Array.isArray(item.tables)
+    ? item.tables
+        .map((table) => (table && typeof table === 'object' ? (table as Record<string, unknown>) : undefined))
+        .filter((table): table is Record<string, unknown> => Boolean(table))
+        .map((table) => ({
+          name: extractString(table.name) ?? 'table',
+          description: extractString(table.description),
+          primaryKey: extractStringArray(table.primaryKey),
+          columns: Array.isArray(table.columns)
+            ? table.columns
+                .map((column) => (column && typeof column === 'object' ? (column as Record<string, unknown>) : undefined))
+                .filter((column): column is Record<string, unknown> => Boolean(column))
+                .map((column) => ({
+                  name: extractString(column.name) ?? 'column',
+                  type: extractString(column.type),
+                  detail: extractString(column.detail),
+                }))
+            : [],
+        }))
+    : [];
+  const relationships = Array.isArray(item.relationships)
+    ? item.relationships
+        .map((relationship) => (relationship && typeof relationship === 'object' ? (relationship as Record<string, unknown>) : undefined))
+        .filter((relationship): relationship is Record<string, unknown> => Boolean(relationship))
+        .map((relationship) => ({
+          fromTable: extractString(relationship.fromTable) ?? 'source_table',
+          fromColumn: extractString(relationship.fromColumn) ?? 'source_column',
+          toTable: extractString(relationship.toTable) ?? 'target_table',
+          toColumn: extractString(relationship.toColumn) ?? 'target_column',
+          cardinality: extractString(relationship.cardinality) ?? 'N:1',
+          description: extractString(relationship.description),
+        }))
+    : [];
+
+  if (tables.length === 0 && relationships.length === 0) {
+    return undefined;
+  }
+
+  return {
+    title: extractString(item.title),
+    summary: extractString(item.summary),
+    tables,
+    relationships,
   };
 }
 

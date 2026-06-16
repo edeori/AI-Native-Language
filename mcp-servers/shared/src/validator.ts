@@ -150,7 +150,7 @@ function assessDependencies(document: SemanticDocument, issues: ValidationIssue[
   }
 }
 
-function assessQuality(document: SemanticDocument, issues: ValidationIssue[]): void {
+function assessQuality(document: SemanticDocument, graph: CanonicalGraph, issues: ValidationIssue[]): void {
   const processItems = getSectionItems(document, 'processes');
   if (processItems.length === 0) {
     issues.push(createIssue('gap', 'missing_processes', 'No processes were defined.', '#processes'));
@@ -190,6 +190,25 @@ function assessQuality(document: SemanticDocument, issues: ValidationIssue[]): v
       ),
     );
   }
+
+  const persistenceSignals = [
+    getSectionText(document, 'dependencies'),
+    getSectionText(document, 'processes'),
+    getSectionText(document, 'data_flows'),
+    getSectionText(document, 'examples'),
+  ].join(' ');
+  const hasPersistenceIntent = /persistence|database|repository|table|entity|sql|postgres|store|storage|file/i.test(persistenceSignals);
+  const graphSchema = graph.metadata?.databaseSchema;
+  if (hasPersistenceIntent && !(graphSchema && graphSchema.tables.length > 0)) {
+    issues.push(
+      createIssue(
+        'warning',
+        'missing_database_schema',
+        'Persistence is present, but no database schema was inferred from the graph. Add explicit table/column modeling or refine the semantic source.',
+        '#dependencies',
+      ),
+    );
+  }
 }
 
 export function validateSemanticDocument(
@@ -200,7 +219,7 @@ export function validateSemanticDocument(
   const issues: ValidationIssue[] = [];
 
   assessSectionCompleteness(document, issues);
-  assessQuality(document, issues);
+  assessQuality(document, graph, issues);
   assessContradictions(document, issues);
   assessSecurity(document, options?.policyText ?? validationPolicyText, issues);
   assessDependencies(document, issues);

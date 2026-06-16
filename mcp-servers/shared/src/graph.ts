@@ -1,6 +1,7 @@
 import type { CanonicalGraph, GraphEdge, GraphNode, SemanticDocument } from './models.js';
 import { isEnterpriseLikeDocument, loadReferenceCorpus } from './reference-corpus.js';
 import { deriveSystemName, getSectionItems, getSectionText } from './semantic-markdown.js';
+import { generateDatabaseSchema } from './database-schema.js';
 
 function slugify(value: string): string {
   return value
@@ -461,8 +462,7 @@ function inferGraphNodes(document: SemanticDocument, systemId: string): { nodes:
 export function generateCanonicalGraph(document: SemanticDocument): CanonicalGraph {
   const systemId = `sys.${slugify(deriveSystemName(document))}`;
   const { nodes, edges } = inferGraphNodes(document, systemId);
-
-  return {
+  const graph: CanonicalGraph = {
     schemaVersion: '1.0.0',
     nodes,
     edges,
@@ -472,6 +472,10 @@ export function generateCanonicalGraph(document: SemanticDocument): CanonicalGra
       createdAt: new Date().toISOString(),
     },
   };
+  const databaseSchema = generateDatabaseSchema(document, graph);
+  graph.metadata.databaseSchema = databaseSchema;
+
+  return graph;
 }
 
 export function graphPreview(graph: CanonicalGraph): string {

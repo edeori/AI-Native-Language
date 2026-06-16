@@ -14,6 +14,62 @@ type GraphEdge = {
   type: string;
 };
 
+interface DiagramItem {
+  name: string;
+  detail?: string;
+  sourceRef?: string;
+}
+
+interface DiagramLayer {
+  title: string;
+  description?: string;
+  accent?: string;
+  items: DiagramItem[];
+}
+
+interface DiagramClassification {
+  title?: string;
+  summary?: string;
+  layers: DiagramLayer[];
+  databaseSchema?: {
+    title?: string;
+    summary?: string;
+    tables: Array<{
+      name: string;
+      description?: string;
+      primaryKey?: string[];
+      columns: Array<{
+        name: string;
+        type?: string;
+        detail?: string;
+      }>;
+    }>;
+    relationships?: Array<{
+      fromTable: string;
+      fromColumn: string;
+      toTable: string;
+      toColumn: string;
+      cardinality: string;
+      description?: string;
+    }>;
+  };
+}
+
+type DatabaseColumn = {
+  name: string;
+  type?: string;
+  detail?: string;
+};
+
+type DatabaseTable = {
+  name: string;
+  description?: string;
+  primaryKey?: string[];
+  columns: DatabaseColumn[];
+};
+
+type DatabaseTables = NonNullable<DiagramClassification['databaseSchema']>['tables'];
+
 type CanonicalGraph = {
   schemaVersion?: string;
   nodes: GraphNode[];
@@ -22,6 +78,23 @@ type CanonicalGraph = {
     title?: string;
     sourcePath?: string;
     createdAt?: string;
+    reviewedAt?: string;
+    databaseSchema?: DiagramClassification['databaseSchema'];
+    review?: {
+      reviewedAt?: string;
+      diagramClassification?: DiagramClassification;
+      provider?: string;
+      mode?: string;
+      model?: string;
+      bridgeAction?: string;
+      usedEndpoint?: string;
+      promptPath?: string;
+      reviewArtifactPath?: string;
+      promptArtifactPath?: string;
+      summary?: string;
+      notes?: string[];
+      issues?: Array<{ severity: string; code: string; message: string }>;
+    };
   };
 };
 
@@ -156,9 +229,11 @@ export class GraphPreviewPanel {
     const cspSource = this.panel.webview.cspSource;
     const nonce = createNonce();
     const insights = deriveInsights(this.graph);
+    const diagramClassification = extractDiagramClassification(this.graph);
+    const artifacts = extractArtifactSummary(this.graph);
     const graphJson = escapeHtml(JSON.stringify(this.graph, null, 2));
     const summary = `nodes=${this.graph.nodes.length}, edges=${this.graph.edges.length}`;
-    const schematic = renderSchematic(insights);
+    const applicationDiagram = renderApplicationDiagram(insights, diagramClassification);
 
     this.panel.webview.html = /* html */ `<!doctype html>
 <html lang="en">
@@ -202,29 +277,37 @@ export class GraphPreviewPanel {
         font-size: 12px;
         color: var(--vscode-descriptionForeground);
       }
-      .overview {
+      .artifact-strip {
         display: grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 10px;
         margin: 14px 0 12px;
       }
-      .overview-card {
+      .artifact-card {
         border: 1px solid var(--vscode-panel-border);
         border-radius: 12px;
         padding: 10px 12px;
         background: var(--vscode-sideBar-background);
+        display: grid;
+        gap: 4px;
       }
-      .overview-label {
+      .artifact-label {
         font-size: 11px;
         color: var(--vscode-descriptionForeground);
         text-transform: uppercase;
         letter-spacing: 0.08em;
         font-weight: 700;
       }
-      .overview-value {
-        font-size: 20px;
-        font-weight: 800;
-        margin-top: 4px;
+      .artifact-value {
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.35;
+        word-break: break-word;
+      }
+      .artifact-meta {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.35;
       }
       .reading-order {
         border: 1px solid var(--vscode-panel-border);
@@ -242,6 +325,363 @@ export class GraphPreviewPanel {
         flex-wrap: wrap;
         gap: 8px;
         margin: 12px 0 14px;
+      }
+      .application-diagram {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 16px;
+        background: var(--vscode-sideBar-background);
+        padding: 14px;
+        margin-bottom: 14px;
+      }
+      .application-diagram-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+      .application-diagram-title {
+        font-size: 14px;
+        font-weight: 800;
+      }
+      .application-diagram-subtitle {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .application-diagram-grid {
+        display: grid;
+        grid-template-columns: minmax(180px, 1fr) 28px minmax(180px, 1fr) 28px minmax(180px, 1fr) 28px minmax(180px, 1fr);
+        gap: 10px;
+        align-items: stretch;
+      }
+      .application-layer {
+        border-radius: 14px;
+        padding: 12px;
+        border: 1px solid var(--vscode-panel-border);
+        background: var(--vscode-editor-background);
+        min-height: 340px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .application-layer.highlight {
+        background: linear-gradient(180deg, var(--vscode-editor-background), var(--vscode-editor-inactiveSelectionBackground));
+      }
+      .application-layer-title {
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--vscode-descriptionForeground);
+      }
+      .application-layer-subtitle {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.35;
+      }
+      .application-layer-items {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        flex: 1 1 auto;
+      }
+      .application-layer-item {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 12px;
+        background: var(--vscode-sideBar-background);
+        padding: 10px 12px;
+        display: grid;
+        gap: 4px;
+      }
+      .application-layer-item-title {
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.25;
+      }
+      .application-layer-item-meta {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.35;
+      }
+      .application-layer-divider {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--vscode-descriptionForeground);
+        font-size: 20px;
+        font-weight: 700;
+      }
+      .drawio-board {
+        display: grid;
+        gap: 12px;
+      }
+      .drawio-stage-row {
+        display: flex;
+        gap: 12px;
+        align-items: stretch;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
+      .drawio-stage {
+        flex: 1 1 0;
+        min-width: 180px;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 14px;
+        background: linear-gradient(180deg, var(--vscode-editor-background), var(--vscode-sideBar-background));
+        padding: 12px;
+        display: grid;
+        gap: 6px;
+      }
+      .drawio-stage-title {
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .drawio-stage-desc {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.35;
+      }
+      .drawio-stage-arrow {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        color: var(--vscode-descriptionForeground);
+        font-weight: 700;
+      }
+      .drawio-swimlanes {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(220px, 1fr));
+        gap: 12px;
+        align-items: stretch;
+      }
+      .drawio-lane {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 16px;
+        background: var(--vscode-editor-background);
+        display: grid;
+        grid-template-rows: auto 1fr;
+        overflow: hidden;
+        min-height: 360px;
+      }
+      .drawio-lane-header {
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding: 12px 12px 10px;
+        background: linear-gradient(180deg, color-mix(in srgb, var(--vscode-editor-background) 94%, transparent), var(--vscode-sideBar-background));
+      }
+      .drawio-lane-title {
+        font-size: 13px;
+        font-weight: 800;
+      }
+      .drawio-lane-desc {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.35;
+        margin-top: 4px;
+      }
+      .drawio-lane-body {
+        padding: 12px;
+        display: grid;
+        gap: 10px;
+        align-content: start;
+      }
+      .drawio-box {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 12px;
+        background: linear-gradient(180deg, var(--vscode-sideBar-background), var(--vscode-editor-background));
+        padding: 10px 12px;
+        display: grid;
+        gap: 4px;
+        box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--box-accent) 22%, transparent);
+      }
+      .drawio-box-title {
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.25;
+      }
+      .drawio-box-detail {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.35;
+      }
+      .drawio-box-tag {
+        display: inline-flex;
+        align-self: start;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 800;
+        color: var(--vscode-editor-background);
+        background: var(--box-accent);
+      }
+      .drawio-notes {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: 1fr 1fr;
+      }
+      .drawio-note {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 12px;
+        background: var(--vscode-editor-background);
+        padding: 10px 12px;
+      }
+      .drawio-note-title {
+        font-size: 12px;
+        font-weight: 800;
+        margin-bottom: 4px;
+      }
+      .database-schema {
+        display: grid;
+        gap: 10px;
+      }
+      .database-schema-summary {
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .database-schema-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 12px;
+      }
+      .database-schema-table {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 16px;
+        background: linear-gradient(180deg, var(--vscode-editor-background), var(--vscode-sideBar-background));
+        padding: 0;
+        overflow: hidden;
+        display: grid;
+        gap: 0;
+      }
+      .database-schema-table-header {
+        padding: 12px 14px 10px;
+        background: linear-gradient(180deg, color-mix(in srgb, var(--vscode-editor-background) 92%, transparent), var(--vscode-sideBar-background));
+        border-bottom: 1px solid var(--vscode-panel-border);
+      }
+      .database-schema-table-title {
+        font-size: 13px;
+        font-weight: 800;
+      }
+      .database-schema-table-description {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        margin-top: 4px;
+        line-height: 1.35;
+      }
+      .database-schema-columns {
+        display: grid;
+        gap: 8px;
+        padding: 12px 14px 14px;
+      }
+      .database-schema-column {
+        display: grid;
+        grid-template-columns: minmax(120px, 180px) 1fr;
+        gap: 10px;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 12px;
+        background: var(--vscode-editor-background);
+        padding: 9px 10px;
+      }
+      .database-schema-column-name {
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.25;
+      }
+      .database-schema-column-detail {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.4;
+      }
+      .er-canvas {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 16px;
+        background: linear-gradient(180deg, var(--vscode-editor-background), var(--vscode-sideBar-background));
+        overflow: auto;
+        padding: 12px;
+      }
+      .er-svg {
+        display: block;
+        min-width: 100%;
+      }
+      .er-table {
+        fill: var(--vscode-editor-background);
+        stroke: color-mix(in srgb, var(--vscode-editor-foreground) 18%, var(--vscode-panel-border));
+        stroke-width: 1.3;
+      }
+      .er-table-header {
+        fill: color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-sideBar-background));
+        stroke: none;
+      }
+      .er-table-title {
+        fill: var(--vscode-foreground);
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .er-table-description {
+        fill: var(--vscode-descriptionForeground);
+        font-size: 8px;
+      }
+      .er-column-name {
+        fill: var(--vscode-foreground);
+        font-size: 10px;
+        font-weight: 700;
+      }
+      .er-column-type {
+        fill: var(--vscode-descriptionForeground);
+        font-size: 9px;
+      }
+      .er-divider {
+        stroke: color-mix(in srgb, var(--vscode-editor-foreground) 12%, var(--vscode-panel-border));
+        stroke-width: 1;
+      }
+      .er-edge {
+        fill: none;
+        stroke: color-mix(in srgb, var(--vscode-foreground) 88%, var(--vscode-descriptionForeground));
+        stroke-width: 1.7;
+        opacity: 0.85;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .er-terminal {
+        fill: var(--vscode-foreground);
+        opacity: 0.82;
+      }
+      .er-relationship {
+        fill: color-mix(in srgb, var(--vscode-editor-background) 94%, var(--vscode-sideBar-background));
+        stroke: var(--vscode-panel-border);
+        stroke-width: 1.3;
+        opacity: 0.97;
+      }
+      .er-relationship-label {
+        fill: var(--vscode-foreground);
+        font-size: 8px;
+        font-weight: 800;
+        letter-spacing: 0.2px;
+      }
+      .er-relation-cardinality {
+        fill: var(--vscode-descriptionForeground);
+        font-size: 9px;
+        font-weight: 700;
+      }
+      .er-pk-label {
+        fill: var(--vscode-descriptionForeground);
+        font-size: 9px;
+        font-weight: 700;
+        font-style: italic;
+      }
+      .er-end-label {
+        fill: var(--vscode-descriptionForeground);
+        font-size: 9px;
+        font-weight: 800;
+      }
+      .application-diagram-empty {
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        line-height: 1.35;
       }
       .legend-group {
         display: flex;
@@ -588,13 +1028,27 @@ export class GraphPreviewPanel {
       </div>
     </div>
 
-    <div class="overview">
-      <div class="overview-card"><div class="overview-label">External deps</div><div class="overview-value">${insights.externalDependencies.length}</div></div>
-      <div class="overview-card"><div class="overview-label">Interfaces</div><div class="overview-value">${insights.interfaces.length}</div></div>
-      <div class="overview-card"><div class="overview-label">Modules</div><div class="overview-value">${insights.modules.length}</div></div>
-      <div class="overview-card"><div class="overview-label">Services</div><div class="overview-value">${insights.services.length}</div></div>
-      <div class="overview-card"><div class="overview-label">Persistence</div><div class="overview-value">${insights.persistence.length}</div></div>
-      <div class="overview-card"><div class="overview-label">Security</div><div class="overview-value">${insights.security.length}</div></div>
+    <div class="artifact-strip">
+      <div class="artifact-card">
+        <div class="artifact-label">Semantic view</div>
+        <div class="artifact-value">${escapeHtml(artifacts.semanticView)}</div>
+        <div class="artifact-meta">${escapeHtml(artifacts.semanticMeta)}</div>
+      </div>
+      <div class="artifact-card">
+        <div class="artifact-label">Validation</div>
+        <div class="artifact-value">${escapeHtml(artifacts.validationView)}</div>
+        <div class="artifact-meta">${escapeHtml(artifacts.validationMeta)}</div>
+      </div>
+      <div class="artifact-card">
+        <div class="artifact-label">Review</div>
+        <div class="artifact-value">${escapeHtml(artifacts.reviewView)}</div>
+        <div class="artifact-meta">${escapeHtml(artifacts.reviewMeta)}</div>
+      </div>
+      <div class="artifact-card">
+        <div class="artifact-label">Graph</div>
+        <div class="artifact-value">${escapeHtml(artifacts.graphView)}</div>
+        <div class="artifact-meta">${escapeHtml(artifacts.graphMeta)}</div>
+      </div>
     </div>
 
     <div class="reading-order">
@@ -602,18 +1056,11 @@ export class GraphPreviewPanel {
       1) identify the incoming interface, 2) confirm the security gate, 3) follow the service path, 4) check external calls, 5) verify persistence, 6) read the outcome.
     </div>
 
-    <div class="legend">
-      <div class="legend-group">
-        <span class="legend-item"><span class="swatch" style="background:#0ea5e9"></span>Ingress</span>
-        <span class="legend-item"><span class="swatch" style="background:#ef4444"></span>Security gate</span>
-        <span class="legend-item"><span class="swatch" style="background:#22c55e"></span>Service core</span>
-        <span class="legend-item"><span class="swatch" style="background:#8b5cf6"></span>External call</span>
-        <span class="legend-item"><span class="swatch" style="background:#f59e0b"></span>Persistence / outcome</span>
-      </div>
-    </div>
+    ${applicationDiagram}
 
-    <div class="canvas">
-      ${schematic}
+    <div class="panel">
+      <div class="panel-title">External dependencies</div>
+      <div class="insight-list">${renderList(insights.externalDependencies)}</div>
     </div>
 
     <div class="flow-panel">
@@ -623,45 +1070,17 @@ export class GraphPreviewPanel {
       </div>
     </div>
 
-    <div class="footer">
-      <div class="panel">
-        <div class="panel-title">What you should read from the graph</div>
-        <div class="insight-group">
-          <div class="insight-label">External dependencies</div>
-          <div class="insight-list">${renderList(insights.externalDependencies)}</div>
-        </div>
-        <div class="insight-group">
-          <div class="insight-label">Interfaces</div>
-          <div class="insight-list">${renderList(insights.interfaces)}</div>
-        </div>
-        <div class="insight-group">
-          <div class="insight-label">Services</div>
-          <div class="insight-list">${renderList(insights.services)}</div>
-        </div>
-        <div class="insight-group">
-          <div class="insight-label">Persistence</div>
-          <div class="insight-list">${renderList(insights.persistence)}</div>
-        </div>
-        <div class="insight-group">
-          <div class="insight-label">Security</div>
-          <div class="insight-list">${renderList(insights.security)}</div>
-        </div>
-        <div class="insight-group">
-          <div class="insight-label">Key relations</div>
-          <div class="insight-list">${renderList(insights.relationships)}</div>
-        </div>
-        <div class="insight-group">
-          <div class="insight-label">Flow trace</div>
-          <ol class="flow-list">${renderFlowSteps(insights.flowTrace)}</ol>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-title">Graph snapshot</div>
-        <details>
-          <summary>Raw JSON</summary>
-          <pre>${graphJson}</pre>
-        </details>
-      </div>
+    <div class="panel">
+      <div class="panel-title">Database schema</div>
+      ${renderDatabaseSchema(extractDatabaseSchema(this.graph), insights)}
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Graph snapshot</div>
+      <details>
+        <summary>Raw JSON</summary>
+        <pre>${graphJson}</pre>
+      </details>
     </div>
   </body>
 </html>`;
@@ -1043,6 +1462,560 @@ function renderSchematic(insights: ReturnType<typeof deriveInsights>): string {
       </div>
     </div>
   `;
+}
+
+function renderApplicationDiagram(
+  insights: ReturnType<typeof deriveInsights>,
+  diagramClassification?: DiagramClassification,
+): string {
+  const integrationItems = insights.externalDependencies.filter((item) =>
+    /websocket|redis|mail|kafka|queue|stream|object storage|http client|webhook|mqtt|rabbit|nsq|socket/i.test(item),
+  );
+  const persistenceItems = insights.persistence.filter((item) =>
+    /postgres|mysql|oracle|database|sql|migration|flyway|liquibase|object storage|minio|s3|redis/i.test(item),
+  );
+  const fallbackLayers: DiagramLayer[] = [
+    {
+      title: 'Web / HTTP ingress',
+      description: 'HTTP endpoints and inbound UI or API entry families.',
+      accent: '#0ea5e9',
+      items: [
+        ...insights.interfaces.map((item) => ({ name: item, detail: 'HTTP / web ingress' })),
+      ],
+    },
+    {
+      title: 'Integration interfaces',
+      description: 'WebSocket, Redis, Mail, messaging, and external client boundaries.',
+      accent: '#f59e0b',
+      items: [
+        ...integrationItems.map((item) => ({ name: item, detail: 'External integration' })),
+      ],
+    },
+    {
+      title: 'Security',
+      description: 'Authentication, authorization, and policy gates.',
+      accent: '#ef4444',
+      items: [
+        ...insights.security.map((item) => ({ name: item, detail: 'Security guard' })),
+      ],
+    },
+    {
+      title: 'Services',
+      description: 'Application services, processors, and orchestration components.',
+      accent: '#8b5cf6',
+      items: [
+        ...insights.services.map((item) => ({ name: item, detail: 'Service / processor' })),
+      ],
+    },
+    {
+      title: 'Persistence / storage',
+      description: 'Databases, tables, migrations, and durable stores.',
+      accent: '#22c55e',
+      items: [
+        ...persistenceItems.map((item) => ({ name: item, detail: 'Persistence target' })),
+      ],
+    },
+  ];
+
+  const layers = diagramClassification?.layers?.length ? diagramClassification.layers : fallbackLayers;
+  const colors = ['#0ea5e9', '#f59e0b', '#ef4444', '#22c55e', '#8b5cf6', '#14b8a6'];
+
+  const renderLane = (layer: DiagramLayer, index: number): string => {
+    const accent = layer.accent ?? colors[index % colors.length];
+    const items = layer.items.length > 0
+      ? layer.items
+          .map(
+            (item) => `
+              <div class="drawio-box" style="--box-accent:${accent};">
+                <div class="drawio-box-tag">${escapeHtml(layer.title)}</div>
+                <div class="drawio-box-title">${escapeHtml(item.name)}</div>
+                <div class="drawio-box-detail">${escapeHtml(item.detail || 'Component')}</div>
+              </div>
+            `,
+          )
+          .join('')
+      : `
+        <div class="drawio-box" style="--box-accent:${accent};">
+          <div class="drawio-box-tag">${escapeHtml(layer.title)}</div>
+          <div class="drawio-box-title">None detected</div>
+          <div class="drawio-box-detail">No component inferred from the source slice.</div>
+        </div>
+      `;
+
+    return `
+      <div class="drawio-lane">
+        <div class="drawio-lane-header">
+          <div class="drawio-lane-title" style="color:${accent};">${escapeHtml(layer.title)}</div>
+          <div class="drawio-lane-desc">${escapeHtml(layer.description || 'Architecture layer')}</div>
+        </div>
+        <div class="drawio-lane-body">
+          ${items}
+        </div>
+      </div>
+    `;
+  };
+
+  const stageRow = layers
+    .map(
+      (layer, index) => `
+        <div class="drawio-stage" style="--box-accent:${layer.accent ?? colors[index % colors.length]}; border-top: 4px solid ${layer.accent ?? colors[index % colors.length]};">
+          <div class="drawio-stage-title" style="color:${layer.accent ?? colors[index % colors.length]};">${escapeHtml(layer.title)}</div>
+          <div class="drawio-stage-desc">${escapeHtml(layer.description || 'Architecture layer')}</div>
+        </div>
+      `,
+    )
+    .join('<div class="drawio-stage-arrow">→</div>');
+
+  const topNotes = `
+    <div class="drawio-notes">
+      <div class="drawio-note">
+        <div class="drawio-note-title">External dependencies</div>
+        <div class="schematic-items">
+          ${
+            insights.externalDependencies.length > 0
+              ? insights.externalDependencies.map((item) => `<span class="schematic-pill">${escapeHtml(item)}</span>`).join('')
+              : '<span class="schematic-pill">none detected</span>'
+          }
+        </div>
+      </div>
+      <div class="drawio-note">
+        <div class="drawio-note-title">Security gate</div>
+        <div class="schematic-items">
+          ${
+            insights.security.length > 0
+              ? insights.security.map((item) => `<span class="schematic-pill">${escapeHtml(item)}</span>`).join('')
+              : '<span class="schematic-pill">none detected</span>'
+          }
+        </div>
+      </div>
+    </div>
+  `;
+
+  return `
+    <div class="application-diagram">
+      <div class="application-diagram-header">
+        <div class="application-diagram-title">Software architecture</div>
+        <div class="application-diagram-subtitle">
+          ${
+            diagramClassification?.summary
+              ? escapeHtml(diagramClassification.summary)
+              : 'Draw.io-style lane diagram with one box per detected component.'
+          }
+        </div>
+      </div>
+      ${topNotes}
+      <div class="drawio-board">
+        <div class="drawio-stage-row">${stageRow}</div>
+        <div class="drawio-swimlanes" style="grid-template-columns: repeat(${layers.length}, minmax(220px, 1fr));">${layers.map(renderLane).join('')}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderDatabaseSchema(
+  schema: DiagramClassification['databaseSchema'] | undefined,
+  insights: ReturnType<typeof deriveInsights>,
+): string {
+  const schemaTables = schema?.tables?.length
+    ? schema.tables
+    : buildFallbackDatabaseSchema(insights);
+
+  const summary = schema?.summary || 'Database schema inferred from persistence and repository signals.';
+  const relationships = (schema?.relationships?.length ? schema.relationships : inferErRelationships(schemaTables));
+  const erDiagram = renderErDiagram(schemaTables, relationships);
+
+  return `
+    <div class="database-schema">
+      <div class="database-schema-summary">${escapeHtml(summary)}</div>
+      ${erDiagram}
+      <div class="drawio-notes" style="margin-top: 12px;">
+        <div class="drawio-note">
+          <div class="drawio-note-title">Tables</div>
+          <div class="schematic-items">
+            ${schemaTables.map((table) => `<span class="schematic-pill">${escapeHtml(table.name)}</span>`).join('')}
+          </div>
+        </div>
+        <div class="drawio-note">
+          <div class="drawio-note-title">Relationships</div>
+          <div class="schematic-items">
+            ${
+              relationships.length > 0
+                ? relationships.slice(0, 10).map((relation) => `<span class="schematic-pill">${escapeHtml(`${relation.fromTable}.${relation.fromColumn} → ${relation.toTable}.${relation.toColumn} (${relation.cardinality})`)}</span>`).join('')
+                : '<span class="schematic-pill">none inferred</span>'
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+interface ErRelationship {
+  fromTable: string;
+  toTable: string;
+  fromColumn: string;
+  toColumn: string;
+  cardinality: string;
+  description?: string;
+}
+
+interface LayoutTable {
+  name: string;
+  description?: string;
+  primaryKey?: string[];
+  columns: DatabaseColumn[];
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  headerHeight: number;
+}
+
+function inferErRelationships(tables: DatabaseTables): ErRelationship[] {
+  const tableNames = tables.map((table) => table.name);
+  const relationships: ErRelationship[] = [];
+  const seen = new Set<string>();
+
+  for (const table of tables) {
+    for (const column of table.columns) {
+      if (!/_id$/i.test(column.name) || column.name === 'id') {
+        continue;
+      }
+
+      const base = column.name.replace(/_id$/i, '');
+      const target = guessTableForForeignKey(base, table.name, tableNames);
+      if (!target || target === table.name) {
+        continue;
+      }
+
+      const key = `${table.name}:${column.name}:${target}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      relationships.push({
+        fromTable: table.name,
+        toTable: target,
+        fromColumn: column.name,
+        toColumn: 'id',
+        cardinality: 'N:1',
+      });
+    }
+  }
+
+  return relationships;
+}
+
+function guessTableForForeignKey(base: string, sourceTable: string, tableNames: string[]): string | undefined {
+  const normalized = base.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const candidates = new Set<string>([
+    normalized,
+    `${normalized}s`,
+    `${normalized}es`,
+    normalized.replace(/s$/, ''),
+  ]);
+
+  if (normalized === 'owner' || normalized === 'user' || normalized === 'actor' || normalized === 'author' || normalized === 'creator') {
+    candidates.add('users');
+  }
+  if (normalized === 'subject') {
+    candidates.add('notes');
+    candidates.add('users');
+  }
+  if (normalized === 'note') {
+    candidates.add('notes');
+  }
+  if (normalized === 'audit') {
+    candidates.add('audit_log');
+  }
+  if (normalized === 'parent') {
+    candidates.add(sourceTable);
+  }
+
+  for (const candidate of candidates) {
+    if (tableNames.includes(candidate)) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
+function renderErDiagram(
+  tables: DatabaseTables,
+  relationships: ErRelationship[],
+): string {
+  const layout = layoutErTables(tables);
+  const relationElements = relationships
+    .map((relation) => {
+      const from = layout.find((table) => table.name === relation.fromTable);
+      const to = layout.find((table) => table.name === relation.toTable);
+      if (!from || !to) {
+        return '';
+      }
+      const fromPoint = edgeAnchor(from, to);
+      const toPoint = edgeAnchor(to, from);
+      const midX = Math.round((fromPoint.x + toPoint.x) / 2);
+      const midY = Math.round((fromPoint.y + toPoint.y) / 2);
+      const path = `M ${fromPoint.x} ${fromPoint.y} L ${midX} ${fromPoint.y} L ${midX} ${toPoint.y} L ${toPoint.x} ${toPoint.y}`;
+      const diamondWidth = 18;
+      const diamondHeight = 18;
+      const diamondPoints = [
+        `${midX},${midY - diamondHeight / 2}`,
+        `${midX + diamondWidth / 2},${midY}`,
+        `${midX},${midY + diamondHeight / 2}`,
+        `${midX - diamondWidth / 2},${midY}`,
+      ].join(' ');
+      const sourceCardinality = relation.cardinality.startsWith('N') ? 'N' : '1';
+      const targetCardinality = relation.cardinality.endsWith('N') ? 'N' : '1';
+      return `
+        <g>
+          <path class="er-edge" d="${path}">
+            <title>${escapeHtml(relation.description ?? `${relation.fromTable}.${relation.fromColumn} → ${relation.toTable}.${relation.toColumn}`)}</title>
+          </path>
+          <polygon points="${diamondPoints}" class="er-relationship">
+            <title>${escapeHtml(relation.description ?? `${relation.fromTable}.${relation.fromColumn} → ${relation.toTable}.${relation.toColumn}`)}</title>
+          </polygon>
+          <circle cx="${fromPoint.x}" cy="${fromPoint.y}" r="4.5" class="er-terminal" />
+          <circle cx="${toPoint.x}" cy="${toPoint.y}" r="4.5" class="er-terminal" />
+          <text x="${fromPoint.x + (fromPoint.x < toPoint.x ? 10 : -10)}" y="${fromPoint.y - 8}" text-anchor="${fromPoint.x < toPoint.x ? 'start' : 'end'}" class="er-end-label">${escapeHtml(sourceCardinality)}</text>
+          <text x="${toPoint.x + (toPoint.x < fromPoint.x ? 10 : -10)}" y="${toPoint.y - 8}" text-anchor="${toPoint.x < fromPoint.x ? 'start' : 'end'}" class="er-end-label">${escapeHtml(targetCardinality)}</text>
+        </g>
+      `;
+    })
+    .join('');
+
+  const tableElements = layout
+    .map((table) => {
+      const titleLines = wrapSvgText(table.name, 22);
+      const descriptionLines = wrapSvgText(table.description ?? '', 28);
+      const columnLines = table.columns
+        .map((column, index) => {
+          const columnY = table.y + table.headerHeight + 26 + index * 18;
+          return `
+            <g>
+              <text x="${table.x + 16}" y="${columnY}" class="er-column-name">${escapeHtml(column.name)}</text>
+              ${column.type ? `<text x="${table.x + table.width - 16}" y="${columnY}" text-anchor="end" class="er-column-type">${escapeHtml(column.type)}</text>` : ''}
+            </g>
+          `;
+        })
+        .join('');
+
+      return `
+        <g>
+          <rect x="${table.x}" y="${table.y}" width="${table.width}" height="${table.height}" rx="16" ry="16" class="er-table" />
+          <rect x="${table.x}" y="${table.y}" width="${table.width}" height="${table.headerHeight}" rx="16" ry="16" class="er-table-header" />
+          <text x="${table.x + 16}" y="${table.y + 22}" class="er-table-title">
+            ${titleLines.map((line, lineIndex) => `<tspan x="${table.x + 16}" dy="${lineIndex === 0 ? 0 : 13}">${escapeHtml(line)}</tspan>`).join('')}
+          </text>
+          ${
+            descriptionLines.length
+              ? `<text x="${table.x + 16}" y="${table.y + 22 + Math.max(1, titleLines.length) * 13 + 2}" class="er-table-description">${descriptionLines
+                  .map((line, lineIndex) => `<tspan x="${table.x + 16}" dy="${lineIndex === 0 ? 0 : 13}">${escapeHtml(line)}</tspan>`)
+                  .join('')}</text>`
+              : ''
+          }
+          <line x1="${table.x}" y1="${table.y + table.headerHeight}" x2="${table.x + table.width}" y2="${table.y + table.headerHeight}" class="er-divider" />
+          ${
+            table.primaryKey?.length
+              ? `<text x="${table.x + 16}" y="${table.y + table.headerHeight + 18}" class="er-pk-label">PK ${escapeHtml(table.primaryKey.join(', '))}</text>`
+              : ''
+          }
+          ${columnLines}
+        </g>
+      `;
+    })
+    .join('');
+
+  const width = layout.reduce((max, table) => Math.max(max, table.x + table.width + 24), 1200);
+  const height = layout.reduce((max, table) => Math.max(max, table.y + table.height + 24), 520);
+
+  return `
+    <div class="er-canvas">
+      <svg class="er-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+        ${relationElements}
+        ${tableElements}
+      </svg>
+    </div>
+  `;
+}
+
+function layoutErTables(tables: DatabaseTables): LayoutTable[] {
+  const count = tables.length;
+  const columns = count <= 2 ? count : count <= 4 ? 2 : 3;
+  const boxWidth = 330;
+  const boxHeights = tables.map((table) => {
+    const headerHeight = computeErHeaderHeight(table);
+    return Math.max(220, headerHeight + 34 + table.columns.length * 18 + 14);
+  });
+  const gapX = 56;
+  const gapY = 42;
+  const rowHeights = [] as number[];
+
+  for (let index = 0; index < count; index += columns) {
+    rowHeights.push(Math.max(...boxHeights.slice(index, index + columns)));
+  }
+
+  const rowOffsets: number[] = [];
+  let offsetY = 24;
+  for (const rowHeight of rowHeights) {
+    rowOffsets.push(offsetY);
+    offsetY += rowHeight + gapY;
+  }
+
+  return tables.map((table, index) => {
+    const row = Math.floor(index / columns);
+    const col = index % columns;
+    const height = boxHeights[index];
+    const x = 24 + col * (boxWidth + gapX);
+    const y = rowOffsets[row] + Math.floor((rowHeights[row] - height) / 2);
+    return {
+      ...table,
+      x,
+      y,
+      width: boxWidth,
+      height,
+      headerHeight: computeErHeaderHeight(table),
+    };
+  });
+}
+
+function computeErHeaderHeight(table: DatabaseTable): number {
+  const titleLines = wrapSvgText(table.name, 22);
+  const descriptionLines = wrapSvgText(table.description ?? '', 28);
+  const titleHeight = Math.max(1, titleLines.length) * 13;
+  const descriptionHeight = descriptionLines.length ? descriptionLines.length * 12 + 2 : 0;
+  return Math.max(58, 16 + titleHeight + descriptionHeight + 10);
+}
+
+function wrapSvgText(value: string, maxChars: number): string[] {
+  const normalized = value.trim().replace(/\s+/g, ' ');
+  if (!normalized) {
+    return [];
+  }
+
+  const words = normalized.split(' ');
+  const lines: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxChars || !current) {
+      current = candidate;
+      continue;
+    }
+
+    lines.push(current);
+    current = word;
+  }
+
+  if (current) {
+    lines.push(current);
+  }
+
+  return lines;
+}
+
+function edgeAnchor(source: LayoutTable, target: LayoutTable): { x: number; y: number } {
+  const sourceCenterX = source.x + source.width / 2;
+  const sourceCenterY = source.y + source.height / 2;
+  const targetCenterX = target.x + target.width / 2;
+  const targetCenterY = target.y + target.height / 2;
+
+  if (Math.abs(sourceCenterX - targetCenterX) >= Math.abs(sourceCenterY - targetCenterY)) {
+    return sourceCenterX <= targetCenterX
+      ? { x: source.x + source.width, y: sourceCenterY }
+      : { x: source.x, y: sourceCenterY };
+  }
+
+  return sourceCenterY <= targetCenterY
+    ? { x: sourceCenterX, y: source.y + source.height }
+    : { x: sourceCenterX, y: source.y };
+}
+
+function buildFallbackDatabaseSchema(insights: ReturnType<typeof deriveInsights>): Array<{ name: string; description?: string; columns: Array<{ name: string; type?: string; detail?: string }> }> {
+  const tables = unique(
+    [
+      ...insights.persistence,
+      ...insights.relationships.filter((item) => /persist|repository|database|table|entity/i.test(item)),
+    ].map((item) => item.replace(/^(.*?)(?:\s+to\s+.*)?$/i, '$1')),
+  );
+
+  return tables.map((name) => ({
+    name,
+    description: /repository|persistence|database|table|entity/i.test(name) ? 'Persistence model element' : 'Potential schema element',
+    columns: [
+      { name: 'id', type: 'identifier', detail: 'Stable identifier used by the model' },
+      { name: 'created_at', type: 'timestamp', detail: 'Creation timestamp' },
+      { name: 'updated_at', type: 'timestamp', detail: 'Last update timestamp' },
+    ],
+  }));
+}
+
+function extractDatabaseSchema(graph: CanonicalGraph): DiagramClassification['databaseSchema'] | undefined {
+  const metadataSchema = graph.metadata?.databaseSchema;
+  if (metadataSchema?.tables?.length) {
+    return metadataSchema;
+  }
+
+  const review = graph.metadata?.review;
+  if (!review || typeof review !== 'object') {
+    return undefined;
+  }
+
+  const diagramClassification = (review as { diagramClassification?: DiagramClassification }).diagramClassification;
+  const schema = diagramClassification?.databaseSchema;
+  if (!schema || !Array.isArray(schema.tables) || schema.tables.length === 0) {
+    return undefined;
+  }
+
+  return schema;
+}
+
+function extractDiagramClassification(graph: CanonicalGraph): DiagramClassification | undefined {
+  const review = graph.metadata?.review;
+  if (!review || typeof review !== 'object') {
+    return undefined;
+  }
+
+  const diagramClassification = (review as { diagramClassification?: DiagramClassification }).diagramClassification;
+  if (!diagramClassification || !Array.isArray(diagramClassification.layers) || diagramClassification.layers.length === 0) {
+    return undefined;
+  }
+
+  return diagramClassification;
+}
+
+function extractArtifactSummary(graph: CanonicalGraph): {
+  semanticView: string;
+  semanticMeta: string;
+  validationView: string;
+  validationMeta: string;
+  reviewView: string;
+  reviewMeta: string;
+  graphView: string;
+  graphMeta: string;
+} {
+  const sourcePath = graph.metadata?.sourcePath ?? 'semantic source';
+  const reviewedAt = graph.metadata?.reviewedAt;
+  const review = graph.metadata?.review;
+  const validationStatus = review?.issues?.length
+    ? `${review.issues.length} review issue(s)`
+    : 'validated/reviewed';
+  return {
+    semanticView: pathBaseName(sourcePath),
+    semanticMeta: sourcePath,
+    validationView: review?.reviewArtifactPath ? 'validation report' : 'validation output',
+    validationMeta: validationStatus,
+    reviewView: review?.reviewArtifactPath ? pathBaseName(review.reviewArtifactPath) : 'review artifact',
+    reviewMeta: review?.summary ?? 'AI reviewed graph',
+    graphView: reviewedAt ? 'reviewed graph' : 'graph snapshot',
+    graphMeta: reviewedAt ? `reviewed at ${reviewedAt}` : 'current graph snapshot',
+  };
+}
+
+function pathBaseName(value: string): string {
+  return value.split(/[/\\]/).pop() ?? value;
 }
 
 function regionPanel(region: Region, x: number, y: number, width: number, height: number, label: string): string {

@@ -8,7 +8,6 @@ export interface MpcConfigFile {
   compilerUrl?: string;
   artifactRoot?: string;
   javaBasePackage?: string;
-  autoValidateOnSave?: boolean;
   reviewProvider?: 'codex' | 'claude';
   reviewMode?: 'local' | 'cli' | 'endpoint' | 'command' | 'prompt-file';
   reviewModel?: string;
@@ -69,7 +68,6 @@ export function getDefaultMcpConfigFile(): MpcConfigFile {
     compilerUrl: 'http://10.9.0.2:3003/mcp',
     artifactRoot: '.ai-native',
     javaBasePackage: 'com.example.generated',
-    autoValidateOnSave: false,
     reviewProvider: 'codex',
     reviewMode: 'cli',
     reviewModel: 'gpt-5.5',

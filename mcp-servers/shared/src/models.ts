@@ -68,7 +68,41 @@ export interface CanonicalGraph {
     sourcePath?: string;
     title?: string;
     createdAt: string;
+    databaseSchema?: DatabaseSchema;
   };
+}
+
+export interface DatabaseColumn {
+  name: string;
+  type?: string;
+  detail?: string;
+  nullable?: boolean;
+}
+
+export interface DatabaseTable {
+  name: string;
+  description?: string;
+  primaryKey?: string[];
+  columns: DatabaseColumn[];
+  sourceRefs?: string[];
+}
+
+export interface DatabaseRelationship {
+  fromTable: string;
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+  cardinality: '1:1' | '1:N' | 'N:1' | 'N:M';
+  description?: string;
+}
+
+export interface DatabaseSchema {
+  title?: string;
+  summary?: string;
+  tables: DatabaseTable[];
+  relationships?: DatabaseRelationship[];
+  source?: string;
+  confidence?: 'low' | 'medium' | 'high';
 }
 
 export type ValidationSeverity = 'info' | 'warning' | 'gap' | 'conflict' | 'violation';

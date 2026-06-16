@@ -4,18 +4,17 @@ import * as vscode from 'vscode';
 import { commandIds } from './constants.js';
 import { getConfig } from './config.js';
 import { McpRegistry } from './mcpRegistry.js';
-import { WorkflowTreeDataProvider } from './views/workflowTree.js';
-import { ArtifactTreeDataProvider } from './views/artifactTree.js';
-import { TutorialTreeDataProvider } from './views/tutorialTree.js';
-import { GenerateTreeDataProvider } from './views/generateTree.js';
+import { VersionedArtifactTreeDataProvider } from './views/versionedArtifactTree.js';
 import { McpTreeDataProvider } from './views/mcpTree.js';
 import { ActionsWebviewProvider } from './webviews/actionsView.js';
 import { ConfigurationPanel } from './webviews/configuration.js';
 import { GraphPreviewPanel } from './webviews/graphPreview.js';
+import { ReconRunsWebviewProvider, type ReconRunModuleSnapshot, type ReconRunSnapshot } from './webviews/reconRunsView.js';
 import { resolveArtifactRoot } from './workspaceArtifacts.js';
 import { initializeMcpConfigStorage } from './mcpConfigStore.js';
 import { importSourceProjectState } from '@ai-native/semantic-shared';
-import { runAgenticReview } from './agenticReview.js';
+import { runAgenticPrompt, runAgenticReview, type AgenticDiagramClassification, type AgenticReviewResult } from './agenticReview.js';
+import { hashArtifactContent, readLatestVersionedArtifact, writeVersionedArtifact } from './versionedArtifacts.js';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const outputChannel = vscode.window.createOutputChannel('AI Native Semantic Workflow');
@@ -31,29 +30,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   });
 
-  const workflowProvider = new WorkflowTreeDataProvider();
-  const modelProvider = new TutorialTreeDataProvider();
-  const generateProvider = new GenerateTreeDataProvider();
-  const reviewProvider = new ArtifactTreeDataProvider();
+  const validationProvider = new VersionedArtifactTreeDataProvider('validation', 'Validation', 'Versioned validation runs.');
+  const reviewProvider = new VersionedArtifactTreeDataProvider('review', 'Review', 'Versioned AI review outputs.');
+  const semanticProvider = new VersionedArtifactTreeDataProvider('semantic', 'Semantic', 'Versioned semantic source states.');
+  const databaseSchemaProvider = new VersionedArtifactTreeDataProvider('databaseSchema', 'Database Schema', 'Versioned database schema outputs.');
   const mcpProvider = new McpTreeDataProvider(registry);
   const actionsProvider = new ActionsWebviewProvider(context);
+  const reconRunsProvider = new ReconRunsWebviewProvider(context);
 
-  const workflowView = vscode.window.createTreeView('aiNativeInputs', { treeDataProvider: workflowProvider });
-  const modelView = vscode.window.createTreeView('aiNativeModel', { treeDataProvider: modelProvider });
-  const generateView = vscode.window.createTreeView('aiNativeGenerate', { treeDataProvider: generateProvider });
-  const reviewView = vscode.window.createTreeView('aiNativeReview', { treeDataProvider: reviewProvider });
+  const validationView = vscode.window.createTreeView('aiNativeValidation', { treeDataProvider: validationProvider });
+  const reviewView = vscode.window.createTreeView('aiNativeReviewArtifacts', { treeDataProvider: reviewProvider });
+  const semanticView = vscode.window.createTreeView('aiNativeSemanticArtifacts', { treeDataProvider: semanticProvider });
+  const databaseSchemaView = vscode.window.createTreeView('aiNativeDatabaseSchema', { treeDataProvider: databaseSchemaProvider });
   const mcpView = vscode.window.createTreeView('aiNativeMcpHub', { treeDataProvider: mcpProvider });
   const actionsView = vscode.window.registerWebviewViewProvider('aiNativeActions', actionsProvider, {
     webviewOptions: { retainContextWhenHidden: true },
   });
-  context.subscriptions.push(workflowView, modelView, generateView, reviewView, mcpView, actionsView);
+  const reconRunsView = vscode.window.registerWebviewViewProvider('aiNativeRecon', reconRunsProvider, {
+    webviewOptions: { retainContextWhenHidden: true },
+  });
+  context.subscriptions.push(
+    validationView,
+    reviewView,
+    semanticView,
+    databaseSchemaView,
+    mcpView,
+    actionsView,
+    reconRunsView,
+  );
 
   const refreshViews = async (): Promise<void> => {
-    workflowProvider.refresh();
-    modelProvider.refresh();
-    generateProvider.refresh();
+    validationProvider.refresh();
     reviewProvider.refresh();
+    semanticProvider.refresh();
+    databaseSchemaProvider.refresh();
     mcpProvider.refresh();
+    reconRunsProvider.refresh();
     await registry.pingAll();
   };
 
@@ -71,11 +83,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand(commandIds.openConfiguration, async () => {
       ConfigurationPanel.show(context, registry, refreshViews);
     }),
+    vscode.commands.registerCommand(commandIds.openReconRuns, async () => {
+      try {
+        await vscode.commands.executeCommand('workbench.view.extension.aiNativeSemantic');
+      } catch {
+        // ignore: focus command is best-effort
+      }
+    }),
     vscode.commands.registerCommand(commandIds.createSemanticSourceTemplate, async () => {
       await createSemanticSourceTemplate();
     }),
     vscode.commands.registerCommand(commandIds.importSourceProject, async () => {
-      await importSourceProject(context, diagnostics, registry, outputChannel, refreshViews);
+      await importSourceProject(context, diagnostics, registry, outputChannel, refreshViews, reconRunsProvider);
     }),
     vscode.commands.registerCommand(commandIds.openTutorial, async () => {
       await openExampleSlice();
@@ -97,13 +116,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await vscode.window.showTextDocument(document, { preview: false });
     }),
     vscode.commands.registerCommand(commandIds.validateActiveSemanticMarkdown, async () => {
-      await runValidation(context, diagnostics, registry, outputChannel);
+      await runValidation(context, diagnostics, registry, outputChannel, undefined, refreshViews);
     }),
     vscode.commands.registerCommand(commandIds.generateCanonicalGraph, async () => {
-      await runGraphGeneration(context, diagnostics, registry, outputChannel);
+      await runGraphGeneration(context, diagnostics, registry, outputChannel, undefined, refreshViews);
     }),
-    vscode.commands.registerCommand(commandIds.openGraphPreview, async () => {
-      await openGraphPreview(context, registry, outputChannel);
+    vscode.commands.registerCommand(commandIds.openMarkdownArtifactPreview, async (resource?: vscode.Uri | string) => {
+      await openMarkdownArtifactPreview(resource, outputChannel);
+    }),
+    vscode.commands.registerCommand(commandIds.openGraphPreview, async (resource?: vscode.Uri | string) => {
+      await openGraphPreview(context, registry, outputChannel, resource);
     }),
     vscode.commands.registerCommand(commandIds.generateSpringBootSkeleton, async () => {
       await runSpringGeneration(context, registry, outputChannel);
@@ -111,15 +133,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   context.subscriptions.push(
-    vscode.workspace.onDidSaveTextDocument(async (document) => {
-      if (!getConfig().autoValidateOnSave) {
-        return;
-      }
-      if (!isSemanticMarkdown(document)) {
-        return;
-      }
-      await runValidation(context, diagnostics, registry, outputChannel, document);
-    }),
     vscode.workspace.onDidCloseTextDocument((document) => {
       diagnostics.delete(document.uri);
     }),
@@ -136,6 +149,7 @@ async function runValidation(
   registry: McpRegistry,
   outputChannel: vscode.OutputChannel,
   document?: vscode.TextDocument,
+  refreshViews?: () => Promise<void>,
 ): Promise<void> {
   await vscode.window.withProgress(
     {
@@ -154,6 +168,8 @@ async function runValidation(
         vscode.window.showWarningMessage('Open a Semantic Markdown file first.');
         return;
       }
+      const artifactRoot = await resolveArtifactRoot();
+      await ensureSemanticVersionCheckpoint(artifactRoot, source, 'validation checkpoint');
 
       report('Loading validation policy from MCP...');
       const validationPolicy = await resolveValidationPolicyText(registry);
@@ -162,82 +178,191 @@ async function runValidation(
       const response = await registry.callTool('validator', 'validate_semantic_markdown', {
         content: source.getText(),
         policyText: validationPolicy,
-        persist: false,
+        persist: true,
       });
 
       const payload = asValidationPayload(response.json);
-      const validationStatus = deriveValidationStatus(payload.summary);
       const logLines = publishValidationDiagnostics(diagnostics, source, payload, 'AI Native Validation');
       outputChannel.show(true);
       outputChannel.appendLine(`[validation] ${path.basename(source.fileName)}`);
       outputChannel.appendLine(
         `  summary: gaps=${payload.summary.gaps}, conflicts=${payload.summary.conflicts}, warnings=${payload.summary.warnings}, violations=${payload.summary.violations}`,
       );
+      if (payload.reportPath) {
+        outputChannel.appendLine(`  validation artifact: ${payload.reportPath}`);
+      }
       for (const line of logLines) {
         outputChannel.appendLine(line);
       }
 
-      const config = getConfig();
-      report(`Running AI review with ${config.reviewProvider}...`);
-      const agenticReview = await runAgenticReview({
-        provider: config.reviewProvider,
-        mode: config.reviewMode,
-        model: config.reviewModel,
-        endpoint: config.reviewEndpoint,
-        commandId: config.reviewCommandId,
-        commandArgsJson: config.reviewCommandArgsJson,
-        promptFileName: config.reviewPromptFileName,
-        workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-        sourcePath: source.fileName,
-        semanticSource: source.getText(),
-        expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
-        graph: payload.graph,
-        validation: {
-          status: validationStatus,
+      if (artifactRoot) {
+        report('Writing validation artifact...');
+        const validationFolder = vscode.Uri.joinPath(artifactRoot, 'validation');
+        await vscode.workspace.fs.createDirectory(validationFolder);
+        const validationPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.validation.json`);
+        const validationMarkdownPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.validation.md`);
+        const validationDeltaPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.delta.json`);
+        const validationDeltaMarkdownPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.delta.md`);
+        const graph = asGraphObject(payload.graph);
+        const validationDelta = buildValidationDelta({
+          sourcePath: source.fileName,
+          reportPath: payload.reportPath,
+          validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
+          graph,
           summary: payload.summary,
           issues: payload.issues,
-        },
-      });
-
-      const combinedIssues = [
-        ...payload.issues.map((issue) => ({
-          severity: issue.severity,
-          code: issue.code,
-          message: issue.message,
-          sourceRef: issue.sourceRef,
-          sourceLine: issue.sourceLine,
-          sourceLabel: 'AI Native Validation',
-        })),
-        ...agenticReview.issues.map((issue) => ({
-          severity: issue.severity,
-          code: issue.code,
-          message: issue.message,
-          sourceRef: issue.sourceRef,
-          sourceLine: issue.sourceLine,
-          sourceLabel: 'AI Native Review',
-        })),
-      ];
-      publishValidationDiagnostics(
-        diagnostics,
-        source,
-        {
-          issues: combinedIssues,
-          summary: payload.summary,
-        },
-        'AI Native Review',
-      );
-
-      outputChannel.appendLine(`  expectations: mcp-validation-policy.md`);
-      outputChannel.appendLine(
-        `[agentic-validation] provider=${agenticReview.provider} mode=${agenticReview.mode} model=${agenticReview.model}${agenticReview.usedEndpoint ? ` endpoint=${agenticReview.usedEndpoint}` : ''}`,
-      );
-      outputChannel.appendLine(`  bridge: ${agenticReview.bridgeAction}`);
-      outputChannel.appendLine(`  summary: ${agenticReview.summary}`);
-      for (const note of agenticReview.notes) {
-        outputChannel.appendLine(`  note: ${note}`);
-      }
-      if (agenticReview.issues.length > 0) {
-        outputChannel.appendLine(`  issues: ${agenticReview.issues.length}`);
+        });
+        const validationArtifact = {
+          sourcePath: source.fileName,
+          reportPath: payload.reportPath,
+          mcpValidation: {
+            summary: payload.summary,
+            issues: payload.issues,
+          },
+          graph: payload.graph,
+          delta: validationDelta,
+          validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
+        };
+        await vscode.workspace.fs.writeFile(validationPath, Buffer.from(JSON.stringify(validationArtifact, null, 2), 'utf8'));
+        await vscode.workspace.fs.writeFile(
+          validationMarkdownPath,
+          Buffer.from(
+            [
+              '# AI Native Validation',
+              '',
+              `- Source: ${source.fileName}`,
+              `- MCP report path: ${payload.reportPath ?? 'n/a'}`,
+              `- MCP summary: gaps=${payload.summary.gaps}, conflicts=${payload.summary.conflicts}, warnings=${payload.summary.warnings}, violations=${payload.summary.violations}`,
+              '',
+              '## MCP issues',
+              ...(payload.issues.length
+                ? payload.issues.map((issue) => `- [${issue.severity ?? 'info'}] ${issue.code ?? 'issue'}: ${issue.message ?? ''}`)
+                : ['- none']),
+              '',
+              '## Retraining delta',
+              `- missing sections: ${validationDelta.missingSections.length ? validationDelta.missingSections.join(', ') : 'none'}`,
+              `- schema gaps: ${validationDelta.schemaGaps.length ? validationDelta.schemaGaps.join(', ') : 'none'}`,
+              `- persistence gaps: ${validationDelta.persistenceSignals.length ? validationDelta.persistenceSignals.join(', ') : 'none'}`,
+              `- review targets: ${validationDelta.reviewTargets.length ? validationDelta.reviewTargets.join(', ') : 'none'}`,
+              '',
+              '## Graph signals',
+              `- nodes: ${validationDelta.graphSignals.nodeCount}`,
+              `- edges: ${validationDelta.graphSignals.edgeCount}`,
+              `- database schema tables: ${validationDelta.graphSignals.databaseSchemaTables}`,
+              `- graph layers: ${validationDelta.graphSignals.layers.length ? validationDelta.graphSignals.layers.join(', ') : 'none'}`,
+              '',
+              '## Delta hints',
+              ...(validationDelta.hints.length ? validationDelta.hints.map((hint) => `- ${hint}`) : ['- none']),
+            ].join('\n'),
+            'utf8',
+          ),
+        );
+        await vscode.workspace.fs.writeFile(
+          validationDeltaPath,
+          Buffer.from(JSON.stringify(validationDelta, null, 2), 'utf8'),
+        );
+        await vscode.workspace.fs.writeFile(
+          validationDeltaMarkdownPath,
+          Buffer.from(
+            [
+              '# AI Native Validation Delta',
+              '',
+              `- Source: ${source.fileName}`,
+              `- MCP report path: ${payload.reportPath ?? 'n/a'}`,
+              '',
+              '## Summary',
+              `- gaps: ${payload.summary.gaps}`,
+              `- conflicts: ${payload.summary.conflicts}`,
+              `- warnings: ${payload.summary.warnings}`,
+              `- violations: ${payload.summary.violations}`,
+              '',
+              '## Missing sections',
+              ...(validationDelta.missingSections.length ? validationDelta.missingSections.map((section) => `- ${section}`) : ['- none']),
+              '',
+              '## Persistence gaps',
+              ...(validationDelta.persistenceSignals.length ? validationDelta.persistenceSignals.map((signal) => `- ${signal}`) : ['- none']),
+              '',
+              '## Schema gaps',
+              ...(validationDelta.schemaGaps.length ? validationDelta.schemaGaps.map((signal) => `- ${signal}`) : ['- none']),
+              '',
+              '## Hints',
+              ...(validationDelta.hints.length ? validationDelta.hints.map((hint) => `- ${hint}`) : ['- none']),
+            ].join('\n'),
+            'utf8',
+          ),
+        );
+        await writeVersionedArtifact({
+          artifactRoot: artifactRoot.fsPath,
+          kind: 'validation',
+          baseName: slug(source.fileName),
+          sourcePath: source.fileName,
+          sourceHash: hashArtifactContent(source.getText()),
+          label: 'validation',
+          files: {
+            'validation.json': JSON.stringify(validationArtifact, null, 2) + '\n',
+            'validation.md': [
+              '# AI Native Validation',
+              '',
+              `- Source: ${source.fileName}`,
+              `- MCP report path: ${payload.reportPath ?? 'n/a'}`,
+              `- MCP summary: gaps=${payload.summary.gaps}, conflicts=${payload.summary.conflicts}, warnings=${payload.summary.warnings}, violations=${payload.summary.violations}`,
+              '',
+              '## MCP issues',
+              ...(payload.issues.length
+                ? payload.issues.map((issue) => `- [${issue.severity ?? 'info'}] ${issue.code ?? 'issue'}: ${issue.message ?? ''}`)
+                : ['- none']),
+              '',
+              '## Retraining delta',
+              `- missing sections: ${validationDelta.missingSections.length ? validationDelta.missingSections.join(', ') : 'none'}`,
+              `- schema gaps: ${validationDelta.schemaGaps.length ? validationDelta.schemaGaps.join(', ') : 'none'}`,
+              `- persistence gaps: ${validationDelta.persistenceSignals.length ? validationDelta.persistenceSignals.join(', ') : 'none'}`,
+              `- review targets: ${validationDelta.reviewTargets.length ? validationDelta.reviewTargets.join(', ') : 'none'}`,
+              '',
+              '## Graph signals',
+              `- nodes: ${validationDelta.graphSignals.nodeCount}`,
+              `- edges: ${validationDelta.graphSignals.edgeCount}`,
+              `- database schema tables: ${validationDelta.graphSignals.databaseSchemaTables}`,
+              `- graph layers: ${validationDelta.graphSignals.layers.length ? validationDelta.graphSignals.layers.join(', ') : 'none'}`,
+              '',
+              '## Delta hints',
+              ...(validationDelta.hints.length ? validationDelta.hints.map((hint) => `- ${hint}`) : ['- none']),
+            ].join('\n') + '\n',
+            'delta.json': JSON.stringify(validationDelta, null, 2) + '\n',
+            'delta.md': [
+              '# AI Native Validation Delta',
+              '',
+              `- Source: ${source.fileName}`,
+              `- MCP report path: ${payload.reportPath ?? 'n/a'}`,
+              '',
+              '## Summary',
+              `- gaps: ${payload.summary.gaps}`,
+              `- conflicts: ${payload.summary.conflicts}`,
+              `- warnings: ${payload.summary.warnings}`,
+              `- violations: ${payload.summary.violations}`,
+              '',
+              '## Missing sections',
+              ...(validationDelta.missingSections.length ? validationDelta.missingSections.map((section) => `- ${section}`) : ['- none']),
+              '',
+              '## Persistence gaps',
+              ...(validationDelta.persistenceSignals.length ? validationDelta.persistenceSignals.map((signal) => `- ${signal}`) : ['- none']),
+              '',
+              '## Schema gaps',
+              ...(validationDelta.schemaGaps.length ? validationDelta.schemaGaps.map((signal) => `- ${signal}`) : ['- none']),
+              '',
+              '## Hints',
+              ...(validationDelta.hints.length ? validationDelta.hints.map((hint) => `- ${hint}`) : ['- none']),
+            ].join('\n') + '\n',
+          },
+          metadata: {
+            reportPath: payload.reportPath,
+            summary: payload.summary,
+            validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
+          },
+        });
+        outputChannel.appendLine(`  validation artifact: ${validationPath.fsPath}`);
+        outputChannel.appendLine(`  validation markdown: ${validationMarkdownPath.fsPath}`);
+        outputChannel.appendLine(`  validation delta: ${validationDeltaPath.fsPath}`);
+        outputChannel.appendLine(`  validation delta markdown: ${validationDeltaMarkdownPath.fsPath}`);
       }
 
       report('Validation finished.');
@@ -245,6 +370,7 @@ async function runValidation(
       await vscode.window.showInformationMessage(
         `Validation completed: ${payload.summary.gaps} gaps, ${payload.summary.conflicts} conflicts, ${payload.summary.warnings} warnings, ${payload.summary.violations} violations.`,
       );
+      await refreshViews?.();
     },
   );
 }
@@ -255,6 +381,7 @@ async function runGraphGeneration(
   registry: McpRegistry,
   outputChannel: vscode.OutputChannel,
   document?: vscode.TextDocument,
+  refreshViews?: () => Promise<void>,
 ): Promise<void> {
   await vscode.window.withProgress(
     {
@@ -277,6 +404,20 @@ async function runGraphGeneration(
 
       report('Generating canonical graph...');
       const validationPolicy = await resolveValidationPolicyText(registry);
+      const artifactRoot = await resolveArtifactRoot();
+      const sourceHash = hashArtifactContent(source.getText());
+      await ensureSemanticVersionCheckpoint(artifactRoot, source, 'graph checkpoint');
+      const latestValidation = artifactRoot
+        ? await readLatestVersionedArtifact(artifactRoot.fsPath, 'validation', slug(source.fileName))
+        : undefined;
+      if (!latestValidation) {
+        vscode.window.showWarningMessage('Graph generation requires a fresh validated version first.');
+        return;
+      }
+      if (latestValidation.sourceHash !== sourceHash) {
+        vscode.window.showWarningMessage('The latest validation version is stale. Run Validate input before generating the graph.');
+        return;
+      }
       const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
         content: source.getText(),
         policyText: validationPolicy,
@@ -286,7 +427,6 @@ async function runGraphGeneration(
       const payload = asObject(response.json);
       const graph = asGraphObject(payload?.graph);
       const graphValidation = asValidationPayload(payload?.validation);
-      const artifactRoot = await resolveArtifactRoot();
 
       outputChannel.appendLine(JSON.stringify({ tool: 'generate_canonical_graph', payload }, null, 2));
       report('Running validation...');
@@ -353,7 +493,147 @@ async function runGraphGeneration(
           await vscode.workspace.fs.createDirectory(graphFolder);
           const reviewedPath = vscode.Uri.joinPath(graphFolder, `${slug(source.fileName)}.graph.json`);
           await vscode.workspace.fs.writeFile(reviewedPath, Buffer.from(JSON.stringify(reviewedGraph, null, 2), 'utf8'));
+          await writeVersionedArtifact({
+            artifactRoot: artifactRoot.fsPath,
+            kind: 'graph',
+            baseName: slug(source.fileName),
+            sourcePath: source.fileName,
+            sourceHash,
+            label: 'reviewed graph',
+            files: {
+              'graph.json': JSON.stringify(reviewedGraph, null, 2) + '\n',
+            },
+            metadata: {
+              review: agenticReview.summary,
+            },
+          });
+          const reviewedDatabaseSchema = asObject(reviewedGraph.metadata)?.databaseSchema as
+            | NonNullable<AgenticDiagramClassification['databaseSchema']>
+            | undefined;
+          if (reviewedDatabaseSchema) {
+            await writeVersionedArtifact({
+              artifactRoot: artifactRoot.fsPath,
+              kind: 'databaseSchema',
+              baseName: slug(source.fileName),
+              sourcePath: source.fileName,
+              sourceHash,
+              label: 'reviewed database schema',
+              files: {
+                'database.schema.json': JSON.stringify(reviewedDatabaseSchema, null, 2) + '\n',
+              },
+              metadata: {
+                reviewedAt: new Date().toISOString(),
+                source: 'reviewed graph metadata',
+                reviewSummary: agenticReview.summary,
+              },
+            });
+          }
           outputChannel.appendLine(`  reviewed graph: ${reviewedPath.fsPath}`);
+          const validationFolder = vscode.Uri.joinPath(artifactRoot, 'validation');
+          await vscode.workspace.fs.createDirectory(validationFolder);
+          const validationPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.validation.json`);
+          const validationMarkdownPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.validation.md`);
+          const validationArtifact = {
+            sourcePath: source.fileName,
+            reportPath: graphValidation.reportPath,
+            mcpValidation: {
+              summary: graphValidation.summary,
+              issues: graphValidation.issues,
+            },
+            aiReview: {
+              provider: agenticReview.provider,
+              mode: agenticReview.mode,
+              model: agenticReview.model,
+              bridgeAction: agenticReview.bridgeAction,
+              summary: agenticReview.summary,
+              notes: agenticReview.notes,
+              issues: agenticReview.issues,
+            },
+            reviewedIssues,
+            reviewedGraph,
+            validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
+          };
+          await vscode.workspace.fs.writeFile(validationPath, Buffer.from(JSON.stringify(validationArtifact, null, 2), 'utf8'));
+          await vscode.workspace.fs.writeFile(
+            validationMarkdownPath,
+            Buffer.from(
+              [
+                '# AI Native Validation',
+                '',
+                `- Source: ${source.fileName}`,
+                `- MCP report path: ${graphValidation.reportPath ?? 'n/a'}`,
+                `- MCP summary: gaps=${graphValidation.summary.gaps}, conflicts=${graphValidation.summary.conflicts}, warnings=${graphValidation.summary.warnings}, violations=${graphValidation.summary.violations}`,
+                `- AI provider: ${agenticReview.provider}`,
+                `- AI mode: ${agenticReview.mode}`,
+                `- AI model: ${agenticReview.model}`,
+                `- Bridge: ${agenticReview.bridgeAction}`,
+                '',
+                '## MCP issues',
+                ...(graphValidation.issues.length
+                  ? graphValidation.issues.map((issue) => `- [${issue.severity ?? 'info'}] ${issue.code ?? 'issue'}: ${issue.message ?? ''}`)
+                  : ['- none']),
+                '',
+                '## AI review',
+                agenticReview.summary,
+                '',
+                '### Notes',
+                ...(agenticReview.notes.length ? agenticReview.notes.map((note) => `- ${note}`) : ['- none']),
+                '',
+                '### Issues',
+                ...(agenticReview.issues.length
+                  ? agenticReview.issues.map((issue) => `- [${issue.severity}] ${issue.code}: ${issue.message}`)
+                  : ['- none']),
+              ].join('\n'),
+              'utf8',
+            ),
+          );
+          await writeVersionedArtifact({
+            artifactRoot: artifactRoot.fsPath,
+            kind: 'review',
+            baseName: slug(source.fileName),
+            sourcePath: source.fileName,
+            sourceHash,
+            label: 'review',
+            files: {
+              'review.json': JSON.stringify(validationArtifact, null, 2) + '\n',
+              'review.md': [
+                '# AI Native Validation',
+                '',
+                `- Source: ${source.fileName}`,
+                `- MCP report path: ${graphValidation.reportPath ?? 'n/a'}`,
+                `- MCP summary: gaps=${graphValidation.summary.gaps}, conflicts=${graphValidation.summary.conflicts}, warnings=${graphValidation.summary.warnings}, violations=${graphValidation.summary.violations}`,
+                `- AI provider: ${agenticReview.provider}`,
+                `- AI mode: ${agenticReview.mode}`,
+                `- AI model: ${agenticReview.model}`,
+                `- Bridge: ${agenticReview.bridgeAction}`,
+                '',
+                '## MCP issues',
+                ...(graphValidation.issues.length
+                  ? graphValidation.issues.map((issue) => `- [${issue.severity ?? 'info'}] ${issue.code ?? 'issue'}: ${issue.message ?? ''}`)
+                  : ['- none']),
+                '',
+                '## AI review',
+                agenticReview.summary,
+                '',
+                '### Notes',
+                ...(agenticReview.notes.length ? agenticReview.notes.map((note) => `- ${note}`) : ['- none']),
+                '',
+                '### Issues',
+                ...(agenticReview.issues.length
+                  ? agenticReview.issues.map((issue) => `- [${issue.severity}] ${issue.code}: ${issue.message}`)
+                  : ['- none']),
+              ].join('\n') + '\n',
+              'prompt.md': agenticReview.promptPath ? `# AI Native Review Prompt\n\n- Source: ${agenticReview.promptPath}\n` : '# AI Native Review Prompt\n',
+            },
+            metadata: {
+              reviewedAt: new Date().toISOString(),
+              summary: agenticReview.summary,
+              provider: agenticReview.provider,
+              mode: agenticReview.mode,
+            },
+          });
+          outputChannel.appendLine(`  validation artifact: ${validationPath.fsPath}`);
+          outputChannel.appendLine(`  validation markdown: ${validationMarkdownPath.fsPath}`);
         }
         report('Opening reviewed graph...');
         GraphPreviewPanel.show(context, reviewedGraph, `${path.basename(source.fileName)} · reviewed`);
@@ -376,6 +656,7 @@ async function runGraphGeneration(
         }
       }
       await vscode.window.showInformationMessage('Graph generation completed.');
+      await refreshViews?.();
     },
   );
 }
@@ -399,6 +680,7 @@ function applyReviewToGraph(
     summary: string;
     notes: string[];
     issues: Array<{ severity: string; code: string; message: string; sourceRef?: string; sourceLine?: number }>;
+    diagramClassification?: AgenticDiagramClassification;
   },
 ): typeof graph {
   return {
@@ -418,6 +700,7 @@ function applyReviewToGraph(
         summary: review.summary,
         notes: review.notes,
         issues: review.issues,
+        diagramClassification: review.diagramClassification,
       },
     } as typeof graph.metadata & { reviewedAt: string; review: unknown },
   } as typeof graph;
@@ -460,13 +743,36 @@ async function openGraphPreview(
   context: vscode.ExtensionContext,
   registry: McpRegistry,
   outputChannel: vscode.OutputChannel,
+  resource?: vscode.Uri | string,
 ): Promise<void> {
   const artifactRoot = await resolveArtifactRoot();
+  const candidateUri = typeof resource === 'string'
+    ? vscode.Uri.file(resource)
+    : resource instanceof vscode.Uri
+      ? resource
+      : undefined;
+
+  if (candidateUri && (await pathExists(candidateUri))) {
+    const document = await vscode.workspace.openTextDocument(candidateUri);
+    const graph = parseGraphFromText(document.getText());
+    if (graph) {
+      GraphPreviewPanel.show(context, graph, path.basename(candidateUri.fsPath));
+      outputChannel.show(true);
+      outputChannel.appendLine(`[graph-preview] ${candidateUri.fsPath}`);
+      return;
+    }
+  }
+
   const source = await resolveSemanticSourceDocument();
   if (source) {
-    const reviewedArtifact = artifactRoot
-      ? vscode.Uri.joinPath(artifactRoot, 'graph', `${slug(source.fileName)}.graph.json`)
+    const reviewedArtifactRecord = artifactRoot
+      ? await readLatestVersionedArtifact(artifactRoot.fsPath, 'graph', slug(source.fileName))
       : undefined;
+    const reviewedArtifact = reviewedArtifactRecord?.files['graph.json']
+      ? vscode.Uri.file(reviewedArtifactRecord.files['graph.json'])
+      : artifactRoot
+        ? vscode.Uri.joinPath(artifactRoot, 'graph', `${slug(source.fileName)}.graph.json`)
+        : undefined;
     if (reviewedArtifact && (await pathExists(reviewedArtifact))) {
       const document = await vscode.workspace.openTextDocument(reviewedArtifact);
       const reviewedGraph = parseGraphFromText(document.getText());
@@ -489,6 +795,20 @@ async function openGraphPreview(
       outputChannel.show(true);
       outputChannel.appendLine(`[graph-preview] current source: ${source.fileName}`);
       return;
+    }
+  }
+
+  if (artifactRoot) {
+    const canonicalSemanticPath = vscode.Uri.joinPath(artifactRoot, 'source.semantic.md');
+    if (await pathExists(canonicalSemanticPath)) {
+      const document = await vscode.workspace.openTextDocument(canonicalSemanticPath);
+      const graph = parseGraphFromText(document.getText());
+      if (graph) {
+        GraphPreviewPanel.show(context, graph, 'source.semantic.md');
+        outputChannel.show(true);
+        outputChannel.appendLine(`[graph-preview] canonical source: ${canonicalSemanticPath.fsPath}`);
+        return;
+      }
     }
   }
 
@@ -528,6 +848,23 @@ async function openGraphPreview(
   vscode.window.showWarningMessage('No generated graph artifact was found yet.');
 }
 
+async function openMarkdownArtifactPreview(resource: vscode.Uri | string | undefined, outputChannel: vscode.OutputChannel): Promise<void> {
+  const candidateUri = typeof resource === 'string'
+    ? vscode.Uri.file(resource)
+    : resource instanceof vscode.Uri
+      ? resource
+      : undefined;
+
+  if (!candidateUri || !(await pathExists(candidateUri))) {
+    vscode.window.showWarningMessage('No markdown artifact was found.');
+    return;
+  }
+
+  await vscode.commands.executeCommand('markdown.showPreview', candidateUri);
+  outputChannel.show(true);
+  outputChannel.appendLine(`[markdown-preview] ${candidateUri.fsPath}`);
+}
+
 function deriveValidationStatus(summary: { gaps: number; conflicts: number; warnings: number; violations: number }): string {
   return summary.violations > 0 || summary.conflicts > 0 || summary.gaps > 0
     ? 'draft'
@@ -536,33 +873,161 @@ function deriveValidationStatus(summary: { gaps: number; conflicts: number; warn
       : 'validated';
 }
 
+async function ensureSemanticVersionCheckpoint(
+  artifactRoot: vscode.Uri | undefined,
+  source: vscode.TextDocument,
+  reason: string,
+): Promise<void> {
+  if (!artifactRoot) {
+    return;
+  }
+
+  const sourceText = source.getText();
+  const sourceHash = hashArtifactContent(sourceText);
+  const baseName = slug(source.fileName);
+  const latest = await readLatestVersionedArtifact(artifactRoot.fsPath, 'semantic', baseName);
+  if (latest?.sourceHash === sourceHash) {
+    return;
+  }
+
+  await writeVersionedArtifact({
+    artifactRoot: artifactRoot.fsPath,
+    kind: 'semantic',
+    baseName,
+    sourcePath: source.fileName,
+    sourceHash,
+    label: reason,
+    files: {
+      'semantic.md': `${sourceText}\n`,
+    },
+    metadata: {
+      source: source.fileName,
+      checkpointReason: reason,
+      checkpointedAt: new Date().toISOString(),
+    },
+  });
+}
+
+function buildValidationDelta(context: {
+  sourcePath: string;
+  reportPath?: string;
+  validationPolicyLoadedFrom: string;
+  graph?: ReturnType<typeof asGraphObject>;
+  summary: { gaps: number; conflicts: number; warnings: number; violations: number };
+  issues: Array<{ severity?: string; code?: string; message?: string; sourceRef?: string; sourceLine?: number; sourceColumn?: number; nodeId?: string }>;
+}): {
+  sourcePath: string;
+  reportPath?: string;
+  validationPolicyLoadedFrom: string;
+  summary: { gaps: number; conflicts: number; warnings: number; violations: number };
+  issues: Array<{ severity?: string; code?: string; message?: string; sourceRef?: string; sourceLine?: number; sourceColumn?: number; nodeId?: string }>;
+  missingSections: string[];
+  schemaGaps: string[];
+  persistenceSignals: string[];
+  reviewTargets: string[];
+  hints: string[];
+  graphSignals: {
+    nodeCount: number;
+    edgeCount: number;
+    databaseSchemaTables: number;
+    layers: string[];
+  };
+} {
+  const issueCodes = context.issues.map((issue) => issue.code ?? 'issue');
+  const missingSections = context.issues
+    .filter((issue) => issue.code === 'missing_section')
+    .map((issue) => (issue.message ?? '').replace(/^Required section\s+"?/i, '').replace(/"?\s+is missing\.?$/i, '').trim())
+    .filter(Boolean);
+  const schemaGaps = context.issues
+    .filter((issue) => issue.code === 'missing_database_schema')
+    .map((issue) => issue.message ?? 'Database schema inference gap')
+    .filter(Boolean);
+  const persistenceSignals = context.issues
+    .filter((issue) => issue.code === 'dependency_unreferenced' || issue.code === 'missing_database_schema')
+    .map((issue) => issue.message ?? issue.code ?? 'persistence gap')
+    .filter(Boolean);
+  const reviewTargets = Array.from(
+    new Set(
+      context.issues
+        .map((issue) => issue.sourceRef ?? issue.sourceLine?.toString() ?? issue.code ?? 'unknown')
+        .filter(Boolean),
+    ),
+  );
+  const hints = new Set<string>();
+
+  for (const code of issueCodes) {
+    switch (code) {
+      case 'missing_section':
+        hints.add('Add the missing semantic section explicitly so the MCP validator can anchor the expectation.');
+        break;
+      case 'missing_modules':
+        hints.add('Add explicit module boundaries when the slice is layered or enterprise-like.');
+        break;
+      case 'missing_database_schema':
+        hints.add('Describe tables, keys, and relationships in the semantic source so DB schema inference has stable anchors.');
+        break;
+      case 'security_missing_authentication':
+        hints.add('Make authentication explicit in the security section and in the affected flows.');
+        break;
+      case 'security_missing_authorization':
+        hints.add('Make authorization, ownership, and write access rules explicit.');
+        break;
+      case 'dependency_unreferenced':
+        hints.add('Reference dependencies from the processes or interfaces that actually use them.');
+        break;
+      default:
+        break;
+    }
+  }
+
+  const graph = context.graph as
+    | (ReturnType<typeof asGraphObject> & {
+        metadata?: { databaseSchema?: { tables?: Array<unknown> } };
+      })
+    | undefined;
+  const graphSignals = {
+    nodeCount: graph?.nodes.length ?? 0,
+    edgeCount: graph?.edges.length ?? 0,
+    databaseSchemaTables: graph?.metadata?.databaseSchema?.tables?.length ?? 0,
+    layers: Array.from(new Set((graph?.nodes ?? []).map((node) => node.type).filter(Boolean))).slice(0, 12),
+  };
+
+  if (graphSignals.databaseSchemaTables === 0 && context.summary.warnings === 0 && context.summary.violations === 0) {
+    hints.add('No database schema was inferred; consider adding explicit persistence terminology if storage should be modeled.');
+  }
+
+  return {
+    sourcePath: context.sourcePath,
+    reportPath: context.reportPath,
+    validationPolicyLoadedFrom: context.validationPolicyLoadedFrom,
+    summary: context.summary,
+    issues: context.issues,
+    missingSections,
+    schemaGaps,
+    persistenceSignals,
+    reviewTargets,
+    hints: Array.from(hints),
+    graphSignals,
+  };
+}
+
 async function importSourceProject(
   context: vscode.ExtensionContext,
   diagnostics: vscode.DiagnosticCollection,
   registry: McpRegistry,
   outputChannel: vscode.OutputChannel,
   refreshViews: () => Promise<void>,
+  reconRunsProvider: ReconRunsWebviewProvider,
 ): Promise<void> {
-  const selected = await vscode.window.showOpenDialog({
-    canSelectFiles: false,
-    canSelectFolders: true,
-    canSelectMany: false,
-    openLabel: 'Select source project folder',
-  });
-
-  if (!selected?.[0]) {
-    return;
-  }
-
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
-    vscode.window.showWarningMessage('Open the AI Native Language repository first, then import a source project.');
+    vscode.window.showWarningMessage('Open the project workspace first, then import source learning from its root.');
     return;
   }
 
-  const sourceRoot = selected[0].fsPath;
+  const sourceRoot = workspaceFolder.uri.fsPath;
   const projectName = slug(path.basename(sourceRoot));
-  const outputDir = path.join(workspaceFolder.uri.fsPath, 'learning-projects', projectName);
+  const outputDir = path.join(workspaceFolder.uri.fsPath, '.ai-native');
 
   await fs.mkdir(outputDir, { recursive: true });
   outputChannel.show(true);
@@ -585,9 +1050,70 @@ async function importSourceProject(
         projectName,
         outputDir,
       });
+
+      report('Building reconnaissance prompt from MCP...');
+      const reconResponse = await registry.callTool('semanticCore', 'generate_reconnaissance_prompt', {
+        analysis: result.analysis,
+        moduleDossiers: result.analysis.moduleDossiers ?? [],
+      });
+      const reconPayload = asReconnaissancePayload(reconResponse.json);
+      await fs.writeFile(result.reconnaissancePath, JSON.stringify(reconPayload, null, 2) + '\n', 'utf8');
+      await fs.writeFile(result.reconnaissancePromptPath, `${reconPayload.projectPrompt ?? ''}\n`, 'utf8');
+      for (const modulePrompt of reconPayload.modulePrompts ?? []) {
+        outputChannel.appendLine(`[source-to-semantic] recon module ${modulePrompt.moduleRoot}`);
+      }
+
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.semanticPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${result.semanticJsonPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${result.reconnaissancePath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${result.reconnaissancePromptPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${result.databaseSchemaPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${result.databaseSchemaMdPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.graphPath}`);
       const semanticDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(result.semanticPath));
+      const sourceHash = hashArtifactContent(await fs.readFile(result.semanticPath, 'utf8'));
+      if (outputDir) {
+        await writeVersionedArtifact({
+          artifactRoot: outputDir,
+          kind: 'semantic',
+          baseName: slug(result.semanticPath),
+          sourcePath: result.semanticPath,
+          sourceHash,
+          label: 'imported semantic',
+          files: {
+            'semantic.md': `${await fs.readFile(result.semanticPath, 'utf8')}\n`,
+            'semantic.json': `${await fs.readFile(result.semanticJsonPath, 'utf8')}`,
+            'analysis.json': `${await fs.readFile(result.analysisPath, 'utf8')}`,
+          },
+          metadata: {
+            databaseSchemaPath: result.databaseSchemaPath,
+            graphPath: result.graphPath,
+          },
+        });
+        await writeVersionedArtifact({
+          artifactRoot: outputDir,
+          kind: 'databaseSchema',
+          baseName: slug(result.semanticPath),
+          sourcePath: result.semanticPath,
+          sourceHash,
+          label: 'import database schema',
+          files: {
+            'database.schema.json': `${await fs.readFile(result.databaseSchemaPath, 'utf8')}`,
+            'database.schema.md': `${await fs.readFile(result.databaseSchemaMdPath, 'utf8')}`,
+          },
+          metadata: {
+            semanticPath: result.semanticPath,
+            graphPath: result.graphPath,
+          },
+        });
+      }
+
+      const reconRunsRootDir = path.join(outputDir, 'source.recon.runs');
+      const reconRunId = createReconRunId(projectName);
+      const reconRunDir = path.join(reconRunsRootDir, reconRunId);
+      const reconProjectArtifactsDir = path.join(reconRunDir, 'project');
+      const reconModuleArtifactsDir = path.join(reconRunDir, 'modules');
+      await fs.mkdir(reconModuleArtifactsDir, { recursive: true });
 
       const validationPolicy = await resolveValidationPolicyText(registry);
       const semanticText = await fs.readFile(result.semanticPath, 'utf8');
@@ -607,10 +1133,90 @@ async function importSourceProject(
       for (const line of validationLines) {
         outputChannel.appendLine(line);
       }
+      if (outputDir) {
+        await writeVersionedArtifact({
+          artifactRoot: outputDir,
+          kind: 'validation',
+          baseName: slug(result.semanticPath),
+          sourcePath: result.semanticPath,
+          sourceHash,
+          label: 'import validation',
+          files: {
+            'validation.json': JSON.stringify({
+              sourcePath: result.semanticPath,
+              reportPath: validationPayload.reportPath,
+              mcpValidation: {
+                summary: validationPayload.summary,
+                issues: validationPayload.issues,
+              },
+              graph: validationPayload.graph,
+              validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
+            }, null, 2) + '\n',
+            'validation.md': [
+              '# AI Native Validation',
+              '',
+              `- Source: ${result.semanticPath}`,
+              `- MCP report path: ${validationPayload.reportPath ?? 'n/a'}`,
+              `- MCP summary: gaps=${validationPayload.summary.gaps}, conflicts=${validationPayload.summary.conflicts}, warnings=${validationPayload.summary.warnings}, violations=${validationPayload.summary.violations}`,
+              '',
+              '## MCP issues',
+              ...(validationPayload.issues.length
+                ? validationPayload.issues.map((issue) => `- [${issue.severity ?? 'info'}] ${issue.code ?? 'issue'}: ${issue.message ?? ''}`)
+                : ['- none']),
+              '',
+              '## Retraining delta',
+              `- missing sections: ${buildValidationDelta({
+                sourcePath: result.semanticPath,
+                reportPath: validationPayload.reportPath,
+                validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
+                graph: asGraphObject(validationPayload.graph),
+                summary: validationPayload.summary,
+                issues: validationPayload.issues,
+              }).missingSections.join(', ') || 'none'}`,
+            ].join('\n') + '\n',
+          },
+          metadata: {
+            reportPath: validationPayload.reportPath,
+            summary: validationPayload.summary,
+            validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
+          },
+        });
+      }
 
-      report(`Running AI review with ${getConfig().reviewProvider}...`);
       const config = getConfig();
-      const agenticReview = await runAgenticReview({
+      const reconRunState: ReconRunSnapshot = {
+        runId: reconRunId,
+        projectName,
+        projectRoot: sourceRoot,
+        outputDir,
+        status: 'running',
+        phase: reconPayload.projectPrompt?.trim()
+          ? 'Recon prompt received from MCP'
+          : 'No project-level recon prompt, module agents only',
+        startedAt: new Date().toISOString(),
+        projectPromptStatus: reconPayload.projectPrompt?.trim() ? 'pending' : 'completed',
+        projectPromptSummary: reconPayload.projectPrompt?.trim() ? undefined : 'No project-level prompt was returned by MCP.',
+        moduleRuns: (reconPayload.modulePrompts ?? [])
+          .filter((modulePrompt) => Boolean(modulePrompt.prompt?.trim()))
+          .map((modulePrompt) => ({
+            moduleRoot: modulePrompt.moduleRoot ?? '.',
+            status: 'pending',
+          })),
+        events: [
+          {
+            at: new Date().toISOString(),
+            kind: 'phase',
+            message: reconPayload.projectPrompt?.trim()
+              ? 'Recon prompt received from MCP and ready to dispatch agents.'
+              : 'No project-level prompt returned; module agents will run only.',
+          },
+        ],
+        artifactRoot: outputDir,
+      };
+      reconRunsProvider.setSnapshot(reconRunState);
+      await persistReconRunState(reconRunState, reconRunDir, outputDir);
+
+      const reconBaseContext = {
         provider: config.reviewProvider,
         mode: config.reviewMode,
         model: config.reviewModel,
@@ -619,7 +1225,6 @@ async function importSourceProject(
         commandArgsJson: config.reviewCommandArgsJson,
         promptFileName: config.reviewPromptFileName,
         workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-        sourcePath: result.semanticPath,
         semanticSource: semanticText,
         expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
         graph: result.graph,
@@ -628,7 +1233,220 @@ async function importSourceProject(
           summary: validationPayload.summary,
           issues: validationPayload.issues,
         },
+      };
+
+      const updateReconRunState = async (mutator: (state: ReconRunSnapshot) => void): Promise<void> => {
+        mutator(reconRunState);
+        reconRunsProvider.setSnapshot(reconRunState);
+        await persistReconRunState(reconRunState, reconRunDir, outputDir);
+      };
+
+      const appendReconEvent = async (
+        kind: 'phase' | 'project' | 'module' | 'artifact' | 'error',
+        message: string,
+        moduleRoot?: string,
+      ): Promise<void> => {
+        await updateReconRunState((state) => {
+          state.events ??= [];
+          state.events.push({
+            at: new Date().toISOString(),
+            kind,
+            message,
+            moduleRoot,
+          });
+          state.events = state.events.slice(-20);
+        });
+      };
+
+      const runReconstructionPrompt = async (
+        sourcePath: string,
+        artifactName: string,
+        prompt: string,
+        artifactDir: string,
+        moduleRoot?: string,
+      ): Promise<AgenticReviewResult> => {
+        report(`Running AI reconnaissance with ${config.reviewProvider}: ${artifactName}`);
+        await updateReconRunState((state) => {
+          state.activeTask = artifactName;
+          state.activeModuleRoot = moduleRoot;
+          if (moduleRoot) {
+            const module = state.moduleRuns.find((entry) => entry.moduleRoot === moduleRoot);
+            if (module) {
+              module.status = 'running';
+              module.startedAt = new Date().toISOString();
+            }
+            state.phase = `Recon agent running for ${artifactName}`;
+          } else {
+            state.projectPromptStatus = 'running';
+            state.projectPromptStartedAt = new Date().toISOString();
+            state.phase = 'Project reconnaissance agent running';
+          }
+        });
+        await appendReconEvent(moduleRoot ? 'module' : 'project', `Started recon agent for ${artifactName}`, moduleRoot);
+
+        try {
+          const runContext = {
+            ...reconBaseContext,
+            sourcePath,
+            artifactName,
+            artifactDir,
+          };
+          const result = await runAgenticPrompt(runContext, prompt);
+          if (moduleRoot) {
+            await updateReconRunState((state) => {
+              state.activeTask = artifactName;
+              state.activeModuleRoot = moduleRoot;
+              const module = state.moduleRuns.find((entry) => entry.moduleRoot === moduleRoot);
+              if (module) {
+                module.status = 'completed';
+                module.finishedAt = new Date().toISOString();
+                module.summary = result.summary;
+                module.bridgeAction = result.bridgeAction;
+                module.artifactPath = result.reviewArtifactPath;
+                module.promptPath = result.promptArtifactPath;
+                module.notes = result.notes;
+                module.issues = result.issues.length;
+                delete module.error;
+              }
+              state.phase = `Recon agent finished for ${artifactName}`;
+            });
+            await appendReconEvent(
+              'artifact',
+              `Completed recon agent for ${artifactName}${result.reviewArtifactPath ? ` → ${path.basename(result.reviewArtifactPath)}` : ''}`,
+              moduleRoot,
+            );
+          } else {
+            await updateReconRunState((state) => {
+              state.activeTask = artifactName;
+              state.activeModuleRoot = moduleRoot;
+              state.projectPromptStatus = 'completed';
+              state.projectPromptFinishedAt = new Date().toISOString();
+              state.projectPromptSummary = result.summary;
+              state.projectPromptBridge = result.bridgeAction;
+              state.projectPromptArtifactPath = result.reviewArtifactPath;
+              state.phase = 'Project reconnaissance agent completed';
+            });
+            await appendReconEvent('artifact', `Completed project reconnaissance → ${path.basename(result.reviewArtifactPath ?? 'review.json')}`);
+          }
+          outputChannel.appendLine(`[source-to-semantic-recon] ${artifactName}`);
+          outputChannel.appendLine(`  bridge: ${result.bridgeAction}`);
+          outputChannel.appendLine(`  summary: ${result.summary}`);
+          for (const note of result.notes) {
+            outputChannel.appendLine(`  note: ${note}`);
+          }
+          if (result.issues.length > 0) {
+            outputChannel.appendLine(`  issues: ${result.issues.length}`);
+          }
+          if (result.reviewArtifactPath) {
+            outputChannel.appendLine(`  review artifact: ${result.reviewArtifactPath}`);
+          }
+          if (result.promptArtifactPath) {
+            outputChannel.appendLine(`  prompt artifact: ${result.promptArtifactPath}`);
+          }
+          return result;
+        } catch (error) {
+          await updateReconRunState((state) => {
+            state.activeTask = artifactName;
+            state.activeModuleRoot = moduleRoot;
+            if (moduleRoot) {
+              const module = state.moduleRuns.find((entry) => entry.moduleRoot === moduleRoot);
+              if (module) {
+                module.status = 'failed';
+                module.finishedAt = new Date().toISOString();
+                module.error = String(error);
+              }
+              state.phase = `Recon agent failed for ${artifactName}`;
+            } else {
+              state.projectPromptStatus = 'failed';
+              state.projectPromptFinishedAt = new Date().toISOString();
+              state.phase = 'Project reconnaissance agent failed';
+            }
+          });
+          await appendReconEvent('error', `Recon agent failed for ${artifactName}: ${String(error)}`, moduleRoot);
+          throw error;
+        }
+      };
+
+      const projectReconPromise = reconPayload.projectPrompt?.trim()
+        ? runReconstructionPrompt(result.semanticPath, 'project', reconPayload.projectPrompt, reconProjectArtifactsDir).catch((error) => {
+            outputChannel.appendLine(`[source-to-semantic-recon] project failed: ${String(error)}`);
+            return undefined;
+          })
+        : Promise.resolve(undefined);
+      const moduleReconPromises = (reconPayload.modulePrompts ?? [])
+        .filter((modulePrompt) => Boolean(modulePrompt.prompt?.trim()))
+        .map((modulePrompt) => {
+          const moduleRoot = modulePrompt.moduleRoot ?? '.';
+          const moduleArtifactName = moduleRoot === '.' ? projectName : moduleRoot;
+          const moduleArtifactDir = path.join(reconModuleArtifactsDir, slug(moduleArtifactName));
+          return runReconstructionPrompt(
+            path.join(sourceRoot, moduleRoot),
+            moduleArtifactName,
+            modulePrompt.prompt ?? '',
+            moduleArtifactDir,
+            moduleRoot,
+          ).catch(async (error) => {
+            await updateReconRunState((state) => {
+              const module = state.moduleRuns.find((entry) => entry.moduleRoot === moduleRoot);
+              if (module) {
+                module.status = 'failed';
+                module.finishedAt = new Date().toISOString();
+                module.error = String(error);
+              }
+              state.phase = `Recon agent failed for ${moduleArtifactName}`;
+            });
+            return undefined;
+          });
+        });
+
+      const [agenticReview, projectReconResult, moduleReconResults] = await Promise.all([
+        runAgenticReview({
+          ...reconBaseContext,
+          sourcePath: result.semanticPath,
+        }),
+        projectReconPromise,
+        Promise.allSettled(moduleReconPromises),
+      ]);
+
+      const settledModuleResults = moduleReconResults
+        .map((entry) => (entry.status === 'fulfilled' ? entry.value : undefined))
+        .filter((value): value is AgenticReviewResult => Boolean(value));
+
+      if (projectReconResult) {
+        outputChannel.appendLine(`[source-to-semantic] project reconnaissance artifact: ${projectReconResult.reviewArtifactPath ?? 'n/a'}`);
+      }
+      outputChannel.appendLine(`[source-to-semantic] module reconnaissance runs: ${settledModuleResults.length}`);
+      if (settledModuleResults.length > 0) {
+        const moduleReconIndexPath = path.join(reconRunDir, 'modules.index.json');
+        await fs.writeFile(
+          moduleReconIndexPath,
+          JSON.stringify(
+            settledModuleResults.map((entry) => ({
+              artifactPath: entry.reviewArtifactPath,
+              provider: entry.provider,
+              mode: entry.mode,
+              model: entry.model,
+              bridgeAction: entry.bridgeAction,
+              summary: entry.summary,
+              notes: entry.notes,
+              issues: entry.issues,
+            })),
+            null,
+            2,
+          ) + '\n',
+          'utf8',
+        );
+        outputChannel.appendLine(`[source-to-semantic] wrote ${moduleReconIndexPath}`);
+      }
+
+      await updateReconRunState((state) => {
+        state.status = 'completed';
+        state.phase = 'Reconnaissance complete';
+        state.finishedAt = new Date().toISOString();
+        state.activeTask = undefined;
+        state.activeModuleRoot = undefined;
       });
+      await appendReconEvent('phase', 'Reconnaissance complete');
 
       const reviewArtifactPath = path.join(outputDir, 'source.review.json');
       const reviewMarkdownPath = path.join(outputDir, 'source.review.md');
@@ -646,6 +1464,7 @@ async function importSourceProject(
             issues: agenticReview.issues,
             refinedSemanticMarkdown: agenticReview.refinedSemanticMarkdown,
             validation: validationPayload,
+            reconnaissance: reconPayload,
           },
           null,
           2,
@@ -676,6 +1495,62 @@ async function importSourceProject(
         ].join('\n'),
         'utf8',
       );
+      if (outputDir) {
+        await writeVersionedArtifact({
+          artifactRoot: outputDir,
+          kind: 'review',
+          baseName: slug(result.semanticPath),
+          sourcePath: result.semanticPath,
+          sourceHash,
+          label: 'import review',
+          files: {
+            'review.json': JSON.stringify(
+              {
+                sourcePath: result.semanticPath,
+                provider: agenticReview.provider,
+                mode: agenticReview.mode,
+                model: agenticReview.model,
+                bridgeAction: agenticReview.bridgeAction,
+                summary: agenticReview.summary,
+                notes: agenticReview.notes,
+                issues: agenticReview.issues,
+                refinedSemanticMarkdown: agenticReview.refinedSemanticMarkdown,
+                validation: validationPayload,
+                reconnaissance: reconPayload,
+              },
+              null,
+              2,
+            ) + '\n',
+            'review.md': [
+              '# AI Review',
+              '',
+              `- provider: ${agenticReview.provider}`,
+              `- mode: ${agenticReview.mode}`,
+              `- model: ${agenticReview.model}`,
+              `- bridge: ${agenticReview.bridgeAction}`,
+              '',
+              '## Summary',
+              agenticReview.summary,
+              '',
+              '## Notes',
+              ...agenticReview.notes.map((note) => `- ${note}`),
+              '',
+              '## Issues',
+              ...agenticReview.issues.map((issue) => `- [${issue.severity}] ${issue.code}: ${issue.message}`),
+              '',
+              '## Validation summary',
+              JSON.stringify(validationPayload.summary, null, 2),
+            ].join('\n') + '\n',
+            'prompt.md': agenticReview.promptPath ? `# AI Native Review Prompt\n\n- Source: ${agenticReview.promptPath}\n` : '# AI Native Review Prompt\n',
+          },
+          metadata: {
+            reviewedAt: new Date().toISOString(),
+            summary: agenticReview.summary,
+            provider: agenticReview.provider,
+            mode: agenticReview.mode,
+          },
+        });
+      }
 
       if (agenticReview.refinedSemanticMarkdown) {
         const reviewedSemanticPath = path.join(outputDir, 'source.semantic.reviewed.md');
@@ -683,12 +1558,46 @@ async function importSourceProject(
         if (result.createdSemantic) {
           await fs.writeFile(result.semanticPath, agenticReview.refinedSemanticMarkdown, 'utf8');
         }
+        if (outputDir) {
+          await writeVersionedArtifact({
+            artifactRoot: outputDir,
+            kind: 'semantic',
+            baseName: slug(result.semanticPath),
+            sourcePath: result.semanticPath,
+            sourceHash: hashArtifactContent(agenticReview.refinedSemanticMarkdown),
+            label: 'reviewed semantic',
+            files: {
+              'semantic.reviewed.md': `${agenticReview.refinedSemanticMarkdown}\n`,
+            },
+            metadata: {
+              reviewedAt: new Date().toISOString(),
+              reviewSummary: agenticReview.summary,
+            },
+          });
+        }
         outputChannel.appendLine(`[source-to-semantic] wrote ${reviewedSemanticPath}`);
       }
 
       const reviewedGraph = applyReviewToGraph(result.graph, agenticReview);
       const reviewedGraphPath = path.join(outputDir, 'source.graph.reviewed.json');
       await fs.writeFile(reviewedGraphPath, JSON.stringify(reviewedGraph, null, 2) + '\n', 'utf8');
+      if (outputDir) {
+        await writeVersionedArtifact({
+          artifactRoot: outputDir,
+          kind: 'graph',
+          baseName: slug(result.semanticPath),
+          sourcePath: result.semanticPath,
+          sourceHash,
+          label: 'import reviewed graph',
+          files: {
+            'graph.json': JSON.stringify(reviewedGraph, null, 2) + '\n',
+          },
+          metadata: {
+            reviewedAt: new Date().toISOString(),
+            reviewSummary: agenticReview.summary,
+          },
+        });
+      }
       outputChannel.appendLine(`[source-to-semantic] wrote ${reviewedGraphPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${reviewArtifactPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${reviewMarkdownPath}`);
@@ -697,6 +1606,8 @@ async function importSourceProject(
       );
       outputChannel.appendLine(`  bridge: ${agenticReview.bridgeAction}`);
       outputChannel.appendLine(`  summary: ${agenticReview.summary}`);
+      outputChannel.appendLine(`  recon modules: ${reconPayload.modulePrompts?.length ?? 0}`);
+      outputChannel.appendLine(`[source-to-semantic] recon run: ${reconRunId}`);
       for (const note of agenticReview.notes) {
         outputChannel.appendLine(`  note: ${note}`);
       }
@@ -711,7 +1622,8 @@ async function importSourceProject(
   await vscode.window.showTextDocument(semanticDocument, { preview: false });
 
   try {
-    const graphPath = path.join(outputDir, 'source.graph.reviewed.json');
+    const graphRecord = await readLatestVersionedArtifact(outputDir, 'graph', slug(semanticPath.fsPath));
+    const graphPath = graphRecord?.files['graph.json'] ?? path.join(outputDir, 'source.graph.reviewed.json');
     const rawGraph = await fs.readFile(graphPath, 'utf8').catch(async () => fs.readFile(path.join(outputDir, 'source.graph.json'), 'utf8'));
     const graph = JSON.parse(rawGraph) as {
       schemaVersion?: string;
@@ -725,7 +1637,7 @@ async function importSourceProject(
   }
 
   await refreshViews();
-  await vscode.window.showInformationMessage(`Imported source project into learning-projects/${projectName}`);
+  await vscode.window.showInformationMessage('Imported source workspace into .ai-native');
 }
 
 async function ensureDirectoryDocument(folder: vscode.Uri): Promise<vscode.TextDocument> {
@@ -999,7 +1911,7 @@ function normalizeHeading(value: string): string {
 }
 
 function isSemanticMarkdown(document: vscode.TextDocument): boolean {
-  return document.fileName.endsWith('.semantic.md') || document.fileName.endsWith('.md');
+  return document.fileName.endsWith('.semantic.md') || path.basename(document.fileName) === 'source.semantic.md';
 }
 
 async function resolveSemanticSourceDocument(document?: vscode.TextDocument): Promise<vscode.TextDocument | undefined> {
@@ -1057,7 +1969,16 @@ function asGraphObject(value: unknown): {
   schemaVersion?: string;
   nodes: Array<{ id: string; type: string; name: string; description?: string; sourceRef?: string }>;
   edges: Array<{ from: string; to: string; type: string }>;
-  metadata?: { title?: string; sourcePath?: string; createdAt?: string };
+  metadata?: {
+    title?: string;
+    sourcePath?: string;
+    createdAt?: string;
+    reviewedAt?: string;
+    databaseSchema?: NonNullable<AgenticDiagramClassification['databaseSchema']>;
+    review?: {
+      diagramClassification?: AgenticDiagramClassification;
+    };
+  };
 } | undefined {
   const object = asObject(value);
   if (!object) {
@@ -1097,6 +2018,9 @@ function asGraphObject(value: unknown): {
           title: typeof asObject(object.metadata)?.title === 'string' ? (asObject(object.metadata)?.title as string) : undefined,
           sourcePath: typeof asObject(object.metadata)?.sourcePath === 'string' ? (asObject(object.metadata)?.sourcePath as string) : undefined,
           createdAt: typeof asObject(object.metadata)?.createdAt === 'string' ? (asObject(object.metadata)?.createdAt as string) : undefined,
+          reviewedAt: typeof asObject(object.metadata)?.reviewedAt === 'string' ? (asObject(object.metadata)?.reviewedAt as string) : undefined,
+          databaseSchema: asObject(object.metadata)?.databaseSchema as NonNullable<AgenticDiagramClassification['databaseSchema']> | undefined,
+          review: asObject(object.metadata)?.review as { diagramClassification?: AgenticDiagramClassification } | undefined,
         }
       : undefined,
   };
@@ -1119,9 +2043,28 @@ function parseGraphFromText(text: string): ReturnType<typeof asGraphObject> {
   }
 }
 
+function asReconnaissancePayload(
+  value: unknown,
+): {
+  projectPrompt?: string;
+  modulePrompts?: Array<{ moduleRoot?: string; prompt?: string }>;
+} {
+  const object = asObject(value) ?? {};
+  return {
+    projectPrompt: typeof object.projectPrompt === 'string' ? object.projectPrompt : undefined,
+    modulePrompts: Array.isArray(object.modulePrompts)
+      ? (object.modulePrompts as Array<{ moduleRoot?: string; prompt?: string }>).map((item) => ({
+          moduleRoot: typeof item.moduleRoot === 'string' ? item.moduleRoot : undefined,
+          prompt: typeof item.prompt === 'string' ? item.prompt : undefined,
+        }))
+      : [],
+  };
+}
+
 function asValidationPayload(
   value: unknown,
 ): {
+  reportPath?: string;
   issues: Array<{ severity?: string; code?: string; message?: string; sourceRef?: string; sourceLine?: number; sourceColumn?: number; nodeId?: string }>;
   summary: { gaps: number; conflicts: number; warnings: number; violations: number };
   graph: unknown;
@@ -1129,6 +2072,7 @@ function asValidationPayload(
   const object = asObject(value) ?? {};
   const summaryObject = asObject(object.summary) ?? {};
   return {
+    reportPath: typeof object.reportPath === 'string' ? object.reportPath : undefined,
     issues: Array.isArray(object.issues) ? (object.issues as Array<{ severity?: string; code?: string; message?: string; sourceRef?: string; sourceLine?: number; sourceColumn?: number; nodeId?: string }>) : [],
     summary: {
       gaps: typeof summaryObject.gaps === 'number' ? summaryObject.gaps : 0,
@@ -1138,4 +2082,22 @@ function asValidationPayload(
     },
     graph: object.graph,
   };
+}
+
+async function persistReconRunState(
+  state: ReconRunSnapshot,
+  reconRunDir: string,
+  outputDir: string,
+): Promise<void> {
+  await fs.mkdir(reconRunDir, { recursive: true });
+  await fs.mkdir(path.join(outputDir, 'source.recon.runs'), { recursive: true });
+  const currentPath = path.join(outputDir, 'source.recon.current.json');
+  const statePath = path.join(reconRunDir, 'state.json');
+  const snapshot = JSON.parse(JSON.stringify(state)) as ReconRunSnapshot;
+  await fs.writeFile(currentPath, JSON.stringify(snapshot, null, 2) + '\n', 'utf8');
+  await fs.writeFile(statePath, JSON.stringify(snapshot, null, 2) + '\n', 'utf8');
+}
+
+function createReconRunId(projectName: string): string {
+  return `${new Date().toISOString().replace(/[:.]/g, '-')}.${slug(projectName)}`;
 }

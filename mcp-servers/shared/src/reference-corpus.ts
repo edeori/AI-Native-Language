@@ -44,6 +44,7 @@ export interface ReferenceCorpus {
   moduleHints: string[];
   technologyHints: string[];
   architectureHints: string[];
+  schemaHints: string[];
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -89,8 +90,22 @@ export function loadReferenceCorpus(): ReferenceCorpus {
   ]);
   const technologyHints = unique(projects.flatMap((project) => project.technologies));
   const architectureHints = unique(projects.flatMap((project) => project.observations));
+  const schemaHints = unique([
+    ...projects.flatMap((project) => [...(project.roles.entities ?? []), ...(project.roles.repositories ?? [])].map((entry) => normalizeSchemaHint(entry))),
+    'id',
+    'created_at',
+    'updated_at',
+    'version',
+    'status',
+    'tenant_id',
+    'aggregate_id',
+    'event_type',
+    'payload',
+    'audit_log',
+    'outbox_event',
+  ]);
 
-  cachedCorpus = { projects, primary, moduleHints, technologyHints, architectureHints };
+  cachedCorpus = { projects, primary, moduleHints, technologyHints, architectureHints, schemaHints };
   return cachedCorpus;
 }
 
@@ -147,4 +162,16 @@ export function isEnterpriseLikeDocument(summary: {
 
 function unique(items: string[]): string[] {
   return [...new Set(items.map((item) => item.trim()).filter(Boolean))];
+}
+
+function normalizeSchemaHint(value: string): string {
+  const filename = value.split(/[\\/]/).pop() ?? value;
+  return filename
+    .replace(/\.(java|kt|groovy|ts|tsx|js|jsx)$/, '')
+    .replace(/(entity|record|model|repository|repo|table|dto)$/i, '')
+    .replace(/([a-z])([A-Z])/g, '$1_$2')
+    .replace(/[^a-zA-Z0-9_]+/g, '_')
+    .toLowerCase()
+    .replace(/^_+|_+$/g, '')
+    || value.toLowerCase();
 }

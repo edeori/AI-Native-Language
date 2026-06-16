@@ -3,11 +3,13 @@ export const extensionName = 'ai-native-semantic-workflow';
 export const commandIds = {
   openDashboard: 'aiNative.openDashboard',
   openConfiguration: 'aiNative.openConfiguration',
+  openReconRuns: 'aiNative.openReconRuns',
   openTutorial: 'aiNative.openTutorial',
   refreshAll: 'aiNative.refreshAll',
   createSemanticSourceTemplate: 'aiNative.createSemanticSourceTemplate',
   validateActiveSemanticMarkdown: 'aiNative.validateActiveSemanticMarkdown',
   generateCanonicalGraph: 'aiNative.generateCanonicalGraph',
+  openMarkdownArtifactPreview: 'aiNative.openMarkdownArtifactPreview',
   openGraphPreview: 'aiNative.openGraphPreview',
   generateSpringBootSkeleton: 'aiNative.generateSpringBootSkeleton',
   openArtifactsFolder: 'aiNative.openArtifactsFolder',
@@ -16,11 +18,13 @@ export const commandIds = {
 } as const;
 
 export const viewIds = {
-  inputs: 'aiNativeInputs',
-  model: 'aiNativeModel',
-  generate: 'aiNativeGenerate',
-  review: 'aiNativeReview',
-  mcp: 'aiNativeMcpHub',
+  validation: 'aiNativeValidation',
+  review: 'aiNativeReviewArtifacts',
+  semantic: 'aiNativeSemanticArtifacts',
+  graph: 'aiNativeGraph',
+  databaseSchema: 'aiNativeDatabaseSchema',
+  settings: 'aiNativeMcpHub',
+  recon: 'aiNativeRecon',
 } as const;
 
 export const serverNames = {

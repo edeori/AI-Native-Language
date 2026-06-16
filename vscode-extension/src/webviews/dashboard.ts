@@ -90,7 +90,7 @@ export class DashboardPanel {
   </head>
   <body>
     <div class="title">AI Native Semantic Workflow</div>
-    <p class="muted">Remote MCP services: semantic-core, validator, compiler. Local artifact root: <code>${escapeHtml(config.artifactRoot)}</code>.</p>
+    <p class="muted">Remote services: semantic-core, validator, compiler. Local artifact root: <code>${escapeHtml(config.artifactRoot)}</code>.</p>
     <div class="grid">
       <div class="card">
         <h3>Primary flow</h3>
@@ -107,7 +107,7 @@ export class DashboardPanel {
         <div>semantic-core: <code>${escapeHtml(config.semanticCoreUrl)}</code></div>
         <div>validator: <code>${escapeHtml(config.validatorUrl)}</code></div>
         <div>compiler: <code>${escapeHtml(config.compilerUrl)}</code></div>
-        <button data-command="${commandIds.openConfiguration}">Configure MCP & AI agent</button>
+        <button data-command="${commandIds.openConfiguration}">Configure Settings & AI agent</button>
         <button data-command="${commandIds.refreshAll}">Refresh views</button>
       </div>
       <div class="card">

@@ -13,22 +13,25 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:aiNative.openConfiguration",
+    "onCommand:aiNative.openReconRuns",
     "onCommand:aiNative.openDashboard",
     "onCommand:aiNative.openTutorial",
     "onCommand:aiNative.refreshAll",
     "onCommand:aiNative.createSemanticSourceTemplate",
     "onCommand:aiNative.validateActiveSemanticMarkdown",
     "onCommand:aiNative.generateCanonicalGraph",
+    "onCommand:aiNative.openMarkdownArtifactPreview",
     "onCommand:aiNative.openGraphPreview",
     "onCommand:aiNative.generateSpringBootSkeleton",
     "onCommand:aiNative.openArtifactsFolder",
     "onCommand:aiNative.showMcpStatus",
     "onView:aiNativeActions",
-    "onView:aiNativeInputs",
-    "onView:aiNativeModel",
-    "onView:aiNativeGenerate",
-    "onView:aiNativeReview",
-    "onView:aiNativeMcpHub"
+    "onView:aiNativeValidation",
+    "onView:aiNativeReviewArtifacts",
+    "onView:aiNativeSemanticArtifacts",
+    "onView:aiNativeDatabaseSchema",
+    "onView:aiNativeMcpHub",
+    "onView:aiNativeRecon"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -51,7 +54,11 @@
       },
       {
         "command": "aiNative.openConfiguration",
-        "title": "AI Native: Configure AI Agent"
+        "title": "AI Native: Configure Settings"
+      },
+      {
+        "command": "aiNative.openReconRuns",
+        "title": "AI Native: Open Recon Runs"
       },
       {
         "command": "aiNative.openTutorial",
@@ -72,6 +79,10 @@
       {
         "command": "aiNative.generateCanonicalGraph",
         "title": "AI Native: Generate Canonical Graph"
+      },
+      {
+        "command": "aiNative.openMarkdownArtifactPreview",
+        "title": "AI Native: Open Markdown Artifact Preview"
       },
       {
         "command": "aiNative.openGraphPreview",
@@ -117,11 +128,6 @@
           "type": "string",
           "default": "com.example.generated",
           "description": "Default Java base package used by the compiler scaffold."
-        },
-        "aiNative.autoValidateOnSave": {
-          "type": "boolean",
-          "default": false,
-          "description": "Validate Semantic Markdown automatically after save."
         }
       }
     },
@@ -142,24 +148,29 @@
           "name": "Actions"
         },
         {
-          "id": "aiNativeInputs",
-          "name": "Inputs"
+          "id": "aiNativeValidation",
+          "name": "Validation"
         },
         {
-          "id": "aiNativeModel",
-          "name": "Model"
-        },
-        {
-          "id": "aiNativeGenerate",
-          "name": "Generate"
-        },
-        {
-          "id": "aiNativeReview",
+          "id": "aiNativeReviewArtifacts",
           "name": "Review"
         },
         {
+          "id": "aiNativeSemanticArtifacts",
+          "name": "Semantic"
+        },
+        {
+          "id": "aiNativeDatabaseSchema",
+          "name": "Database Schema"
+        },
+        {
+          "type": "webview",
+          "id": "aiNativeRecon",
+          "name": "Recon Runs"
+        },
+        {
           "id": "aiNativeMcpHub",
-          "name": "MCP"
+          "name": "Settings"
         }
       ]
     }

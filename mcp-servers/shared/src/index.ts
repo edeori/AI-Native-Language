@@ -5,6 +5,7 @@ export * from './semantic-markdown.js';
 export * from './graph.js';
 export * from './validator.js';
 export * from './compiler.js';
+export * from './database-schema.js';
 export * from './mcp-runtime.js';
 export * from './reference-corpus.js';
 export * from './source-learning.js';

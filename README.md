@@ -117,11 +117,14 @@ The repo also carries complex real-world reference material under `reference-pro
 - `reference-projects/manifest.json` controls the batch ingest list.
 - New reference projects can be added later in the same format to expand the corpus and rerun `npm run reference:ingest:batch`.
 
-Editable source-derived learning states are created in the currently opened target workspace under its own `learning-projects/` folder, not in this tooling repo.
+Editable source-derived learning states are created in the currently opened target workspace under its own `.ai-native/learning/` folder, not in this tooling repo.
 
-- `learning-projects/<project>/source.semantic.md` is the editable semantic state produced from a source scan in the currently opened target workspace.
-- `learning-projects/<project>/source.semantic.suggested.md` is the current source-derived suggestion.
-- Import a source project from the VSCode side panel or run `npm run source:semantic -- --root <project-root> --name <project-name> --out <target-workspace>/learning-projects/<project-name>`.
+- `.ai-native/learning/<project>/source.semantic.md` is the editable semantic state produced from a source scan in the currently opened target workspace.
+- `.ai-native/learning/<project>/source.semantic.suggested.md` is the current source-derived suggestion.
+- `.ai-native/learning/<project>/source.semantic.json` is the structured source-derived semantic snapshot used by the importer and graph pipeline.
+- `.ai-native/learning/<project>/source.recon.json` and `.ai-native/learning/<project>/source.recon.prompt.md` hold the module-by-module reconnaissance dossier and the stored scan prompt used for deeper source discovery.
+- `.ai-native/learning/<project>/source.database.json` and `.ai-native/learning/<project>/source.database.md` hold the discovered database schema draft and ER-facing summary.
+- Import a source project from the VSCode side panel or run `npm run source:semantic -- --root <project-root> --name <project-name> --out <workspace-root>/.ai-native/learning/<project-name>`.
 
 This is not just documentation. The semantic source is intended to become the editable contract that drives validation, generation, and review.
 

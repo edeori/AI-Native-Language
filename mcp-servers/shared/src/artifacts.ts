@@ -28,7 +28,7 @@ export function normalizeArtifactName(name: string, fallback = 'artifact', maxLe
 
 export function makeArtifactPath(
   workspaceRoot: string,
-  kind: 'graph' | 'validation' | 'generated' | 'cache',
+  kind: 'graph' | 'validation' | 'generated' | 'cache' | 'schema',
   name: string,
   extension: string,
 ): string {
@@ -38,7 +38,7 @@ export function makeArtifactPath(
 
 export async function saveArtifact(
   workspaceRoot: string | undefined,
-  kind: 'graph' | 'validation' | 'generated' | 'cache',
+  kind: 'graph' | 'validation' | 'generated' | 'cache' | 'schema',
   name: string,
   extension: string,
   content: string,

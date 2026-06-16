@@ -131,4 +131,4 @@ The source repository is the truth for structure and behavior. The semantic slic
 
 ## Editable learning states
 
-If you want an editable, source-derived state for feature work, create it in the target project workspace under its own `learning-projects/` folder instead of changing the curated reference corpus in this tooling repo. The learning state is intentionally revisited and refreshed as the source evolves, while the reference corpus stays mostly stable as regression material.
+If you want an editable, source-derived state for feature work, create it in the target project workspace under its own `.ai-native/learning/` folder instead of changing the curated reference corpus in this tooling repo. The learning state is intentionally revisited and refreshed as the source evolves, while the reference corpus stays mostly stable as regression material.

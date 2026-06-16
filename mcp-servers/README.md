@@ -14,7 +14,7 @@ This directory contains the modular MCP server contracts that support the semant
 
 ## Planned servers
 
-- `semantic-core`: parse Semantic Markdown and generate canonical graph models
+- `semantic-core`: parse Semantic Markdown, generate canonical graph models, and infer database schema drafts
 - `validator`: run validation, security checks, and issue reporting
 - `compiler`: generate Spring Boot / Java output
 - `cache`: store IR snapshots and generated artifacts
@@ -30,6 +30,7 @@ The repository now keeps a growing reference corpus under `reference-projects/`.
 - The ingest command is `npm run reference:ingest -- --root <project-root> --name <project-name> --out reference-projects/<project-name>`.
 - The batch command is `npm run reference:ingest:batch` and replays every project listed in `reference-projects/manifest.json`.
 - The `semantic-core` and `validator` servers consult the reference corpus when inferring module boundaries and enterprise-level warnings.
+- The source learning pipeline now emits module dossiers and a stored reconnaissance prompt so deeper scans can be replayed consistently across large Maven projects.
 
 ## Implemented v0 tools
 
@@ -37,6 +38,7 @@ The repository now keeps a growing reference corpus under `reference-projects/`.
 
 - `parse_semantic_markdown`
 - `generate_canonical_graph`
+- `generate_database_schema`
 
 ### `validator`
 
@@ -56,6 +58,7 @@ The repository now keeps a growing reference corpus under `reference-projects/`.
 ## Local artifact behavior
 
 - generated graph JSON is stored under `.ai-native/graph/`
+- inferred database schema drafts are stored under `.ai-native/schema/`
 - validation reports are stored under `.ai-native/validation/`
 - generated Spring Boot output is written to the workspace output directory
 - a generated manifest is stored under `.ai-native/generated/`

@@ -56,6 +56,19 @@ Create, edit, list, and search notes.
 - note repository adapter for persistence
 - audit log client adapter for the external service
 
+## entities
+- note: id, title, content, owner_id, status, created_at, updated_at
+- user: id, email, display_name, role, status, created_at, updated_at
+- audit_log: id, action, actor_id, subject_type, subject_id, payload, created_at
+
+## database_schema
+- notes table stores the note domain object and write-state snapshot
+- users table stores the authenticated user and ownership context
+- audit_log table stores audit events for create, update, and delete actions
+- notes.id is the stable primary key
+- notes.owner_id references the owning user
+- audit_log.subject_id references the affected note or user record
+
 ## examples
 - user creates a note called "Shopping"
 - user searches for notes containing "project"

@@ -18,9 +18,9 @@ export class McpTreeDataProvider implements vscode.TreeDataProvider<McpTreeItem>
 
   async getChildren(element?: McpTreeItem): Promise<McpTreeItem[]> {
     return [
-      new McpTreeItem('Configure MCP & AI agent', 'Open the agent selector and the MCP endpoints.', vscode.TreeItemCollapsibleState.None, {
+      new McpTreeItem('Configure Settings & AI agent', 'Open the agent selector and the endpoint settings.', vscode.TreeItemCollapsibleState.None, {
         command: commandIds.openConfiguration,
-        title: 'Configure MCP & AI agent',
+        title: 'Configure Settings & AI agent',
       }),
       ...(await this.renderConnections()),
     ];
@@ -30,14 +30,14 @@ export class McpTreeDataProvider implements vscode.TreeDataProvider<McpTreeItem>
     const status = await this.registry.pingAll();
     return status.map((item) => {
       const icon = item.connected
-        ? new vscode.ThemeIcon('check', new vscode.ThemeColor('testing.iconPassed'))
-        : new vscode.ThemeIcon('error', new vscode.ThemeColor('testing.iconFailed'));
-      const description = item.connected ? `tools: ${item.tools ?? 0}` : item.error ?? 'unreachable';
-      return new McpTreeItem(item.server, description, vscode.TreeItemCollapsibleState.None, {
-        command: commandIds.openConfiguration,
-        title: 'Open MCP & AI agent configuration',
-      }, icon);
-    });
+      ? new vscode.ThemeIcon('check', new vscode.ThemeColor('testing.iconPassed'))
+      : new vscode.ThemeIcon('error', new vscode.ThemeColor('testing.iconFailed'));
+    const description = item.connected ? `tools: ${item.tools ?? 0}` : item.error ?? 'unreachable';
+    return new McpTreeItem(item.server, description, vscode.TreeItemCollapsibleState.None, {
+      command: commandIds.openConfiguration,
+      title: 'Open Settings & AI agent configuration',
+    }, icon);
+  });
   }
 }
 
