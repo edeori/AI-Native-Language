@@ -1,6 +1,7 @@
 import * as z from 'zod/v4';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  appendFeedbackDelta,
   generateCanonicalGraph,
   parseSemanticMarkdown,
   parseSemanticMarkdownFromFile,
@@ -44,6 +45,54 @@ function createServer() {
         },
       ],
     }),
+  );
+
+  server.registerTool(
+    'ingest_feedback_delta',
+    {
+      description: 'Persist a validation feedback delta so validator heuristics can be updated later.',
+      inputSchema: z.object({
+        workspaceRoot: z.string().optional(),
+        sourcePath: z.string(),
+        sourceHash: z.string().optional(),
+        summary: z.any().optional(),
+        delta: z.any().optional(),
+        issues: z.array(z.any()).optional(),
+        evidence: z.array(z.any()).optional(),
+        metadata: z.any().optional(),
+      }),
+    },
+    async ({ workspaceRoot, sourcePath, sourceHash, summary, delta, issues, evidence, metadata }) => {
+      const store = await appendFeedbackDelta(workspaceRoot, {
+        server: 'validator',
+        kind: 'validation',
+        sourcePath,
+        sourceHash,
+        summary: summary as Record<string, unknown> | undefined,
+        delta: delta as Record<string, unknown> | undefined,
+        issues: issues as Array<Record<string, unknown>> | undefined,
+        evidence: evidence as Array<Record<string, unknown>> | undefined,
+        metadata: metadata as Record<string, unknown> | undefined,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                accepted: true,
+                server: 'validator',
+                kind: 'validation',
+                ...store,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
   );
 
   server.registerTool(

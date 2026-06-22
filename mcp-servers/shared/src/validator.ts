@@ -150,6 +150,68 @@ function assessDependencies(document: SemanticDocument, issues: ValidationIssue[
   }
 }
 
+function assessLayering(document: SemanticDocument, issues: ValidationIssue[]): void {
+  const architectureText = getSectionText(document, 'architecture');
+  const interfacesText = getSectionText(document, 'interfaces');
+  const processText = getSectionText(document, 'processes');
+  const combined = `${architectureText}\n${interfacesText}\n${processText}`;
+
+  if (/SERVICE:\s*client implementations/i.test(interfacesText) || /service-local client implementation/i.test(combined)) {
+    issues.push(
+      createIssue(
+        'warning',
+        'service_layer_contains_client_adapters',
+        'Service layer contains client implementations. Prefer a dedicated clients/integration module for outbound adapters.',
+        '#interfaces',
+      ),
+    );
+  }
+
+  if (/SERVICE:\s*local DTOs/i.test(interfacesText) || /service-local dto/i.test(combined)) {
+    issues.push(
+      createIssue(
+        'warning',
+        'service_layer_contains_local_dtos',
+        'Service layer contains DTO classes. Prefer API or common ownership for transfer shapes.',
+        '#interfaces',
+      ),
+    );
+  }
+
+  if (/SERVICE:\s*events/i.test(interfacesText) && /EVENTS:\s*types/i.test(interfacesText)) {
+    issues.push(
+      createIssue(
+        'warning',
+        'event_contracts_split_across_layers',
+        'Events are modeled in both common and service layers. Consolidate event ownership so event contracts live in one place.',
+        '#interfaces',
+      ),
+    );
+  }
+
+  if (/MailService\b[\s\S]*issue: service interface lacks descriptive documentation/i.test(interfacesText)) {
+    issues.push(
+      createIssue(
+        'violation',
+        'service_interface_underdocumented',
+        'Service interface contracts should be documented. MailService currently lacks descriptive contract comments.',
+        '#interfaces',
+      ),
+    );
+  }
+
+  if (/SERVICE:\s*mail operations[\s\S]*sendInvite[\s\S]*issue: invite delivery contract exists but MailServiceImpl\.sendInvite is currently unimplemented/i.test(interfacesText)) {
+    issues.push(
+      createIssue(
+        'violation',
+        'service_mail_invite_unimplemented',
+        'MailService declares invite delivery, but MailServiceImpl.sendInvite is still unimplemented.',
+        '#interfaces',
+      ),
+    );
+  }
+}
+
 function assessQuality(document: SemanticDocument, graph: CanonicalGraph, issues: ValidationIssue[]): void {
   const processItems = getSectionItems(document, 'processes');
   if (processItems.length === 0) {
@@ -223,6 +285,7 @@ export function validateSemanticDocument(
   assessContradictions(document, issues);
   assessSecurity(document, options?.policyText ?? validationPolicyText, issues);
   assessDependencies(document, issues);
+  assessLayering(document, issues);
 
   const gaps = issues.filter((issue) => issue.severity === 'gap').length;
   const conflicts = issues.filter((issue) => issue.severity === 'conflict').length;

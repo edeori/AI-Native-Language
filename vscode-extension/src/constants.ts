@@ -15,6 +15,7 @@ export const commandIds = {
   openArtifactsFolder: 'aiNative.openArtifactsFolder',
   showMcpStatus: 'aiNative.showMcpStatus',
   importSourceProject: 'aiNative.importSourceProject',
+  resumeRecon: 'aiNative.resumeRecon',
 } as const;
 
 export const viewIds = {
@@ -31,4 +32,5 @@ export const serverNames = {
   semanticCore: 'semantic-core',
   validator: 'validator',
   compiler: 'compiler',
+  javaParser: 'java-parser',
 } as const;

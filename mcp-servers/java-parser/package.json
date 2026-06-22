@@ -1,0 +1,18 @@
+{
+  "name": "@ai-native/mcp-java-parser",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@ai-native/semantic-shared": "file:../shared",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "tree-sitter": "^0.25.0",
+    "tree-sitter-java": "^0.23.5",
+    "zod": "^4.0.0"
+  }
+}

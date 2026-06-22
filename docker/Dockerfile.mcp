@@ -2,6 +2,8 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
+RUN apk add --no-cache python3 make g++
+
 COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
 COPY mcp-servers ./mcp-servers
 COPY examples ./examples
@@ -14,6 +16,7 @@ COPY AI_Native_Semantic_Workflow.md ./
 COPY AI_Native_Semantic_Programming_Platform.md ./
 
 RUN npm ci --ignore-scripts
+RUN npm rebuild tree-sitter tree-sitter-java --build-from-source
 RUN npm run build
 
 FROM node:20-alpine AS runtime

@@ -122,6 +122,7 @@ Editable source-derived learning states are created in the currently opened targ
 - `.ai-native/learning/<project>/source.semantic.md` is the editable semantic state produced from a source scan in the currently opened target workspace.
 - `.ai-native/learning/<project>/source.semantic.suggested.md` is the current source-derived suggestion.
 - `.ai-native/learning/<project>/source.semantic.json` is the structured source-derived semantic snapshot used by the importer and graph pipeline.
+- `.ai-native/learning/<project>/source.codegraph.json` and `.ai-native/learning/<project>/source.codegraph.md` hold the code-first knowledge graph derived from the remote Java parser MCP/AST pipeline and used to drive the semantic prompt.
 - `.ai-native/learning/<project>/source.recon.json` and `.ai-native/learning/<project>/source.recon.prompt.md` hold the module-by-module reconnaissance dossier and the stored scan prompt used for deeper source discovery.
 - `.ai-native/learning/<project>/source.database.json` and `.ai-native/learning/<project>/source.database.md` hold the discovered database schema draft and ER-facing summary.
 - Import a source project from the VSCode side panel or run `npm run source:semantic -- --root <project-root> --name <project-name> --out <workspace-root>/.ai-native/learning/<project-name>`.

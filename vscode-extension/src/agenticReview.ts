@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import type { CodeKnowledgeGraph, JavaAstFile } from '@ai-native/semantic-shared';
 import type { ExtensionConfig } from './config.js';
 
 export interface AgenticReviewIssue {
@@ -68,6 +69,8 @@ export interface AgenticReviewContext {
   artifactDir?: string;
   artifactName?: string;
   semanticSource: string;
+  javaAstCatalog?: JavaAstFile[];
+  codeKnowledgeGraph?: CodeKnowledgeGraph;
   expectationDocuments?: Array<{ path: string; content: string }>;
   graph: unknown;
   validation: {
@@ -110,9 +113,13 @@ export interface AgentRuntimeProbeResult {
   error?: string;
 }
 
-export async function runAgenticReview(context: AgenticReviewContext): Promise<AgenticReviewResult> {
-  const prompt = buildPrompt(context);
-  return runAgenticPrompt(context, prompt);
+export interface ReviewPromptBundle {
+  promptVersion: string;
+  architecturePrompt: string;
+  flowPrompt: string;
+  dataModelPrompt: string;
+  consistencyPrompt: string;
+  mergePrompt: string;
 }
 
 export async function runAgenticPrompt(context: AgenticReviewContext, prompt: string): Promise<AgenticReviewResult> {
@@ -131,6 +138,52 @@ export async function runAgenticPrompt(context: AgenticReviewContext, prompt: st
   }
 
   return persistReviewArtifacts(context, prompt, result);
+}
+
+export async function runAgenticReviewBundle(
+  context: AgenticReviewContext,
+  prompts: ReviewPromptBundle,
+): Promise<AgenticReviewResult> {
+  const stageOutputs = await runReviewStages(context, prompts);
+  const mergePrompt = [
+    prompts.mergePrompt,
+    '',
+    'Architecture output:',
+    JSON.stringify(stageOutputs.architecture, null, 2),
+    '',
+    'Flow output:',
+    JSON.stringify(stageOutputs.flow, null, 2),
+    '',
+    'Data model output:',
+    JSON.stringify(stageOutputs.dataModel, null, 2),
+    '',
+    'Consistency output:',
+    JSON.stringify(stageOutputs.consistency, null, 2),
+  ].join('\n');
+
+  const mergeContext: AgenticReviewContext = {
+    ...context,
+    artifactName: `${context.artifactName ?? path.basename(context.sourcePath)}.semantic-final`,
+  };
+
+  const merged = await runAgenticPrompt(mergeContext, mergePrompt);
+  return {
+    ...merged,
+    notes: [
+      ...stageOutputs.architecture.notes.map((note) => `[architecture] ${note}`),
+      ...stageOutputs.flow.notes.map((note) => `[flow] ${note}`),
+      ...stageOutputs.dataModel.notes.map((note) => `[data-model] ${note}`),
+      ...stageOutputs.consistency.notes.map((note) => `[consistency] ${note}`),
+      ...merged.notes,
+    ],
+    issues: [
+      ...stageOutputs.architecture.issues,
+      ...stageOutputs.flow.issues,
+      ...stageOutputs.dataModel.issues,
+      ...stageOutputs.consistency.issues,
+      ...merged.issues,
+    ],
+  };
 }
 
 export async function probeAgentRuntime(
@@ -293,7 +346,8 @@ async function runPromptFileReview(context: AgenticReviewContext, prompt: string
     return fallback;
   }
 
-  const promptPath = path.join(workspaceRoot, context.promptFileName || '.github/prompts/ai-native-review.prompt.md');
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-native-review-'));
+  const promptPath = path.join(tempRoot, context.promptFileName || 'ai-native-review.prompt.md');
   await fs.mkdir(path.dirname(promptPath), { recursive: true });
   await fs.writeFile(promptPath, prompt, 'utf8');
 
@@ -341,7 +395,7 @@ function localReview(context: AgenticReviewContext): AgenticReviewResult {
 
 async function persistReviewArtifacts(
   context: AgenticReviewContext,
-  prompt: string,
+  _prompt: string,
   result: AgenticReviewResult,
 ): Promise<AgenticReviewResult> {
   if (!context.workspaceRoot) {
@@ -352,30 +406,7 @@ async function persistReviewArtifacts(
   await fs.mkdir(reviewDir, { recursive: true });
 
   const baseName = `${slugify(context.artifactName ?? path.basename(context.sourcePath))}.${slugify(result.provider)}.${slugify(result.mode)}`;
-  const jsonPath = path.join(reviewDir, `${baseName}.json`);
   const mdPath = path.join(reviewDir, `${baseName}.md`);
-  const promptPath = path.join(reviewDir, `${baseName}.prompt.md`);
-
-  const artifact = {
-    sourcePath: context.sourcePath,
-    provider: result.provider,
-    mode: result.mode,
-    model: result.model,
-    bridgeAction: result.bridgeAction,
-    usedEndpoint: result.usedEndpoint,
-    promptPath: result.promptPath,
-    rawOutput: result.rawOutput,
-    validation: context.validation,
-    summary: result.summary,
-    notes: result.notes,
-    issues: result.issues,
-    refinedSemanticMarkdown: result.refinedSemanticMarkdown,
-    diagramClassification: result.diagramClassification,
-    graph: context.graph,
-  };
-
-  await fs.writeFile(jsonPath, JSON.stringify(artifact, null, 2), 'utf8');
-  await fs.writeFile(promptPath, prompt, 'utf8');
   const markdownLines = [
     '# AI Native Review',
     '',
@@ -456,8 +487,7 @@ async function persistReviewArtifacts(
 
   return {
     ...result,
-    reviewArtifactPath: jsonPath,
-    promptArtifactPath: promptPath,
+    reviewArtifactPath: mdPath,
   };
 }
 
@@ -667,42 +697,78 @@ function replacePlaceholders(value: unknown, variables: Record<string, string>):
   return value;
 }
 
-function buildPrompt(context: AgenticReviewContext): string {
-  const expectationDocuments = context.expectationDocuments ?? [];
-  return [
-    `You are reviewing an AI-native semantic application slice.`,
-    `Provider: ${context.provider}`,
-    `Mode: ${context.mode}`,
-    `Model: ${context.model}`,
-    `Source: ${context.sourcePath}`,
+async function runReviewStages(
+  context: AgenticReviewContext,
+  prompts: ReviewPromptBundle,
+): Promise<{
+  architecture: AgenticReviewResult;
+  flow: AgenticReviewResult;
+  dataModel: AgenticReviewResult;
+  consistency: AgenticReviewResult;
+}> {
+  const [architecture, flow, dataModel] = await Promise.all([
+    runPromptStage(context, prompts.architecturePrompt, 'architecture'),
+    runPromptStage(context, prompts.flowPrompt, 'flow'),
+    runPromptStage(context, prompts.dataModelPrompt, 'data-model'),
+  ]);
+
+  const consistencyPrompt = [
+    prompts.consistencyPrompt,
     '',
-    'Expectation documents:',
-    expectationDocuments.length > 0
-      ? expectationDocuments.flatMap((document) => [
-          `### ${document.path}`,
-          document.content,
-          '',
-        ]).join('\n')
-      : '### mcp-validation-policy.md\nNo expectation documents provided.',
+    'Architecture result:',
+    JSON.stringify(briefReviewResult(architecture), null, 2),
     '',
-    'Semantic source:',
-    context.semanticSource,
+    'Flow result:',
+    JSON.stringify(briefReviewResult(flow), null, 2),
     '',
-    'Validation summary:',
-    JSON.stringify(context.validation.summary, null, 2),
-    '',
-    'Validation issues:',
-    JSON.stringify(context.validation.issues, null, 2),
-    '',
-    'Graph:',
-    JSON.stringify(context.graph, null, 2),
-    '',
-    'Task:',
-    'Review the slice against the policy and the graph. Return ONLY valid JSON with this schema:',
-    '{ "summary": "string", "notes": ["string"], "issues": [{ "severity": "info|warning|gap|conflict|violation", "code": "string", "message": "string", "sourceRef": "string?", "sourceLine": 0? }], "refinedSemanticMarkdown": "string?", "diagramClassification": { "title": "string?", "summary": "string?", "layers": [{ "title": "string", "description": "string?", "accent": "string?", "items": [{ "name": "string", "detail": "string?", "sourceRef": "string?" }] }], "databaseSchema": { "title": "string?", "summary": "string?", "tables": [{ "name": "string", "description": "string?", "primaryKey": ["string?"]?, "columns": [{ "name": "string", "type": "string?", "detail": "string?" }] }], "relationships": [{ "fromTable": "string", "fromColumn": "string", "toTable": "string", "toColumn": "string", "cardinality": "1:1|1:N|N:1|N:M", "description": "string?" }] } } }',
-    'The diagramClassification must group the graph into a software architecture diagram and a database schema diagram. Use software architecture lanes named: Web / HTTP ingress, Integration interfaces, Security, Services, Persistence / storage. Do not use a Logic layer or API documentation lane in the architecture diagram. Put websocket, redis, mail, object storage, message queues, and external HTTP clients under integration interfaces or persistence, not web ingress. Put scheduled jobs and async listeners under processes or service responsibilities, not web ingress. Include all significant components. Do not truncate with "+more". Flow scenarios must be separate rows with steps listed vertically.',
-    'Do not wrap the JSON in markdown fences. Do not echo the input. Report only findings that are supported by the semantic source and policy.',
+    'Data model result:',
+    JSON.stringify(briefReviewResult(dataModel), null, 2),
   ].join('\n');
+
+  const consistency = await runPromptStage(context, consistencyPrompt, 'consistency');
+
+  return { architecture, flow, dataModel, consistency };
+}
+
+async function runPromptStage(
+  context: AgenticReviewContext,
+  prompt: string,
+  stage: string,
+): Promise<AgenticReviewResult> {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `ai-native-review-${slugify(stage)}-`));
+  try {
+    return await runAgenticPrompt(
+      {
+        ...context,
+        artifactDir: tempDir,
+        artifactName: `${context.artifactName ?? path.basename(context.sourcePath)}.${stage}`,
+      },
+      prompt,
+    );
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function briefReviewResult(result: AgenticReviewResult): Record<string, unknown> {
+  return {
+    provider: result.provider,
+    mode: result.mode,
+    model: result.model,
+    bridgeAction: result.bridgeAction,
+    summary: result.summary,
+    notes: result.notes.slice(0, 16),
+    issues: result.issues.slice(0, 16),
+    refinedSemanticMarkdown: result.refinedSemanticMarkdown ? truncateText(result.refinedSemanticMarkdown, 12000) : undefined,
+    diagramClassification: result.diagramClassification,
+  };
+}
+
+function truncateText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, maxChars)}\n... [truncated]`;
 }
 
 function parseStructuredReviewOutput(output: string, fallbackSummary: string): { summary: string; notes: string[]; issues: AgenticReviewIssue[]; refinedSemanticMarkdown?: string; diagramClassification?: AgenticDiagramClassification } {

@@ -12,8 +12,17 @@ import { GraphPreviewPanel } from './webviews/graphPreview.js';
 import { ReconRunsWebviewProvider, type ReconRunModuleSnapshot, type ReconRunSnapshot } from './webviews/reconRunsView.js';
 import { resolveArtifactRoot } from './workspaceArtifacts.js';
 import { initializeMcpConfigStorage } from './mcpConfigStore.js';
-import { importSourceProjectState } from '@ai-native/semantic-shared';
-import { runAgenticPrompt, runAgenticReview, type AgenticDiagramClassification, type AgenticReviewResult } from './agenticReview.js';
+import {
+  appendFeedbackDelta,
+  buildReviewDossier,
+  importSourceProjectState,
+  readLocalAgentOutputs,
+  runLocalAgentRole,
+  writeReviewDossier,
+  type EnrichmentOutput,
+  type JavaAstFile,
+} from '@ai-native/semantic-shared';
+import { runAgenticPrompt, runAgenticReviewBundle, type AgenticDiagramClassification, type AgenticReviewResult, type ReviewPromptBundle } from './agenticReview.js';
 import { hashArtifactContent, readLatestVersionedArtifact, writeVersionedArtifact } from './versionedArtifacts.js';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -95,6 +104,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand(commandIds.importSourceProject, async () => {
       await importSourceProject(context, diagnostics, registry, outputChannel, refreshViews, reconRunsProvider);
+    }),
+    vscode.commands.registerCommand(commandIds.resumeRecon, async (stage?: string) => {
+      if (stage) {
+        outputChannel.appendLine(`[source-to-semantic] resume recon requested from stage: ${stage}`);
+      }
+      await importSourceProject(context, diagnostics, registry, outputChannel, refreshViews, reconRunsProvider, stage);
     }),
     vscode.commands.registerCommand(commandIds.openTutorial, async () => {
       await openExampleSlice();
@@ -199,10 +214,7 @@ async function runValidation(
         report('Writing validation artifact...');
         const validationFolder = vscode.Uri.joinPath(artifactRoot, 'validation');
         await vscode.workspace.fs.createDirectory(validationFolder);
-        const validationPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.validation.json`);
-        const validationMarkdownPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.validation.md`);
-        const validationDeltaPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.delta.json`);
-        const validationDeltaMarkdownPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.delta.md`);
+        const validationPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.validation.md`);
         const graph = asGraphObject(payload.graph);
         const validationDelta = buildValidationDelta({
           sourcePath: source.fileName,
@@ -212,20 +224,8 @@ async function runValidation(
           summary: payload.summary,
           issues: payload.issues,
         });
-        const validationArtifact = {
-          sourcePath: source.fileName,
-          reportPath: payload.reportPath,
-          mcpValidation: {
-            summary: payload.summary,
-            issues: payload.issues,
-          },
-          graph: payload.graph,
-          delta: validationDelta,
-          validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
-        };
-        await vscode.workspace.fs.writeFile(validationPath, Buffer.from(JSON.stringify(validationArtifact, null, 2), 'utf8'));
         await vscode.workspace.fs.writeFile(
-          validationMarkdownPath,
+          validationPath,
           Buffer.from(
             [
               '# AI Native Validation',
@@ -257,40 +257,6 @@ async function runValidation(
             'utf8',
           ),
         );
-        await vscode.workspace.fs.writeFile(
-          validationDeltaPath,
-          Buffer.from(JSON.stringify(validationDelta, null, 2), 'utf8'),
-        );
-        await vscode.workspace.fs.writeFile(
-          validationDeltaMarkdownPath,
-          Buffer.from(
-            [
-              '# AI Native Validation Delta',
-              '',
-              `- Source: ${source.fileName}`,
-              `- MCP report path: ${payload.reportPath ?? 'n/a'}`,
-              '',
-              '## Summary',
-              `- gaps: ${payload.summary.gaps}`,
-              `- conflicts: ${payload.summary.conflicts}`,
-              `- warnings: ${payload.summary.warnings}`,
-              `- violations: ${payload.summary.violations}`,
-              '',
-              '## Missing sections',
-              ...(validationDelta.missingSections.length ? validationDelta.missingSections.map((section) => `- ${section}`) : ['- none']),
-              '',
-              '## Persistence gaps',
-              ...(validationDelta.persistenceSignals.length ? validationDelta.persistenceSignals.map((signal) => `- ${signal}`) : ['- none']),
-              '',
-              '## Schema gaps',
-              ...(validationDelta.schemaGaps.length ? validationDelta.schemaGaps.map((signal) => `- ${signal}`) : ['- none']),
-              '',
-              '## Hints',
-              ...(validationDelta.hints.length ? validationDelta.hints.map((hint) => `- ${hint}`) : ['- none']),
-            ].join('\n'),
-            'utf8',
-          ),
-        );
         await writeVersionedArtifact({
           artifactRoot: artifactRoot.fsPath,
           kind: 'validation',
@@ -299,7 +265,6 @@ async function runValidation(
           sourceHash: hashArtifactContent(source.getText()),
           label: 'validation',
           files: {
-            'validation.json': JSON.stringify(validationArtifact, null, 2) + '\n',
             'validation.md': [
               '# AI Native Validation',
               '',
@@ -327,31 +292,6 @@ async function runValidation(
               '## Delta hints',
               ...(validationDelta.hints.length ? validationDelta.hints.map((hint) => `- ${hint}`) : ['- none']),
             ].join('\n') + '\n',
-            'delta.json': JSON.stringify(validationDelta, null, 2) + '\n',
-            'delta.md': [
-              '# AI Native Validation Delta',
-              '',
-              `- Source: ${source.fileName}`,
-              `- MCP report path: ${payload.reportPath ?? 'n/a'}`,
-              '',
-              '## Summary',
-              `- gaps: ${payload.summary.gaps}`,
-              `- conflicts: ${payload.summary.conflicts}`,
-              `- warnings: ${payload.summary.warnings}`,
-              `- violations: ${payload.summary.violations}`,
-              '',
-              '## Missing sections',
-              ...(validationDelta.missingSections.length ? validationDelta.missingSections.map((section) => `- ${section}`) : ['- none']),
-              '',
-              '## Persistence gaps',
-              ...(validationDelta.persistenceSignals.length ? validationDelta.persistenceSignals.map((signal) => `- ${signal}`) : ['- none']),
-              '',
-              '## Schema gaps',
-              ...(validationDelta.schemaGaps.length ? validationDelta.schemaGaps.map((signal) => `- ${signal}`) : ['- none']),
-              '',
-              '## Hints',
-              ...(validationDelta.hints.length ? validationDelta.hints.map((hint) => `- ${hint}`) : ['- none']),
-            ].join('\n') + '\n',
           },
           metadata: {
             reportPath: payload.reportPath,
@@ -359,10 +299,29 @@ async function runValidation(
             validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
           },
         });
-        outputChannel.appendLine(`  validation artifact: ${validationPath.fsPath}`);
-        outputChannel.appendLine(`  validation markdown: ${validationMarkdownPath.fsPath}`);
-        outputChannel.appendLine(`  validation delta: ${validationDeltaPath.fsPath}`);
-        outputChannel.appendLine(`  validation delta markdown: ${validationDeltaMarkdownPath.fsPath}`);
+        outputChannel.appendLine(`  validation markdown: ${validationPath.fsPath}`);
+
+          await submitFeedbackDelta({
+            registry,
+            workspaceRoot: artifactRoot.fsPath,
+            server: 'validator',
+            kind: 'validation',
+          sourcePath: source.fileName,
+          sourceHash: hashArtifactContent(source.getText()),
+          summary: {
+            source: source.fileName,
+            reportPath: payload.reportPath,
+            validationSummary: payload.summary,
+          },
+          delta: validationDelta,
+          issues: payload.issues,
+            evidence: [
+            { kind: 'validation-report', path: validationPath.fsPath },
+          ],
+          metadata: {
+            validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
+          },
+        });
       }
 
       report('Validation finished.');
@@ -440,7 +399,20 @@ async function runGraphGeneration(
       if (graph) {
         const config = getConfig();
         report(`Running AI review with ${config.reviewProvider}...`);
-        const agenticReview = await runAgenticReview({
+        const reviewPromptBundle = await loadReviewPromptBundle(registry, {
+          sourcePath: source.fileName,
+          projectRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+          semanticSource: source.getText(),
+          graph,
+          enrichment: undefined,
+          validation: {
+            status: deriveValidationStatus(graphValidation.summary),
+            summary: graphValidation.summary,
+            issues: graphValidation.issues,
+          },
+          expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
+        });
+        const agenticReview = await runAgenticReviewBundle({
           provider: config.reviewProvider,
           mode: config.reviewMode,
           model: config.reviewModel,
@@ -458,7 +430,7 @@ async function runGraphGeneration(
             summary: graphValidation.summary,
             issues: graphValidation.issues,
           },
-        });
+        }, reviewPromptBundle);
         const reviewedIssues = [
           ...graphValidation.issues.map((issue) => ({
             severity: issue.severity,
@@ -531,31 +503,9 @@ async function runGraphGeneration(
           outputChannel.appendLine(`  reviewed graph: ${reviewedPath.fsPath}`);
           const validationFolder = vscode.Uri.joinPath(artifactRoot, 'validation');
           await vscode.workspace.fs.createDirectory(validationFolder);
-          const validationPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.validation.json`);
-          const validationMarkdownPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.validation.md`);
-          const validationArtifact = {
-            sourcePath: source.fileName,
-            reportPath: graphValidation.reportPath,
-            mcpValidation: {
-              summary: graphValidation.summary,
-              issues: graphValidation.issues,
-            },
-            aiReview: {
-              provider: agenticReview.provider,
-              mode: agenticReview.mode,
-              model: agenticReview.model,
-              bridgeAction: agenticReview.bridgeAction,
-              summary: agenticReview.summary,
-              notes: agenticReview.notes,
-              issues: agenticReview.issues,
-            },
-            reviewedIssues,
-            reviewedGraph,
-            validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
-          };
-          await vscode.workspace.fs.writeFile(validationPath, Buffer.from(JSON.stringify(validationArtifact, null, 2), 'utf8'));
+          const validationPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.validation.md`);
           await vscode.workspace.fs.writeFile(
-            validationMarkdownPath,
+            validationPath,
             Buffer.from(
               [
                 '# AI Native Validation',
@@ -595,7 +545,6 @@ async function runGraphGeneration(
             sourceHash,
             label: 'review',
             files: {
-              'review.json': JSON.stringify(validationArtifact, null, 2) + '\n',
               'review.md': [
                 '# AI Native Validation',
                 '',
@@ -623,7 +572,6 @@ async function runGraphGeneration(
                   ? agenticReview.issues.map((issue) => `- [${issue.severity}] ${issue.code}: ${issue.message}`)
                   : ['- none']),
               ].join('\n') + '\n',
-              'prompt.md': agenticReview.promptPath ? `# AI Native Review Prompt\n\n- Source: ${agenticReview.promptPath}\n` : '# AI Native Review Prompt\n',
             },
             metadata: {
               reviewedAt: new Date().toISOString(),
@@ -632,8 +580,73 @@ async function runGraphGeneration(
               mode: agenticReview.mode,
             },
           });
-          outputChannel.appendLine(`  validation artifact: ${validationPath.fsPath}`);
-          outputChannel.appendLine(`  validation markdown: ${validationMarkdownPath.fsPath}`);
+          outputChannel.appendLine(`  validation markdown: ${validationPath.fsPath}`);
+          await submitFeedbackDelta({
+            registry,
+            workspaceRoot: artifactRoot?.fsPath ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+            server: 'validator',
+            kind: 'validation',
+            sourcePath: source.fileName,
+            sourceHash,
+            summary: {
+              source: source.fileName,
+              reportPath: graphValidation.reportPath,
+              validationSummary: graphValidation.summary,
+              reviewSummary: agenticReview.summary,
+            },
+            delta: {
+              validationDelta: buildValidationDelta({
+                sourcePath: source.fileName,
+                reportPath: graphValidation.reportPath,
+                validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
+                graph,
+                summary: graphValidation.summary,
+                issues: graphValidation.issues,
+              }),
+              reviewedIssuesCount: reviewedIssues.length,
+              reviewSummary: agenticReview.summary,
+            },
+            issues: reviewedIssues,
+            evidence: [
+              { kind: 'graph', path: reviewedPath.fsPath },
+              { kind: 'validation-md', path: validationPath.fsPath },
+            ],
+            metadata: {
+              validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
+              reviewedAt: new Date().toISOString(),
+            },
+          });
+
+          await submitFeedbackDelta({
+            registry,
+            workspaceRoot: artifactRoot.fsPath,
+            server: 'semanticCore',
+            kind: 'graph',
+            sourcePath: source.fileName,
+            sourceHash,
+            summary: {
+              source: source.fileName,
+              graphValidationSummary: graphValidation.summary,
+              reviewSummary: agenticReview.summary,
+              reviewedAt: new Date().toISOString(),
+            },
+            delta: {
+              diagramClassification: agenticReview.diagramClassification ?? undefined,
+              reviewedIssuesCount: reviewedIssues.length,
+              graphNodeCount: reviewedGraph.nodes.length,
+              graphEdgeCount: reviewedGraph.edges.length,
+              databaseSchemaTables: reviewedDatabaseSchema?.tables?.length ?? 0,
+            },
+            issues: reviewedIssues,
+            evidence: [
+              { kind: 'graph', path: reviewedPath.fsPath },
+              ...(agenticReview.reviewArtifactPath ? [{ kind: 'review', path: agenticReview.reviewArtifactPath }] : []),
+            ],
+            metadata: {
+              validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
+              reviewedAt: new Date().toISOString(),
+            },
+          });
         }
         report('Opening reviewed graph...');
         GraphPreviewPanel.show(context, reviewedGraph, `${path.basename(source.fileName)} · reviewed`);
@@ -908,6 +921,53 @@ async function ensureSemanticVersionCheckpoint(
   });
 }
 
+async function submitFeedbackDelta(context: {
+  registry: McpRegistry;
+  workspaceRoot?: string;
+  server: 'validator' | 'semanticCore';
+  kind: string;
+  sourcePath: string;
+  sourceHash?: string;
+  summary?: Record<string, unknown>;
+  delta?: Record<string, unknown>;
+  issues?: Array<Record<string, unknown>>;
+  evidence?: Array<Record<string, unknown>>;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    const localStore = await appendFeedbackDelta(context.workspaceRoot, {
+      server: context.server,
+      kind: context.kind,
+      sourcePath: context.sourcePath,
+      sourceHash: context.sourceHash,
+      summary: context.summary,
+      delta: context.delta,
+      issues: context.issues,
+      evidence: context.evidence,
+      metadata: context.metadata,
+    });
+    console.debug?.(`[feedback][${context.server}] stored locally at ${localStore.recordPath}`);
+  } catch (error) {
+    console.warn(`Failed to store local feedback delta for ${context.server}:`, error);
+  }
+
+  try {
+    const response = await context.registry.callTool(context.server, 'ingest_feedback_delta', {
+      workspaceRoot: context.workspaceRoot,
+      sourcePath: context.sourcePath,
+      sourceHash: context.sourceHash,
+      summary: context.summary,
+      delta: context.delta,
+      issues: context.issues,
+      evidence: context.evidence,
+      metadata: context.metadata,
+    });
+    console.debug?.(`[feedback][${context.server}] MCP ingest response: ${JSON.stringify(response.json ?? response.text).slice(0, 400)}`);
+  } catch (error) {
+    console.warn(`Failed to push feedback delta to ${context.server}:`, error);
+  }
+}
+
 function buildValidationDelta(context: {
   sourcePath: string;
   reportPath?: string;
@@ -1018,6 +1078,7 @@ async function importSourceProject(
   outputChannel: vscode.OutputChannel,
   refreshViews: () => Promise<void>,
   reconRunsProvider: ReconRunsWebviewProvider,
+  resumeFromStage?: string,
 ): Promise<void> {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
@@ -1045,10 +1106,366 @@ async function importSourceProject(
         outputChannel.appendLine(`[source-to-semantic] ${message}`);
       };
 
-      const result = await importSourceProjectState({
-        projectRoot: sourceRoot,
+      const reconRunsRootDir = path.join(outputDir, 'source.recon.runs');
+      const reconRunId = createReconRunId(projectName);
+      const reconRunDir = path.join(reconRunsRootDir, reconRunId);
+      const reconProjectArtifactsDir = path.join(reconRunDir, 'project');
+      const reconModuleArtifactsDir = path.join(reconRunDir, 'modules');
+      await fs.mkdir(reconModuleArtifactsDir, { recursive: true });
+
+      let reconRunState: ReconRunSnapshot = {
+        runId: reconRunId,
         projectName,
+        projectRoot: sourceRoot,
         outputDir,
+        status: 'running',
+        phase: 'Parsing workspace Java files with MCP java-parser',
+        startedAt: new Date().toISOString(),
+        astStatus: 'running',
+        astStartedAt: new Date().toISOString(),
+        codeGraphStatus: 'pending',
+        localAgentStatus: 'pending',
+        projectPromptStatus: 'pending',
+        moduleRuns: [],
+        events: [
+          {
+            at: new Date().toISOString(),
+            kind: 'phase',
+            message: 'Parsing workspace Java files with MCP java-parser.',
+          },
+        ],
+        artifactRoot: outputDir,
+      };
+      reconRunsProvider.setSnapshot(reconRunState);
+      await persistReconRunState(reconRunState, reconRunDir, outputDir);
+
+      const updateReconRunState = async (mutator: (state: ReconRunSnapshot) => void): Promise<void> => {
+        mutator(reconRunState);
+        reconRunsProvider.setSnapshot(reconRunState);
+        await persistReconRunState(reconRunState, reconRunDir, outputDir);
+      };
+
+      const astPath = path.join(outputDir, 'source.ast.json');
+      const analysisProgressPath = path.join(outputDir, 'source.analysis.progress.json');
+      const codeGraphProgressPath = path.join(outputDir, 'source.codegraph.progress.json');
+      report('Parsing workspace Java files with MCP java-parser...');
+      const cachedJavaAstProject = await loadCachedJavaAstProject(astPath);
+      const javaAstProject = cachedJavaAstProject ?? await collectWorkspaceJavaAstProject(registry, sourceRoot, projectName);
+      if (cachedJavaAstProject) {
+        outputChannel.appendLine(`[source-to-semantic] reused ${astPath}`);
+      }
+      const javaAstCatalog = javaAstProject?.catalog;
+      outputChannel.appendLine(
+        `[source-to-semantic] java AST catalog: ${javaAstCatalog?.length ?? 0} files`,
+      );
+      if (javaAstProject) {
+        await fs.writeFile(
+          astPath,
+          JSON.stringify(
+            {
+              projectName,
+              projectRoot: sourceRoot,
+              generatedAt: new Date().toISOString(),
+              fileCount: javaAstProject.fileCount,
+              summary: javaAstProject.summary,
+              catalog: javaAstProject.catalog,
+            },
+            null,
+            2,
+          ) + '\n',
+          'utf8',
+        );
+        outputChannel.appendLine(`[source-to-semantic] wrote ${astPath}`);
+      }
+
+      await updateReconRunState((state) => {
+        state.astStatus = javaAstProject ? 'completed' : 'failed';
+        state.astFinishedAt = new Date().toISOString();
+        state.astArtifactPath = javaAstProject ? astPath : undefined;
+        state.astFileCount = Number(javaAstProject?.fileCount ?? javaAstCatalog?.length ?? 0);
+        state.codeGraphStatus = 'running';
+        state.codeGraphStartedAt = new Date().toISOString();
+        state.codeGraphProgressPath = codeGraphProgressPath;
+        state.codeGraphProgressUpdatedAt = new Date().toISOString();
+        state.codeGraphHeartbeatCount = 0;
+        state.phase = javaAstProject
+          ? 'AST catalog written; building code knowledge graph from AST'
+          : 'Java AST parsing failed or returned no catalog';
+        state.events?.push(
+          {
+            at: new Date().toISOString(),
+            kind: 'artifact',
+            message: javaAstProject
+              ? `AST catalog written to ${path.basename(astPath)}`
+              : 'Java AST parsing returned no catalog',
+          },
+          {
+            at: new Date().toISOString(),
+            kind: 'phase',
+            message: javaAstProject ? 'Building code knowledge graph from AST.' : 'AST parsing failed; code graph will remain pending.',
+          },
+        );
+        state.events = state.events?.slice(-20);
+      });
+
+      await persistCodeGraphProgressArtifact(codeGraphProgressPath, {
+        runId: reconRunId,
+        projectName,
+        projectRoot: sourceRoot,
+        outputDir,
+        status: 'running',
+        phase: 'AST catalog written; building code knowledge graph from AST',
+        startedAt: reconRunState.codeGraphStartedAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        astArtifactPath: astPath,
+        astFileCount: Number(javaAstProject?.fileCount ?? javaAstCatalog?.length ?? 0),
+        progress: {
+          phase: 'pending',
+          message: 'Waiting for code graph build to begin.',
+        },
+        events: [
+          {
+            at: new Date().toISOString(),
+            phase: 'started',
+            message: 'AST catalog written; code graph build starting.',
+          },
+        ],
+      });
+      outputChannel.appendLine(`[source-to-semantic] wrote ${codeGraphProgressPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${analysisProgressPath}`);
+
+      let codeGraphHeartbeatCount = 0;
+      let codeGraphHeartbeatInterval: NodeJS.Timeout | undefined;
+      const startCodeGraphHeartbeat = (): void => {
+        if (codeGraphHeartbeatInterval) {
+          return;
+        }
+        codeGraphHeartbeatInterval = setInterval(() => {
+          codeGraphHeartbeatCount += 1;
+          const heartbeatAt = new Date().toISOString();
+          void persistCodeGraphProgressArtifact(codeGraphProgressPath, {
+            runId: reconRunId,
+            projectName,
+            projectRoot: sourceRoot,
+            outputDir,
+            status: 'running',
+            phase: reconRunState.phase,
+            startedAt: reconRunState.codeGraphStartedAt ?? heartbeatAt,
+            updatedAt: heartbeatAt,
+            astArtifactPath: astPath,
+            astFileCount: Number(javaAstProject?.fileCount ?? javaAstCatalog?.length ?? 0),
+            codeGraphArtifactPath: reconRunState.codeGraphArtifactPath,
+            progress: {
+              phase: reconRunState.codeGraphPhase ? 'heartbeat' : 'building',
+              message: reconRunState.codeGraphPhase ?? 'Building code knowledge graph from AST.',
+            },
+            heartbeatAt,
+            heartbeatCount: codeGraphHeartbeatCount,
+            events: [
+              {
+                at: heartbeatAt,
+                phase: 'heartbeat',
+                message: `Code graph build still running (${codeGraphHeartbeatCount}).`,
+              },
+            ],
+          });
+          void updateReconRunState((state) => {
+            state.codeGraphHeartbeatCount = codeGraphHeartbeatCount;
+            state.codeGraphProgressUpdatedAt = heartbeatAt;
+            state.events ??= [];
+            state.events.push({
+              at: heartbeatAt,
+              kind: 'phase',
+              message: `Code graph heartbeat ${codeGraphHeartbeatCount}: build still running.`,
+            });
+            state.events = state.events.slice(-20);
+          });
+        }, 4000);
+        codeGraphHeartbeatInterval.unref?.();
+      };
+      const stopCodeGraphHeartbeat = (): void => {
+        if (codeGraphHeartbeatInterval) {
+          clearInterval(codeGraphHeartbeatInterval);
+          codeGraphHeartbeatInterval = undefined;
+        }
+      };
+      startCodeGraphHeartbeat();
+
+      let result: Awaited<ReturnType<typeof importSourceProjectState>> | undefined;
+      try {
+        result = await importSourceProjectState({
+          projectRoot: sourceRoot,
+          projectName,
+          outputDir,
+          resumeFromStage: normalizeResumeStage(resumeFromStage),
+          javaAstCatalog,
+          onAnalysisProgress: async (event) => {
+            const analysisAt = new Date().toISOString();
+            outputChannel.appendLine(
+              `[source-to-semantic] analysis ${event.phase}: ${event.message}${event.currentFile ? ` · ${event.currentFile}` : ''}`,
+            );
+            await persistCodeGraphProgressArtifact(analysisProgressPath, {
+              runId: reconRunId,
+              projectName,
+              projectRoot: sourceRoot,
+              outputDir,
+              status: 'running',
+              phase: event.message,
+              startedAt: reconRunState.startedAt,
+              updatedAt: analysisAt,
+              astArtifactPath: astPath,
+              astFileCount: Number(javaAstProject?.fileCount ?? javaAstCatalog?.length ?? 0),
+              progress: {
+                phase: event.phase,
+                message: event.message,
+                currentFile: event.currentFile,
+                completed: event.completed,
+                total: event.total,
+              },
+              events: [
+                {
+                  at: analysisAt,
+                  phase: event.phase,
+                  message: event.message,
+                },
+              ],
+            });
+            await updateReconRunState((state) => {
+              state.codeGraphProgressUpdatedAt = analysisAt;
+              state.phase = event.currentFile ? `${event.message} (${path.basename(event.currentFile)})` : event.message;
+              state.events ??= [];
+              state.events.push({
+                at: analysisAt,
+                kind: 'phase',
+                message: `Analysis ${event.phase}: ${event.message}${event.currentFile ? ` · ${event.currentFile}` : ''}`,
+              });
+              state.events = state.events.slice(-20);
+            });
+          },
+          onLifecycleProgress: async (event) => {
+            const lifecycleAt = new Date().toISOString();
+            outputChannel.appendLine(`[source-to-semantic] lifecycle ${event.phase}: ${event.message}`);
+            await persistCodeGraphProgressArtifact(codeGraphProgressPath, {
+              runId: reconRunId,
+              projectName,
+              projectRoot: sourceRoot,
+              outputDir,
+              status: event.phase === 'complete' ? 'completed' : 'running',
+              phase: event.message,
+              startedAt: reconRunState.startedAt,
+              updatedAt: lifecycleAt,
+              astArtifactPath: astPath,
+              astFileCount: Number(javaAstProject?.fileCount ?? javaAstCatalog?.length ?? 0),
+              codeGraphArtifactPath: reconRunState.codeGraphArtifactPath,
+              progress: {
+                phase: event.phase,
+                message: event.message,
+              },
+              events: [
+                {
+                  at: lifecycleAt,
+                  phase: event.phase,
+                  message: event.message,
+                },
+              ],
+            });
+            await updateReconRunState((state) => {
+              state.codeGraphProgressUpdatedAt = lifecycleAt;
+              state.phase = event.message;
+              if (event.phase === 'enrichment') {
+                state.localAgentStatus = event.message.includes('completed') ? 'completed' : 'running';
+                state.localAgentStartedAt ??= lifecycleAt;
+                state.localAgentPhase = event.message;
+                if (event.message.includes('completed')) {
+                  state.localAgentFinishedAt = lifecycleAt;
+                }
+              } else if (event.phase === 'artifacts' || event.phase === 'complete') {
+                if (state.localAgentStatus === 'running') {
+                  state.localAgentStatus = 'completed';
+                  state.localAgentFinishedAt = lifecycleAt;
+                }
+              }
+              state.events ??= [];
+              state.events.push({
+                at: lifecycleAt,
+                kind: 'phase',
+                message: `Lifecycle ${event.phase}: ${event.message}`,
+              });
+              state.events = state.events.slice(-20);
+            });
+          },
+          onCodeGraphProgress: async (event) => {
+            outputChannel.appendLine(`[source-to-semantic] code graph ${event.phase}: ${event.message}`);
+            await persistCodeGraphProgressArtifact(codeGraphProgressPath, {
+              runId: reconRunId,
+              projectName,
+              projectRoot: sourceRoot,
+              outputDir,
+              status: event.phase === 'complete' ? 'completed' : 'running',
+              phase: `Building code knowledge graph from AST: ${event.message}`,
+              startedAt: reconRunState.codeGraphStartedAt ?? new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              astArtifactPath: astPath,
+              astFileCount: Number(javaAstProject?.fileCount ?? javaAstCatalog?.length ?? 0),
+              progress: {
+                phase: event.phase,
+                message: event.message,
+              },
+              events: [
+                {
+                  at: new Date().toISOString(),
+                  phase: event.phase,
+                  message: event.message,
+                },
+              ],
+            });
+            void updateReconRunState((state) => {
+              state.codeGraphStatus = event.phase === 'complete' ? 'completed' : 'running';
+              state.codeGraphPhase = event.message;
+              state.codeGraphProgressUpdatedAt = new Date().toISOString();
+              if (event.phase === 'complete') {
+                state.codeGraphFinishedAt = new Date().toISOString();
+              }
+              state.phase = `Building code knowledge graph from AST: ${event.message}`;
+              state.events ??= [];
+              state.events.push({
+                at: new Date().toISOString(),
+                kind: 'phase',
+                message: `Code graph ${event.phase}: ${event.message}`,
+              });
+              state.events = state.events.slice(-20);
+            });
+          },
+        });
+      } finally {
+        stopCodeGraphHeartbeat();
+      }
+      if (!result) {
+        throw new Error('Code graph build did not return a result.');
+      }
+      await persistCodeGraphProgressArtifact(codeGraphProgressPath, {
+        runId: reconRunId,
+        projectName,
+        projectRoot: sourceRoot,
+        outputDir,
+        status: 'completed',
+        phase: 'Source import complete',
+        startedAt: reconRunState.codeGraphStartedAt ?? reconRunState.startedAt,
+        updatedAt: new Date().toISOString(),
+        astArtifactPath: result.astPath,
+        astFileCount: result.analysis.javaAstCatalog.length,
+        codeGraphArtifactPath: result.codeKnowledgeGraphPath,
+        progress: {
+          phase: 'complete',
+          message: 'Source import complete',
+        },
+        events: [
+          {
+            at: new Date().toISOString(),
+            phase: 'complete',
+            message: 'Source import complete',
+          },
+        ],
       });
 
       report('Building reconnaissance prompt from MCP...');
@@ -1065,6 +1482,11 @@ async function importSourceProject(
 
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.semanticPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.semanticJsonPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${result.enrichmentPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${result.enrichmentSchemaPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${result.astPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${result.codeKnowledgeGraphPath}`);
+      outputChannel.appendLine(`[source-to-semantic] wrote ${result.codeKnowledgeGraphMdPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.reconnaissancePath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.reconnaissancePromptPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.databaseSchemaPath}`);
@@ -1108,13 +1530,6 @@ async function importSourceProject(
         });
       }
 
-      const reconRunsRootDir = path.join(outputDir, 'source.recon.runs');
-      const reconRunId = createReconRunId(projectName);
-      const reconRunDir = path.join(reconRunsRootDir, reconRunId);
-      const reconProjectArtifactsDir = path.join(reconRunDir, 'project');
-      const reconModuleArtifactsDir = path.join(reconRunDir, 'modules');
-      await fs.mkdir(reconModuleArtifactsDir, { recursive: true });
-
       const validationPolicy = await resolveValidationPolicyText(registry);
       const semanticText = await fs.readFile(result.semanticPath, 'utf8');
       report('Running MCP validation on imported semantic...');
@@ -1142,16 +1557,6 @@ async function importSourceProject(
           sourceHash,
           label: 'import validation',
           files: {
-            'validation.json': JSON.stringify({
-              sourcePath: result.semanticPath,
-              reportPath: validationPayload.reportPath,
-              mcpValidation: {
-                summary: validationPayload.summary,
-                issues: validationPayload.issues,
-              },
-              graph: validationPayload.graph,
-              validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
-            }, null, 2) + '\n',
             'validation.md': [
               '# AI Native Validation',
               '',
@@ -1184,37 +1589,46 @@ async function importSourceProject(
       }
 
       const config = getConfig();
-      const reconRunState: ReconRunSnapshot = {
-        runId: reconRunId,
-        projectName,
-        projectRoot: sourceRoot,
-        outputDir,
-        status: 'running',
-        phase: reconPayload.projectPrompt?.trim()
-          ? 'Recon prompt received from MCP'
-          : 'No project-level recon prompt, module agents only',
-        startedAt: new Date().toISOString(),
-        projectPromptStatus: reconPayload.projectPrompt?.trim() ? 'pending' : 'completed',
-        projectPromptSummary: reconPayload.projectPrompt?.trim() ? undefined : 'No project-level prompt was returned by MCP.',
-        moduleRuns: (reconPayload.modulePrompts ?? [])
+      await updateReconRunState((state) => {
+        state.astStatus = 'completed';
+        state.astFinishedAt = new Date().toISOString();
+        state.astArtifactPath = result.astPath;
+        state.astFileCount = result.analysis.javaAstCatalog.length;
+        state.codeGraphStatus = 'completed';
+        state.codeGraphStartedAt ??= new Date().toISOString();
+        state.codeGraphFinishedAt = new Date().toISOString();
+        state.codeGraphArtifactPath = result.codeKnowledgeGraphPath;
+        state.phase = 'AST catalog and code graph prepared; recon prompt received from MCP';
+        state.events?.push(
+          {
+            at: new Date().toISOString(),
+            kind: 'artifact',
+            message: `AST catalog written to ${path.basename(result.astPath)}`,
+          },
+          {
+            at: new Date().toISOString(),
+            kind: 'artifact',
+            message: `Code knowledge graph written to ${path.basename(result.codeKnowledgeGraphPath)}`,
+          },
+        );
+        state.events = state.events?.slice(-20);
+        state.projectPromptStatus = reconPayload.projectPrompt?.trim() ? 'pending' : 'completed';
+        state.projectPromptSummary = reconPayload.projectPrompt?.trim() ? undefined : 'No project-level prompt was returned by MCP.';
+        state.moduleRuns = (reconPayload.modulePrompts ?? [])
           .filter((modulePrompt) => Boolean(modulePrompt.prompt?.trim()))
           .map((modulePrompt) => ({
             moduleRoot: modulePrompt.moduleRoot ?? '.',
-            status: 'pending',
-          })),
-        events: [
-          {
-            at: new Date().toISOString(),
-            kind: 'phase',
-            message: reconPayload.projectPrompt?.trim()
-              ? 'Recon prompt received from MCP and ready to dispatch agents.'
-              : 'No project-level prompt returned; module agents will run only.',
-          },
-        ],
-        artifactRoot: outputDir,
-      };
-      reconRunsProvider.setSnapshot(reconRunState);
-      await persistReconRunState(reconRunState, reconRunDir, outputDir);
+            status: 'pending' as const,
+          }));
+        state.events?.push({
+          at: new Date().toISOString(),
+          kind: 'phase',
+          message: reconPayload.projectPrompt?.trim()
+            ? 'AST catalog and code graph are ready; recon prompt received from MCP and ready to dispatch agents.'
+            : 'AST catalog and code graph are ready; no project-level prompt returned, module agents will run only.',
+        });
+        state.events = state.events?.slice(-20);
+      });
 
       const reconBaseContext = {
         provider: config.reviewProvider,
@@ -1226,6 +1640,8 @@ async function importSourceProject(
         promptFileName: config.reviewPromptFileName,
         workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
         semanticSource: semanticText,
+        javaAstCatalog: result.analysis.javaAstCatalog,
+        codeKnowledgeGraph: result.codeKnowledgeGraph,
         expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
         graph: result.graph,
         validation: {
@@ -1233,12 +1649,6 @@ async function importSourceProject(
           summary: validationPayload.summary,
           issues: validationPayload.issues,
         },
-      };
-
-      const updateReconRunState = async (mutator: (state: ReconRunSnapshot) => void): Promise<void> => {
-        mutator(reconRunState);
-        reconRunsProvider.setSnapshot(reconRunState);
-        await persistReconRunState(reconRunState, reconRunDir, outputDir);
       };
 
       const appendReconEvent = async (
@@ -1326,7 +1736,7 @@ async function importSourceProject(
               state.projectPromptArtifactPath = result.reviewArtifactPath;
               state.phase = 'Project reconnaissance agent completed';
             });
-            await appendReconEvent('artifact', `Completed project reconnaissance → ${path.basename(result.reviewArtifactPath ?? 'review.json')}`);
+            await appendReconEvent('artifact', `Completed project reconnaissance → ${path.basename(result.reviewArtifactPath ?? 'review.md')}`);
           }
           outputChannel.appendLine(`[source-to-semantic-recon] ${artifactName}`);
           outputChannel.appendLine(`  bridge: ${result.bridgeAction}`);
@@ -1396,14 +1806,28 @@ async function importSourceProject(
               state.phase = `Recon agent failed for ${moduleArtifactName}`;
             });
             return undefined;
-          });
         });
+      });
+
+      const reviewPromptBundle = await loadReviewPromptBundle(registry, {
+        sourcePath: result.semanticPath,
+        projectRoot: result.projectRoot,
+        semanticSource: semanticText,
+        graph: result.graph,
+        enrichment: result.enrichment,
+        validation: {
+          status: deriveValidationStatus(validationPayload.summary),
+          summary: validationPayload.summary,
+          issues: validationPayload.issues,
+        },
+        expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
+      });
 
       const [agenticReview, projectReconResult, moduleReconResults] = await Promise.all([
-        runAgenticReview({
+        runAgenticReviewBundle({
           ...reconBaseContext,
           sourcePath: result.semanticPath,
-        }),
+        }, reviewPromptBundle),
         projectReconPromise,
         Promise.allSettled(moduleReconPromises),
       ]);
@@ -1448,29 +1872,7 @@ async function importSourceProject(
       });
       await appendReconEvent('phase', 'Reconnaissance complete');
 
-      const reviewArtifactPath = path.join(outputDir, 'source.review.json');
       const reviewMarkdownPath = path.join(outputDir, 'source.review.md');
-      await fs.writeFile(
-        reviewArtifactPath,
-        JSON.stringify(
-          {
-            sourcePath: result.semanticPath,
-            provider: agenticReview.provider,
-            mode: agenticReview.mode,
-            model: agenticReview.model,
-            bridgeAction: agenticReview.bridgeAction,
-            summary: agenticReview.summary,
-            notes: agenticReview.notes,
-            issues: agenticReview.issues,
-            refinedSemanticMarkdown: agenticReview.refinedSemanticMarkdown,
-            validation: validationPayload,
-            reconnaissance: reconPayload,
-          },
-          null,
-          2,
-        ) + '\n',
-        'utf8',
-      );
       await fs.writeFile(
         reviewMarkdownPath,
         [
@@ -1504,23 +1906,6 @@ async function importSourceProject(
           sourceHash,
           label: 'import review',
           files: {
-            'review.json': JSON.stringify(
-              {
-                sourcePath: result.semanticPath,
-                provider: agenticReview.provider,
-                mode: agenticReview.mode,
-                model: agenticReview.model,
-                bridgeAction: agenticReview.bridgeAction,
-                summary: agenticReview.summary,
-                notes: agenticReview.notes,
-                issues: agenticReview.issues,
-                refinedSemanticMarkdown: agenticReview.refinedSemanticMarkdown,
-                validation: validationPayload,
-                reconnaissance: reconPayload,
-              },
-              null,
-              2,
-            ) + '\n',
             'review.md': [
               '# AI Review',
               '',
@@ -1541,7 +1926,6 @@ async function importSourceProject(
               '## Validation summary',
               JSON.stringify(validationPayload.summary, null, 2),
             ].join('\n') + '\n',
-            'prompt.md': agenticReview.promptPath ? `# AI Native Review Prompt\n\n- Source: ${agenticReview.promptPath}\n` : '# AI Native Review Prompt\n',
           },
           metadata: {
             reviewedAt: new Date().toISOString(),
@@ -1552,6 +1936,7 @@ async function importSourceProject(
         });
       }
 
+      const reviewArtifactPath = reviewMarkdownPath;
       if (agenticReview.refinedSemanticMarkdown) {
         const reviewedSemanticPath = path.join(outputDir, 'source.semantic.reviewed.md');
         await fs.writeFile(reviewedSemanticPath, agenticReview.refinedSemanticMarkdown, 'utf8');
@@ -1638,6 +2023,276 @@ async function importSourceProject(
 
   await refreshViews();
   await vscode.window.showInformationMessage('Imported source workspace into .ai-native');
+}
+
+interface JavaParserProjectPayload {
+  fileCount?: number;
+  catalog?: JavaAstFile[];
+  summary?: {
+    statistics?: {
+      nodes?: number;
+      namedNodes?: number;
+      types?: number;
+      fields?: number;
+      methods?: number;
+    };
+  };
+  [key: string]: unknown;
+}
+
+async function collectWorkspaceJavaAstProject(
+  registry: McpRegistry,
+  sourceRoot: string,
+  projectName: string,
+): Promise<JavaParserProjectPayload | undefined> {
+  const javaFiles = await vscode.workspace.findFiles(
+    new vscode.RelativePattern(sourceRoot, '**/*.java'),
+    '**/{node_modules,target,build,dist,out,.git,.ai-native}/**',
+  );
+
+  if (!javaFiles.length) {
+    return undefined;
+  }
+
+  const pomFiles = await vscode.workspace.findFiles(
+    new vscode.RelativePattern(sourceRoot, '**/pom.xml'),
+    '**/{node_modules,target,build,dist,out,.git,.ai-native}/**',
+  );
+  const applicationRoots = detectApplicationRootsFromPomFiles(sourceRoot, pomFiles);
+  const fileGroups = groupJavaFilesByApplicationRoot(sourceRoot, javaFiles, applicationRoots);
+
+  const payloads: JavaParserProjectPayload[] = [];
+  for (const [appRoot, uris] of fileGroups) {
+    const files = await Promise.all(
+      uris.map(async (uri) => ({
+        path: path.relative(sourceRoot, uri.fsPath).split(path.sep).join('/'),
+        content: await fs.readFile(uri.fsPath, 'utf8'),
+      })),
+    );
+    const response = await registry.callTool('javaParser', 'scan_java_project', {
+      projectName: appRoot === '.' ? projectName : `${projectName}:${appRoot}`,
+      projectRoot: sourceRoot,
+      files,
+      includeTree: false,
+      maxDepth: 6,
+    });
+    const payload = response.json as JavaParserProjectPayload | undefined;
+    if (payload && Array.isArray(payload.catalog)) {
+      payloads.push(payload);
+    }
+  }
+
+  if (!payloads.length) {
+    return undefined;
+  }
+
+  return {
+    fileCount: payloads.reduce((sum, payload) => sum + Number(payload.fileCount ?? payload.catalog?.length ?? 0), 0),
+    catalog: payloads.flatMap((payload) => payload.catalog ?? []),
+    summary: {
+      statistics: payloads.reduce<{ nodes: number; namedNodes: number; types: number; fields: number; methods: number }>((acc, payload) => ({
+        nodes: acc.nodes + Number(payload.summary?.statistics?.nodes ?? 0),
+        namedNodes: acc.namedNodes + Number(payload.summary?.statistics?.namedNodes ?? 0),
+        types: acc.types + Number(payload.summary?.statistics?.types ?? 0),
+        fields: acc.fields + Number(payload.summary?.statistics?.fields ?? 0),
+        methods: acc.methods + Number(payload.summary?.statistics?.methods ?? 0),
+      }), { nodes: 0, namedNodes: 0, types: 0, fields: 0, methods: 0 }),
+    },
+  };
+}
+
+function detectApplicationRootsFromPomFiles(sourceRoot: string, pomFiles: vscode.Uri[]): string[] {
+  const moduleDirs = pomFiles
+    .map((uri) => path.relative(sourceRoot, path.dirname(uri.fsPath)).split(path.sep).join('/'))
+    .filter((value) => value && value !== '.');
+  if (!moduleDirs.length) {
+    return ['.'];
+  }
+  const roots = [...new Set(moduleDirs.map((value) => value.split('/')[0]).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+  return roots.length ? roots : ['.'];
+}
+
+function groupJavaFilesByApplicationRoot(
+  sourceRoot: string,
+  javaFiles: vscode.Uri[],
+  applicationRoots: string[],
+): Map<string, vscode.Uri[]> {
+  const grouped = new Map<string, vscode.Uri[]>();
+  for (const root of applicationRoots) {
+    grouped.set(root, []);
+  }
+  for (const uri of javaFiles) {
+    const relativePathName = path.relative(sourceRoot, uri.fsPath).split(path.sep).join('/');
+    const matchedRoot = applicationRoots.find((root) => root === '.' ? true : relativePathName === root || relativePathName.startsWith(`${root}/`)) ?? applicationRoots[0] ?? '.';
+    grouped.get(matchedRoot)?.push(uri);
+  }
+  return new Map([...grouped.entries()].filter(([, uris]) => uris.length > 0));
+}
+
+async function loadReviewPromptBundle(
+  registry: McpRegistry,
+  context: {
+    sourcePath: string;
+    projectRoot?: string;
+    semanticSource: string;
+    graph: unknown;
+    enrichment?: EnrichmentOutput;
+    validation: {
+      status: string;
+      summary: { gaps: number; conflicts: number; warnings: number; violations: number };
+      issues: Array<{
+        severity?: string;
+        code?: string;
+        message?: string;
+        sourceRef?: string;
+        sourceLine?: number;
+      }>;
+    };
+    expectationDocuments: Array<{ path: string; content: string }>;
+  },
+): Promise<ReviewPromptBundle> {
+  const graphObject = context.graph && typeof context.graph === 'object' ? context.graph as { metadata?: { preview?: Record<string, unknown> } } : undefined;
+  const componentMap = context.projectRoot
+    ? await readJsonIfExists(path.join(path.dirname(context.sourcePath), 'source.component-map.json'))
+    : undefined;
+  const flowMap = context.projectRoot
+    ? await readJsonIfExists(path.join(path.dirname(context.sourcePath), 'source.flow-map.json'))
+    : undefined;
+  const localAgentOutputs = context.projectRoot
+    ? await runValidationTriageIfConfigured(context.projectRoot, context.graph, context.validation, componentMap, flowMap)
+    : [];
+  const reviewDossier = buildReviewDossier({
+    sourcePath: context.sourcePath,
+    graph: context.graph,
+    preview: graphObject?.metadata?.preview,
+    componentMap,
+    flowMap,
+    enrichment: context.enrichment,
+    localAgentOutputs,
+    validation: context.validation,
+  });
+  if (context.projectRoot) {
+    await writeReviewDossier(context.projectRoot, reviewDossier);
+  }
+  const response = await registry.callTool('semanticCore', 'generate_review_prompt_bundle', {
+    sourcePath: context.sourcePath,
+    semanticSource: context.semanticSource,
+    graph: context.graph,
+    reviewDossier,
+    validation: context.validation,
+    expectationDocuments: context.expectationDocuments,
+  });
+  const payload = asObject(response.json);
+  const bundle = {
+    promptVersion: typeof payload?.promptVersion === 'string' ? payload.promptVersion : '1.0.0',
+    architecturePrompt: String(payload?.architecturePrompt ?? ''),
+    flowPrompt: String(payload?.flowPrompt ?? ''),
+    dataModelPrompt: String(payload?.dataModelPrompt ?? ''),
+    consistencyPrompt: String(payload?.consistencyPrompt ?? ''),
+    mergePrompt: String(payload?.mergePrompt ?? ''),
+  };
+  if (!bundle.architecturePrompt.trim() || !bundle.flowPrompt.trim() || !bundle.dataModelPrompt.trim() || !bundle.consistencyPrompt.trim() || !bundle.mergePrompt.trim()) {
+    throw new Error('semantic-core returned an incomplete review prompt bundle.');
+  }
+  return bundle;
+}
+
+async function readJsonIfExists(filePath: string): Promise<unknown | undefined> {
+  try {
+    return JSON.parse(await fs.readFile(filePath, 'utf8')) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+async function runValidationTriageIfConfigured(
+  projectRoot: string,
+  graph: unknown,
+  validation: {
+    status: string;
+    summary: { gaps: number; conflicts: number; warnings: number; violations: number };
+    issues: Array<{
+      severity?: string;
+      code?: string;
+      message?: string;
+      sourceRef?: string;
+      sourceLine?: number;
+    }>;
+  },
+  componentMap: unknown,
+  flowMap: unknown,
+) {
+  await runLocalAgentRole({
+    projectRoot,
+    role: 'validationTriage',
+    prompt: buildValidationTriagePrompt(projectRoot, graph, validation, componentMap, flowMap),
+  });
+  return await readLocalAgentOutputs(projectRoot);
+}
+
+function buildValidationTriagePrompt(
+  projectRoot: string,
+  graph: unknown,
+  validation: {
+    status: string;
+    summary: { gaps: number; conflicts: number; warnings: number; violations: number };
+    issues: Array<{
+      severity?: string;
+      code?: string;
+      message?: string;
+      sourceRef?: string;
+      sourceLine?: number;
+    }>;
+  },
+  componentMap: unknown,
+  flowMap: unknown,
+): string {
+  const graphObject = graph && typeof graph === 'object' ? graph as { metadata?: Record<string, unknown>; nodes?: unknown[]; edges?: unknown[] } : undefined;
+  const preview = graphObject?.metadata?.preview;
+  return [
+    'You are validation-triage-agent.',
+    'Group and prioritize validation issues for downstream cloud review.',
+    'Use only deterministic graph summaries, preview/component/flow artifacts and validation issues.',
+    'Do not modify the graph.',
+    'Return JSON only as { "triageGroups": [...] }.',
+    'Every triage group must include agentId, applicationId, model, confidence, evidence, warnings, severity, category, summary, affectedItems and recommendedAction.',
+    '',
+    JSON.stringify({
+      applicationId: path.basename(projectRoot),
+      graph: {
+        title: graphObject?.metadata?.title,
+        nodeCount: Array.isArray(graphObject?.nodes) ? graphObject.nodes.length : 0,
+        edgeCount: Array.isArray(graphObject?.edges) ? graphObject.edges.length : 0,
+        preview,
+      },
+      componentMap,
+      flowMap,
+      validation,
+    }, null, 2),
+  ].join('\n');
+}
+
+async function loadCachedJavaAstProject(astPath: string): Promise<JavaParserProjectPayload | undefined> {
+  try {
+    const text = await fs.readFile(astPath, 'utf8');
+    const payload = JSON.parse(text) as JavaParserProjectPayload;
+    return payload && Array.isArray(payload.catalog) ? payload : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeResumeStage(stage?: string): 'ast' | 'analysis' | 'snapshot' | 'graph' | 'prompt' | 'modules' | 'semantic' | undefined {
+  const normalized = stage?.toLowerCase().trim();
+  if (!normalized) return undefined;
+  if (normalized.includes('ast')) return 'ast';
+  if (normalized.includes('analysis')) return 'analysis';
+  if (normalized.includes('snapshot')) return 'snapshot';
+  if (normalized.includes('code graph') || normalized.includes('graph')) return 'graph';
+  if (normalized.includes('project prompt') || normalized.includes('prompt')) return 'prompt';
+  if (normalized.includes('module')) return 'modules';
+  if (normalized.includes('semantic')) return 'semantic';
+  return undefined;
 }
 
 async function ensureDirectoryDocument(folder: vscode.Uri): Promise<vscode.TextDocument> {
@@ -2096,6 +2751,11 @@ async function persistReconRunState(
   const snapshot = JSON.parse(JSON.stringify(state)) as ReconRunSnapshot;
   await fs.writeFile(currentPath, JSON.stringify(snapshot, null, 2) + '\n', 'utf8');
   await fs.writeFile(statePath, JSON.stringify(snapshot, null, 2) + '\n', 'utf8');
+}
+
+async function persistCodeGraphProgressArtifact(progressPath: string, payload: unknown): Promise<void> {
+  await fs.mkdir(path.dirname(progressPath), { recursive: true });
+  await fs.writeFile(progressPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
 }
 
 function createReconRunId(projectName: string): string {

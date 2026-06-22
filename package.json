@@ -17,9 +17,11 @@
     "dev:semantic-core": "tsx mcp-servers/semantic-core/src/index.ts",
     "dev:validator": "tsx mcp-servers/validator/src/index.ts",
     "dev:compiler": "tsx mcp-servers/compiler/src/index.ts",
+    "dev:java-parser": "tsx mcp-servers/java-parser/src/index.ts",
     "dev:http:semantic-core": "MCP_TRANSPORT_MODE=http PORT=3001 tsx mcp-servers/semantic-core/src/index.ts",
     "dev:http:validator": "MCP_TRANSPORT_MODE=http PORT=3002 tsx mcp-servers/validator/src/index.ts",
-    "dev:http:compiler": "MCP_TRANSPORT_MODE=http PORT=3003 tsx mcp-servers/compiler/src/index.ts"
+    "dev:http:compiler": "MCP_TRANSPORT_MODE=http PORT=3003 tsx mcp-servers/compiler/src/index.ts",
+    "dev:http:java-parser": "MCP_TRANSPORT_MODE=http PORT=3004 tsx mcp-servers/java-parser/src/index.ts"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

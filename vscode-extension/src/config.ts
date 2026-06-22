@@ -5,6 +5,7 @@ export interface ExtensionConfig {
   semanticCoreUrl: string;
   validatorUrl: string;
   compilerUrl: string;
+  javaParserUrl: string;
   artifactRoot: string;
   javaBasePackage: string;
   reviewProvider: 'codex' | 'claude';
@@ -28,6 +29,7 @@ export function getConfig(): ExtensionConfig {
     semanticCoreUrl: fileConfig.semanticCoreUrl ?? configuration.get<string>('mcp.semanticCoreUrl', 'http://localhost:3001/mcp'),
     validatorUrl: fileConfig.validatorUrl ?? configuration.get<string>('mcp.validatorUrl', 'http://localhost:3002/mcp'),
     compilerUrl: fileConfig.compilerUrl ?? configuration.get<string>('mcp.compilerUrl', 'http://localhost:3003/mcp'),
+    javaParserUrl: fileConfig.javaParserUrl ?? configuration.get<string>('mcp.javaParserUrl', 'http://localhost:3004/mcp'),
     artifactRoot: fileConfig.artifactRoot ?? configuration.get<string>('artifactRoot', '.ai-native'),
     javaBasePackage: fileConfig.javaBasePackage ?? configuration.get<string>('java.basePackage', 'com.example.generated'),
     reviewProvider,

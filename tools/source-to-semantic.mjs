@@ -27,6 +27,8 @@ console.log(`Wrote ${relative(repoRoot, result.analysisPath)}`);
 console.log(`Wrote ${relative(repoRoot, result.analysisMdPath)}`);
 console.log(`Wrote ${relative(repoRoot, result.snapshotPath)}`);
 console.log(`Wrote ${relative(repoRoot, result.semanticJsonPath)}`);
+console.log(`Wrote ${result.enrichmentPath}`);
+console.log(`Wrote ${result.enrichmentSchemaPath}`);
 console.log(`Wrote ${relative(repoRoot, result.reconnaissancePath)}`);
 console.log(`${result.reconnaissancePromptWritten ? 'Wrote' : 'Prepared'} ${relative(repoRoot, result.reconnaissancePromptPath)} (MCP plugin flow writes the final prompt)`);
 console.log(`Wrote ${relative(repoRoot, result.databaseSchemaPath)}`);

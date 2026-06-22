@@ -107,6 +107,7 @@ export class DashboardPanel {
         <div>semantic-core: <code>${escapeHtml(config.semanticCoreUrl)}</code></div>
         <div>validator: <code>${escapeHtml(config.validatorUrl)}</code></div>
         <div>compiler: <code>${escapeHtml(config.compilerUrl)}</code></div>
+        <div>java-parser: <code>${escapeHtml(config.javaParserUrl)}</code></div>
         <button data-command="${commandIds.openConfiguration}">Configure Settings & AI agent</button>
         <button data-command="${commandIds.refreshAll}">Refresh views</button>
       </div>

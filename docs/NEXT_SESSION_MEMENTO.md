@@ -35,9 +35,14 @@
    - A dedicated version-stepping browser still remains for a later pass.
 
 6. Retraining / feedback loop
-   - Add a retraining button or lightweight automation.
-   - Persist feedback so it survives server restarts and can be migrated.
-   - Make MCP-side learning/state durable.
+   - [x] Add a retraining button or lightweight automation.
+   - [x] Persist feedback so it survives server restarts and can be migrated.
+   - [x] Make MCP-side learning/state durable.
+   - [x] Collect deltas per MCP server locally in the project repo.
+   - [x] Push feedback into MCP ingest tools at the end of validation / graph runs.
+   - [x] Remove redundant delta/prompt report files; keep feedback as the canonical retraining payload.
+   - [x] Move recon / review prompt generation to MCP so prompt updates do not require plugin rebuilds.
+   - [ ] Add a full export/import bundle for migrating learning state between installs.
 
 7. Local agent paths for specific tasks
    - Identify tasks that are worth running locally to avoid token cost.
@@ -47,6 +52,7 @@
 8. Reverse direction must work
    - Source code -> graph -> spec must keep working.
    - Spec -> graph must also work.
+   - Code-first import should run Java parser MCP -> AST -> knowledge graph first, then let the agent rewrite semantic from that graph.
    - Compiler is out of scope for now.
 
 9. Stronger logical validation
@@ -55,15 +61,15 @@
 
 ## UI direction
 
-- Keep `Actions` at the top, `Recon Runs` above `Settings`, and `Settings` at the bottom.
-- Replace the legacy workflow tree sections with artifact-centric views:
+- [x] Keep `Actions` at the top, `Recon Runs` above `Settings`, and `Settings` at the bottom.
+- [x] Replace the legacy workflow tree sections with artifact-centric views:
   - validation
   - review
   - semantic
-  - graph
   - database schema
-- The per-kind artifact trees should act as the browser for the latest artifacts plus prior versions, with direct open actions per version.
-- The `Settings` group covers endpoints, agent selection, and runtime configuration.
+- [x] The per-kind artifact trees act as the browser for the latest user-facing artifacts.
+- [x] The `Settings` group covers endpoints, agent selection, and runtime configuration.
+- [x] The graph is a preview action, not a sidebar section.
 
 ## Scope note
 

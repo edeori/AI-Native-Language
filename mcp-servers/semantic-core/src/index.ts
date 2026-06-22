@@ -2,6 +2,7 @@ import { basename } from 'node:path';
 import * as z from 'zod/v4';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  appendFeedbackDelta,
   generateDatabaseSchema,
   generateCanonicalGraph,
   parseSemanticMarkdown,
@@ -14,6 +15,7 @@ import {
   buildReconnaissancePrompt,
   buildModuleReconnaissancePrompt,
 } from '@ai-native/semantic-shared';
+import { buildReviewPromptBundle } from './review-prompts.js';
 
 function createServer() {
   const server = new McpServer({
@@ -31,6 +33,24 @@ function createServer() {
     content: z.string().optional(),
     policyText: z.string().optional(),
     persist: z.boolean().optional().default(true),
+  });
+
+  const reviewPromptInputSchema = z.object({
+    sourcePath: z.string(),
+    semanticSource: z.string(),
+    graph: z.any(),
+    reviewDossier: z.any().optional(),
+    validation: z.object({
+      status: z.string(),
+      summary: z.object({
+        gaps: z.number(),
+        conflicts: z.number(),
+        warnings: z.number(),
+        violations: z.number(),
+      }),
+      issues: z.array(z.any()).default([]),
+    }),
+    expectationDocuments: z.array(z.object({ path: z.string(), content: z.string() })).default([]),
   });
 
   server.registerTool(
@@ -64,6 +84,54 @@ function createServer() {
                 databaseSchema,
                 graphPreview: graphPreview(graph),
                 graph,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
+    'ingest_feedback_delta',
+    {
+      description: 'Persist a feedback delta for semantic-core heuristics and graph/schema refinement.',
+      inputSchema: z.object({
+        workspaceRoot: z.string().optional(),
+        sourcePath: z.string(),
+        sourceHash: z.string().optional(),
+        summary: z.any().optional(),
+        delta: z.any().optional(),
+        issues: z.array(z.any()).optional(),
+        evidence: z.array(z.any()).optional(),
+        metadata: z.any().optional(),
+      }),
+    },
+    async ({ workspaceRoot, sourcePath, sourceHash, summary, delta, issues, evidence, metadata }) => {
+      const store = await appendFeedbackDelta(workspaceRoot, {
+        server: 'semantic-core',
+        kind: 'graph',
+        sourcePath,
+        sourceHash,
+        summary: summary as Record<string, unknown> | undefined,
+        delta: delta as Record<string, unknown> | undefined,
+        issues: issues as Array<Record<string, unknown>> | undefined,
+        evidence: evidence as Array<Record<string, unknown>> | undefined,
+        metadata: metadata as Record<string, unknown> | undefined,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                accepted: true,
+                server: 'semantic-core',
+                kind: 'graph',
+                ...store,
               },
               null,
               2,
@@ -163,6 +231,33 @@ function createServer() {
               null,
               2,
             ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
+    'generate_review_prompt_bundle',
+    {
+      description: 'Generate the canonical multi-agent review prompt bundle for semantic rewrite and architecture inference.',
+      inputSchema: reviewPromptInputSchema,
+    },
+    async ({ sourcePath, semanticSource, graph, reviewDossier, validation, expectationDocuments }) => {
+      const bundle = buildReviewPromptBundle({
+        sourcePath,
+        semanticSource,
+        graph,
+        reviewDossier,
+        validation,
+        expectationDocuments,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(bundle, null, 2),
           },
         ],
       };

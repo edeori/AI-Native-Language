@@ -6,7 +6,7 @@ This folder contains helper scripts for syncing the build inputs to a remote hos
 
 - the remote host has Docker and Docker Compose installed
 - SSH key-based access is available
-- the remote host can expose ports `3001`, `3002`, and `3003`
+- the remote host can expose ports `3001`, `3002`, `3003`, and `3004`
 - the remote host can create and use `/srv/ai-native-language-mcp`
 - `rsync` is preferred for sync; the script falls back to a tar-over-SSH transfer if needed
 

@@ -119,6 +119,11 @@
           "default": "http://localhost:3003/mcp",
           "description": "Remote Streamable HTTP endpoint for the compiler MCP server."
         },
+        "aiNative.mcp.javaParserUrl": {
+          "type": "string",
+          "default": "http://localhost:3004/mcp",
+          "description": "Remote Streamable HTTP endpoint for the java-parser MCP server."
+        },
         "aiNative.artifactRoot": {
           "type": "string",
           "default": ".ai-native",

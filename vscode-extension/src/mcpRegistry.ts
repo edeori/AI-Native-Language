@@ -68,6 +68,7 @@ export class McpRegistry {
       { server: 'semanticCore', url: config.semanticCoreUrl, connected: this.clients.has('semanticCore') },
       { server: 'validator', url: config.validatorUrl, connected: this.clients.has('validator') },
       { server: 'compiler', url: config.compilerUrl, connected: this.clients.has('compiler') },
+      { server: 'javaParser', url: config.javaParserUrl, connected: this.clients.has('javaParser') },
     ];
   }
 
@@ -123,6 +124,8 @@ export class McpRegistry {
         return config.validatorUrl;
       case 'compiler':
         return config.compilerUrl;
+      case 'javaParser':
+        return config.javaParserUrl;
     }
   }
 }

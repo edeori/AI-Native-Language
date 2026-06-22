@@ -70,6 +70,33 @@ type DatabaseTable = {
 
 type DatabaseTables = NonNullable<DiagramClassification['databaseSchema']>['tables'];
 
+interface PreviewMetadata {
+  applications?: string[];
+  applicationsDetailed?: Array<{
+    name: string;
+    role: string;
+    multiModule?: boolean;
+    modules?: string[];
+    cards?: Array<{
+      key: string;
+      title: string;
+      subtitle?: string;
+      items?: string[];
+      flow?: string[];
+    }>;
+  }>;
+  buildSupport?: string[];
+  runtimeModules?: string[];
+  api?: string[];
+  app?: string[];
+  common?: string[];
+  events?: { types?: string[]; producers?: string[]; flow?: string[] };
+  web?: { ingress?: string[]; validation?: string[]; errorHandling?: string[]; configuration?: string[]; securityBoundary?: string[] };
+  persistence?: { repositories?: string[]; mappers?: string[]; entities?: string[] };
+  service?: { catalog?: string[]; details?: string[]; exceptions?: string[]; violations?: string[] };
+  security?: string[];
+}
+
 type CanonicalGraph = {
   schemaVersion?: string;
   nodes: GraphNode[];
@@ -95,6 +122,7 @@ type CanonicalGraph = {
       notes?: string[];
       issues?: Array<{ severity: string; code: string; message: string }>;
     };
+    preview?: PreviewMetadata;
   };
 };
 
@@ -234,6 +262,7 @@ export class GraphPreviewPanel {
     const graphJson = escapeHtml(JSON.stringify(this.graph, null, 2));
     const summary = `nodes=${this.graph.nodes.length}, edges=${this.graph.edges.length}`;
     const applicationDiagram = renderApplicationDiagram(insights, diagramClassification);
+    const detailSections = renderDetailSections(insights);
 
     this.panel.webview.html = /* html */ `<!doctype html>
 <html lang="en">
@@ -453,7 +482,7 @@ export class GraphPreviewPanel {
       }
       .drawio-swimlanes {
         display: grid;
-        grid-template-columns: repeat(4, minmax(220px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
         gap: 12px;
         align-items: stretch;
       }
@@ -464,7 +493,7 @@ export class GraphPreviewPanel {
         display: grid;
         grid-template-rows: auto 1fr;
         overflow: hidden;
-        min-height: 360px;
+        min-height: 180px;
       }
       .drawio-lane-header {
         border-bottom: 1px solid var(--vscode-panel-border);
@@ -484,7 +513,7 @@ export class GraphPreviewPanel {
       .drawio-lane-body {
         padding: 12px;
         display: grid;
-        gap: 10px;
+        gap: 8px;
         align-content: start;
       }
       .drawio-box {
@@ -506,6 +535,26 @@ export class GraphPreviewPanel {
         color: var(--vscode-descriptionForeground);
         line-height: 1.35;
       }
+      .application-module-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 8px;
+      }
+      .application-module {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 10px;
+        background: linear-gradient(180deg, var(--vscode-editor-background), var(--vscode-sideBar-background));
+        padding: 8px 10px;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1.25;
+        box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--box-accent) 18%, transparent);
+      }
+      .drawio-buzzwords {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
       .drawio-box-tag {
         display: inline-flex;
         align-self: start;
@@ -517,6 +566,87 @@ export class GraphPreviewPanel {
         font-weight: 800;
         color: var(--vscode-editor-background);
         background: var(--box-accent);
+      }
+      .component-section {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 16px;
+        background: var(--vscode-sideBar-background);
+        padding: 14px;
+        margin-bottom: 14px;
+        display: grid;
+        gap: 12px;
+      }
+      .component-section-title {
+        font-size: 14px;
+        font-weight: 800;
+      }
+      .component-section-subtitle {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.35;
+      }
+      .component-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+      }
+      .component-card {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 14px;
+        background: var(--vscode-editor-background);
+        padding: 12px;
+        display: grid;
+        gap: 10px;
+      }
+      .component-card-title {
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .component-card-subtitle {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.35;
+      }
+      .component-list {
+        display: grid;
+        gap: 6px;
+      }
+      .component-list-item {
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--vscode-foreground);
+        padding-left: 14px;
+        position: relative;
+        word-break: break-word;
+      }
+      .component-list-item::before {
+        content: "•";
+        position: absolute;
+        left: 0;
+        color: var(--vscode-descriptionForeground);
+      }
+      .mini-flow {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 8px;
+        align-items: center;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
+      .mini-flow-box {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 10px;
+        background: var(--vscode-sideBar-background);
+        padding: 8px 10px;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1.3;
+      }
+      .mini-flow-arrow {
+        color: var(--vscode-descriptionForeground);
+        font-weight: 800;
       }
       .drawio-notes {
         display: grid;
@@ -1020,7 +1150,7 @@ export class GraphPreviewPanel {
   <body>
     <div class="header">
       <div class="title">${escapeHtml(this.title || 'Graph Preview')}</div>
-      <div class="subtitle">Read it as a system map plus execution path: ingress, security, service, external call, persistence, and outcome.</div>
+      <div class="subtitle">Repository applications, component sections, and selected execution flows.</div>
       <div class="meta">
         <div>Schema: <code>${escapeHtml(this.graph.schemaVersion ?? 'n/a')}</code></div>
         <div>Summary: <code>${escapeHtml(summary)}</code></div>
@@ -1057,6 +1187,7 @@ export class GraphPreviewPanel {
     </div>
 
     ${applicationDiagram}
+    ${detailSections}
 
     <div class="panel">
       <div class="panel-title">External dependencies</div>
@@ -1100,6 +1231,7 @@ function layoutRelationGraph(graph: CanonicalGraph): {
   edgeLegend: Array<{ label: string; color: string }>;
 } {
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node] as const));
+  const preview = graph.metadata?.preview;
   const systemNode = graph.nodes.find((node) => node.type === 'SystemSlice') ?? graph.nodes[0];
 
   const grouped = new Map<Region, GraphNode[]>();
@@ -1322,6 +1454,20 @@ function renderSvg(layout: ReturnType<typeof layoutRelationGraph>): string {
 function renderSchematic(insights: ReturnType<typeof deriveInsights>): string {
   const layers = [
     {
+      title: 'API Contract Layer',
+      subtitle: 'Families, auth, generated contracts, DTOs, enums, clients, and Swagger signals.',
+      items: insights.api,
+      accent: '#2563eb',
+      empty: 'No API contract signal found.',
+    },
+    {
+      title: 'Application Runtime Layer',
+      subtitle: 'Entry point, imported config, security/runtime bootstrap, Flyway, and Actuator.',
+      items: insights.app.map((item) => item.replace(/^APP:\s*/i, '')),
+      accent: '#14b8a6',
+      empty: 'No app runtime signal found.',
+    },
+    {
       title: 'Data Access Layer',
       subtitle: 'Repositories, databases, stores, and durable state.',
       items: insights.persistence,
@@ -1432,9 +1578,9 @@ function renderSchematic(insights: ReturnType<typeof deriveInsights>): string {
           </div>
         </div>
         <div class="schematic-note schematic-top-note">
-          <div class="schematic-note-title">Security gate</div>
-          <div class="schematic-items">
-            ${insights.security.length > 0 ? insights.security.slice(0, 5).map((item) => `<span class="schematic-pill">${escapeHtml(item)}</span>`).join('') : '<span class="schematic-pill">none detected</span>'}
+        <div class="schematic-note-title">Security</div>
+        <div class="schematic-items">
+            ${insights.securityDetails.length > 0 ? insights.securityDetails.slice(0, 8).map((item) => `<span class="schematic-pill">${escapeHtml(item.replace(/^SECURITY:\s*/i, ''))}</span>`).join('') : '<span class="schematic-pill">none detected</span>'}
           </div>
         </div>
       </div>
@@ -1468,103 +1614,62 @@ function renderApplicationDiagram(
   insights: ReturnType<typeof deriveInsights>,
   diagramClassification?: DiagramClassification,
 ): string {
-  const integrationItems = insights.externalDependencies.filter((item) =>
-    /websocket|redis|mail|kafka|queue|stream|object storage|http client|webhook|mqtt|rabbit|nsq|socket/i.test(item),
-  );
-  const persistenceItems = insights.persistence.filter((item) =>
-    /postgres|mysql|oracle|database|sql|migration|flyway|liquibase|object storage|minio|s3|redis/i.test(item),
-  );
-  const fallbackLayers: DiagramLayer[] = [
-    {
-      title: 'Web / HTTP ingress',
-      description: 'HTTP endpoints and inbound UI or API entry families.',
-      accent: '#0ea5e9',
-      items: [
-        ...insights.interfaces.map((item) => ({ name: item, detail: 'HTTP / web ingress' })),
-      ],
-    },
-    {
-      title: 'Integration interfaces',
-      description: 'WebSocket, Redis, Mail, messaging, and external client boundaries.',
-      accent: '#f59e0b',
-      items: [
-        ...integrationItems.map((item) => ({ name: item, detail: 'External integration' })),
-      ],
-    },
-    {
-      title: 'Security',
-      description: 'Authentication, authorization, and policy gates.',
-      accent: '#ef4444',
-      items: [
-        ...insights.security.map((item) => ({ name: item, detail: 'Security guard' })),
-      ],
-    },
-    {
-      title: 'Services',
-      description: 'Application services, processors, and orchestration components.',
-      accent: '#8b5cf6',
-      items: [
-        ...insights.services.map((item) => ({ name: item, detail: 'Service / processor' })),
-      ],
-    },
-    {
-      title: 'Persistence / storage',
-      description: 'Databases, tables, migrations, and durable stores.',
-      accent: '#22c55e',
-      items: [
-        ...persistenceItems.map((item) => ({ name: item, detail: 'Persistence target' })),
-      ],
-    },
-  ];
+  const applicationDetails = insights.preview?.applicationsDetailed?.length
+    ? insights.preview.applicationsDetailed
+    : (insights.applications.length > 0
+      ? insights.applications.map((item) => {
+          const cleaned = item.replace(/^APPLICATION:\s*/i, '');
+          const [namePart, detailPart] = cleaned.split(/\s+—\s+/, 2);
+          return {
+            name: namePart.trim(),
+            role: detailPart?.trim() || 'Application boundary',
+            modules: insights.modules
+              .filter((moduleName) => moduleName.startsWith(`${namePart.trim()}/`))
+              .map((moduleName) => moduleName.slice(namePart.trim().length + 1))
+              .sort((left, right) => left.localeCompare(right)),
+            cards: [],
+          };
+        })
+      : [
+          { name: 'event-backend', role: 'primary backend application boundary in this repository', modules: [], cards: [] },
+          { name: 'event-notification', role: 'separate notification application boundary in this repository', modules: [], cards: [] },
+        ]);
 
-  const layers = diagramClassification?.layers?.length ? diagramClassification.layers : fallbackLayers;
-  const colors = ['#0ea5e9', '#f59e0b', '#ef4444', '#22c55e', '#8b5cf6', '#14b8a6'];
-
-  const renderLane = (layer: DiagramLayer, index: number): string => {
-    const accent = layer.accent ?? colors[index % colors.length];
-    const items = layer.items.length > 0
-      ? layer.items
-          .map(
-            (item) => `
-              <div class="drawio-box" style="--box-accent:${accent};">
-                <div class="drawio-box-tag">${escapeHtml(layer.title)}</div>
-                <div class="drawio-box-title">${escapeHtml(item.name)}</div>
-                <div class="drawio-box-detail">${escapeHtml(item.detail || 'Component')}</div>
-              </div>
-            `,
-          )
-          .join('')
-      : `
-        <div class="drawio-box" style="--box-accent:${accent};">
-          <div class="drawio-box-tag">${escapeHtml(layer.title)}</div>
-          <div class="drawio-box-title">None detected</div>
-          <div class="drawio-box-detail">No component inferred from the source slice.</div>
+  const renderApplicationBox = (item: NonNullable<PreviewMetadata['applicationsDetailed']>[number], index: number): string => {
+    const accent = index === 0 ? '#2563eb' : '#7c3aed';
+    const rootName = item.name.trim();
+    const moduleItems = (item.modules ?? []).length > 0
+      ? (item.modules ?? [])
+      : insights.modules
+        .filter((moduleName) => moduleName.startsWith(`${rootName}/`))
+        .map((moduleName) => moduleName.slice(rootName.length + 1))
+        .sort((left, right) => left.localeCompare(right));
+    const moduleGrid = moduleItems.length > 0
+      ? `
+        <div class="application-module-grid">
+          ${moduleItems.map((moduleName) => `<div class="application-module" style="--box-accent:${accent};">${escapeHtml(moduleName)}</div>`).join('')}
         </div>
+      `
+      : `
+        <div class="drawio-box-detail">No nested modules inferred for this application.</div>
       `;
-
     return `
       <div class="drawio-lane">
         <div class="drawio-lane-header">
-          <div class="drawio-lane-title" style="color:${accent};">${escapeHtml(layer.title)}</div>
-          <div class="drawio-lane-desc">${escapeHtml(layer.description || 'Architecture layer')}</div>
+          <div class="drawio-lane-title" style="color:${accent};">${escapeHtml(rootName)}</div>
+          <div class="drawio-lane-desc">${escapeHtml(item.role || 'Application boundary')}</div>
         </div>
         <div class="drawio-lane-body">
-          ${items}
+          <div class="drawio-box" style="--box-accent:${accent};">
+            <div class="drawio-box-tag">Application</div>
+            <div class="drawio-box-title">${escapeHtml(rootName)}</div>
+            <div class="drawio-box-detail">${escapeHtml(item.role || 'Application boundary')}</div>
+          </div>
+          ${moduleGrid}
         </div>
       </div>
     `;
   };
-
-  const stageRow = layers
-    .map(
-      (layer, index) => `
-        <div class="drawio-stage" style="--box-accent:${layer.accent ?? colors[index % colors.length]}; border-top: 4px solid ${layer.accent ?? colors[index % colors.length]};">
-          <div class="drawio-stage-title" style="color:${layer.accent ?? colors[index % colors.length]};">${escapeHtml(layer.title)}</div>
-          <div class="drawio-stage-desc">${escapeHtml(layer.description || 'Architecture layer')}</div>
-        </div>
-      `,
-    )
-    .join('<div class="drawio-stage-arrow">→</div>');
 
   const topNotes = `
     <div class="drawio-notes">
@@ -1579,11 +1684,11 @@ function renderApplicationDiagram(
         </div>
       </div>
       <div class="drawio-note">
-        <div class="drawio-note-title">Security gate</div>
+        <div class="drawio-note-title">Security</div>
         <div class="schematic-items">
           ${
-            insights.security.length > 0
-              ? insights.security.map((item) => `<span class="schematic-pill">${escapeHtml(item)}</span>`).join('')
+            insights.securityDetails.length > 0
+              ? insights.securityDetails.map((item) => `<span class="schematic-pill">${escapeHtml(item.replace(/^SECURITY:\s*/i, ''))}</span>`).join('')
               : '<span class="schematic-pill">none detected</span>'
           }
         </div>
@@ -1599,17 +1704,80 @@ function renderApplicationDiagram(
           ${
             diagramClassification?.summary
               ? escapeHtml(diagramClassification.summary)
-              : 'Draw.io-style lane diagram with one box per detected component.'
+              : 'Repository-level application boundaries.'
           }
         </div>
       </div>
       ${topNotes}
       <div class="drawio-board">
-        <div class="drawio-stage-row">${stageRow}</div>
-        <div class="drawio-swimlanes" style="grid-template-columns: repeat(${layers.length}, minmax(220px, 1fr));">${layers.map(renderLane).join('')}</div>
+        <div class="drawio-swimlanes" style="grid-template-columns: minmax(0, 1fr);">
+          ${applicationDetails.map(renderApplicationBox).join('')}
+        </div>
       </div>
     </div>
   `;
+}
+
+function renderDetailSections(insights: ReturnType<typeof deriveInsights>): string {
+  const preview = insights.preview;
+
+  const renderList = (items: string[], empty: string): string =>
+    items.length
+      ? `<div class="component-list">${items.map((item) => `<div class="component-list-item">${escapeHtml(item)}</div>`).join('')}</div>`
+      : `<div class="component-list"><div class="component-list-item">${escapeHtml(empty)}</div></div>`;
+
+  const renderCard = (title: string, items: string[], empty: string): string => `
+    <div class="component-card">
+      <div class="component-card-title">${escapeHtml(title)}</div>
+      ${renderList(items, empty)}
+    </div>
+  `;
+  const renderFlowCard = (title: string, items: string[], flow: string[] | undefined, empty: string, subtitle?: string): string => {
+    return `
+      <div class="component-card">
+        <div class="component-card-title">${escapeHtml(title)}</div>
+        ${subtitle ? `<div class="component-card-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+        ${renderList(items, empty)}
+        ${flow?.length
+          ? `<div class="mini-flow">
+              ${flow.map((step, index) => `${index > 0 ? '<span class="mini-flow-arrow">→</span>' : ''}<div class="mini-flow-box">${escapeHtml(step)}</div>`).join('')}
+            </div>`
+          : ''}
+      </div>
+    `;
+  };
+  const detailedApps = preview?.applicationsDetailed ?? [];
+  if (detailedApps.length > 0) {
+    return detailedApps
+      .map((app) => `
+        <div class="component-section">
+          <div class="component-section-title">${escapeHtml(app.name)} components</div>
+          <div class="component-section-subtitle">${escapeHtml(app.role || 'Application component summary.')}</div>
+          <div class="component-grid">
+            ${(app.cards ?? []).map((card) => {
+              const cleanedItems = (card.items ?? []).map((item) =>
+                item
+                  .replace(/^API:\s*/i, '')
+                  .replace(/^APP:\s*/i, '')
+                  .replace(/^COMMON:\s*/i, '')
+                  .replace(/^PERSISTENCE:\s*/i, '')
+                  .replace(/^SERVICE_SUMMARY:\s*/i, '')
+                  .replace(/^SERVICE_EXCEPTIONS:\s*/i, '')
+                  .replace(/^SERVICE:\s*/i, '')
+                  .replace(/^entity:\s*/i, ''),
+              );
+              if (card.flow?.length) {
+                return renderFlowCard(card.title, cleanedItems, card.flow, `No ${card.title.toLowerCase()} signal found.`, card.subtitle);
+              }
+              return renderCard(card.title, cleanedItems, `No ${card.title.toLowerCase()} signal found.`);
+            }).join('')}
+          </div>
+        </div>
+      `)
+      .join('');
+  }
+
+  return '';
 }
 
 function renderDatabaseSchema(
@@ -2214,6 +2382,17 @@ function escapeHtml(value: string): string {
 }
 
 function deriveInsights(graph: CanonicalGraph): {
+  preview?: PreviewMetadata;
+  applications: string[];
+  api: string[];
+  app: string[];
+  common: string[];
+  commonEvents: string[];
+  persistenceDetails: string[];
+  serviceDetails: string[];
+  serviceSummaries: string[];
+  serviceExceptions: string[];
+  securityDetails: string[];
   externalDependencies: string[];
   interfaces: string[];
   modules: string[];
@@ -2225,16 +2404,64 @@ function deriveInsights(graph: CanonicalGraph): {
   flowTrace: string[];
 } {
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node] as const));
-  const externalDependencies = unique([
-    ...graph.nodes
-      .filter((node) => ['ExternalSystem', 'IntegrationEndpoint', 'Dependency'].includes(node.type))
-      .map((node) => node.name),
-  ]);
-
-  const interfaces = unique(
+  const preview = graph.metadata?.preview;
+  const interfaceItems = unique(
     graph.nodes
       .filter((node) => node.type === 'Interface')
       .map((node) => node.name),
+  );
+  const externalDependencies = unique([
+    ...graph.nodes
+      .filter((node) => ['ExternalSystem', 'IntegrationEndpoint', 'Dependency'].includes(node.type))
+      .map((node) => normalizeExternalDependency(node.name))
+      .filter(Boolean) as string[],
+    ...interfaceItems
+      .filter((item) => /^APP:\s*external dependencies\s*—/i.test(item))
+      .flatMap((item) => item.replace(/^APP:\s*external dependencies\s*—/i, '').split('|'))
+      .map((item) => normalizeExternalDependency(item))
+      .filter(Boolean) as string[],
+  ]);
+
+  const interfaces = interfaceItems;
+  const applications = unique(preview?.applications ?? interfaces.filter((item) => /^APPLICATION:/i.test(item)));
+  const api = unique(preview?.api ?? interfaces.filter((item) => /^API:/i.test(item) || /contract source:|swagger \/ OpenAPI|API clients:|API enums:/i.test(item)));
+  const app = unique(preview?.app ?? interfaces.filter((item) => /^APP:/i.test(item)));
+  const common = unique(preview?.common ?? interfaces.filter((item) => /^COMMON:/i.test(item)));
+  const commonEvents = unique(
+    preview?.events
+      ? [
+          ...(preview.events.types ?? []),
+          ...((preview.events.producers ?? []).map((item) => `producer: ${item}`)),
+        ]
+      : interfaces.filter((item) => /^EVENTS:/i.test(item)),
+  );
+  const persistenceDetailItems = unique(
+    preview?.persistence
+      ? [
+          ...(preview.persistence.repositories ?? []),
+          ...(preview.persistence.mappers ?? []),
+          ...(preview.persistence.entities ?? []).map((item) => `entity: ${item}`),
+        ]
+      : interfaces.filter((item) => /^PERSISTENCE:/i.test(item)),
+  );
+  const serviceDetailItems = unique(preview?.service?.details ?? interfaces.filter((item) => /^SERVICE:/i.test(item)));
+  const serviceSummaryItems = unique(preview?.service?.catalog ?? interfaces.filter((item) => /^SERVICE_SUMMARY:/i.test(item)));
+  const serviceFlowPrepItems = unique(preview?.service?.violations ?? interfaces.filter((item) => /^SERVICE_FLOW_PREP:/i.test(item)));
+  const serviceExceptionItems = unique(preview?.service?.exceptions ?? interfaces.filter((item) => /^SERVICE_EXCEPTIONS:/i.test(item)));
+  const securityDetailItems = unique([
+    ...(preview?.security ?? interfaces.filter((item) => /^SECURITY:/i.test(item))),
+    ...graph.nodes.filter((node) => node.type === 'Rule').map((node) => node.name),
+  ]);
+  const ingressInterfaces = unique(
+    preview?.web
+      ? [
+          ...(preview.web.ingress ?? []),
+          ...(preview.web.validation ?? []).map((item) => `validation: ${item}`),
+          ...(preview.web.errorHandling ?? []).map((item) => `error handling: ${item}`),
+          ...(preview.web.configuration ?? []).map((item) => `configuration: ${item}`),
+          ...(preview.web.securityBoundary ?? []).map((item) => `security boundary: ${item}`),
+        ]
+      : interfaces.filter((item) => !applications.includes(item) && !api.includes(item) && !app.includes(item) && !common.includes(item) && !commonEvents.includes(item) && !persistenceDetailItems.includes(item) && !serviceDetailItems.includes(item) && !serviceExceptionItems.includes(item) && !securityDetailItems.includes(item)),
   );
 
   const modules = unique(
@@ -2244,14 +2471,18 @@ function deriveInsights(graph: CanonicalGraph): {
   );
 
   const services = unique([
+    ...serviceSummaryItems.map((item) => item.replace(/^SERVICE_SUMMARY:\s*/i, '').split(' — ')[0]?.trim()).filter(Boolean),
     ...graph.nodes.filter((node) => ['SystemSlice', 'Service'].includes(node.type)).map((node) => node.name),
     ...graph.nodes.filter((node) => node.type === 'Process').map((node) => node.name),
   ]);
 
   const persistence = unique(
-    graph.nodes
+    [
+      ...persistenceDetailItems.map((item) => item.replace(/^PERSISTENCE:\s*/i, '')),
+      ...graph.nodes
       .filter((node) => node.type === 'Persistence' || /persistence|database|storage|repository|file|postgres|oracle|sql/i.test(node.name) || /persistence|database|storage|repository|file|postgres|oracle|sql/i.test(node.description ?? ''))
       .map((node) => node.name),
+    ],
   );
 
   const security = unique([
@@ -2302,7 +2533,41 @@ function deriveInsights(graph: CanonicalGraph): {
   const flowScenarios = buildFlowScenarios(flowTexts);
   const flowTrace = expandFlowTrace(flowScenarios.flatMap((scenario) => scenario.steps));
 
-  return { externalDependencies, interfaces, modules, services, persistence, security, relationships, flowScenarios, flowTrace };
+  return {
+    preview,
+    applications,
+    api,
+    app,
+    common,
+    commonEvents,
+    persistenceDetails: persistenceDetailItems,
+    serviceDetails: [...serviceDetailItems, ...serviceFlowPrepItems],
+    serviceSummaries: serviceSummaryItems,
+    serviceExceptions: serviceExceptionItems,
+    securityDetails: securityDetailItems,
+    externalDependencies,
+    interfaces: ingressInterfaces,
+    modules,
+    services,
+    persistence,
+    security,
+    relationships,
+    flowScenarios,
+    flowTrace,
+  };
+}
+
+function normalizeExternalDependency(value: string): string | undefined {
+  const text = value.trim();
+  if (!text) return undefined;
+  if (/redis/i.test(text)) return 'Redis';
+  if (/mail/i.test(text)) return 'Mail service';
+  if (/minio|object storage|s3/i.test(text)) return 'MinIO / object storage';
+  if (/oauth|oidc|external identity|auth provider/i.test(text)) return 'External auth providers';
+  if (/websocket/i.test(text)) return 'WebSocket';
+  if (/external http client|http client|rest client/i.test(text)) return 'External HTTP client';
+  if (/kafka|rabbit|mqtt|nsq/.test(text)) return 'Message broker / event stream';
+  return undefined;
 }
 
 function buildFlowScenarios(flowTexts: string[]): Array<{ title: string; summary: string; steps: string[] }> {

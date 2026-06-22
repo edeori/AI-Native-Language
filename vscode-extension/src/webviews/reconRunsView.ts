@@ -33,6 +33,23 @@ export interface ReconRunSnapshot {
   phase: string;
   startedAt: string;
   finishedAt?: string;
+  astStatus?: ReconTaskStatus;
+  astStartedAt?: string;
+  astFinishedAt?: string;
+  astArtifactPath?: string;
+  astFileCount?: number;
+  codeGraphStatus?: ReconTaskStatus;
+  codeGraphStartedAt?: string;
+  codeGraphFinishedAt?: string;
+  codeGraphArtifactPath?: string;
+  codeGraphProgressPath?: string;
+  codeGraphProgressUpdatedAt?: string;
+  codeGraphHeartbeatCount?: number;
+  codeGraphPhase?: string;
+  localAgentStatus?: ReconTaskStatus;
+  localAgentStartedAt?: string;
+  localAgentFinishedAt?: string;
+  localAgentPhase?: string;
   projectPromptStatus: ReconTaskStatus;
   projectPromptStartedAt?: string;
   projectPromptFinishedAt?: string;
@@ -70,14 +87,17 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
       enableScripts: true,
       localResourceRoots: [this.context.extensionUri],
     };
-    webviewView.webview.onDidReceiveMessage(async (message) => {
-      if (message?.command === 'open-artifacts') {
-        await vscode.commands.executeCommand('aiNative.openArtifactsFolder');
-      }
-      if (message?.command === 'open-actions') {
-        await vscode.commands.executeCommand('aiNative.openDashboard');
-      }
-    });
+      webviewView.webview.onDidReceiveMessage(async (message) => {
+        if (message?.command === 'open-artifacts') {
+          await vscode.commands.executeCommand('aiNative.openArtifactsFolder');
+        }
+        if (message?.command === 'open-actions') {
+          await vscode.commands.executeCommand('aiNative.openDashboard');
+        }
+        if (message?.command === 'resume-recon') {
+          await vscode.commands.executeCommand('aiNative.resumeRecon', message?.stage);
+        }
+      });
     webviewView.webview.html = this.render();
   }
 
@@ -87,6 +107,49 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
     const snapshot = this.snapshot;
     const runningModule = snapshot?.moduleRuns?.find((module) => module.status === 'running');
     const events = snapshot?.events?.slice(-8) ?? [];
+    const stages = [
+      {
+        label: 'AST parse',
+        status: snapshot?.astStatus ?? 'pending',
+        detail: snapshot?.astArtifactPath ? `${snapshot.astFileCount ?? 0} files` : 'Waiting for parser output.',
+      },
+      {
+        label: 'Code graph',
+        status: snapshot?.codeGraphStatus ?? 'pending',
+        detail:
+          snapshot?.codeGraphPhase ??
+          (snapshot?.codeGraphProgressPath
+            ? `Progress: ${snapshot.codeGraphProgressPath}`
+            : snapshot?.codeGraphArtifactPath
+              ? 'Ready'
+              : 'Waiting for graph build.'),
+      },
+      {
+        label: 'Local agents',
+        status: snapshot?.localAgentStatus ?? 'pending',
+        detail: snapshot?.localAgentPhase ?? 'Waiting for local agent slices.',
+      },
+      {
+        label: 'Project prompt',
+        status: snapshot?.projectPromptStatus ?? 'pending',
+        detail: snapshot?.projectPromptArtifactPath ? 'Ready' : 'Waiting for MCP prompt.',
+      },
+      {
+        label: 'Module agents',
+        status:
+          snapshot?.moduleRuns?.length
+            ? snapshot.moduleRuns.every((module) => module.status === 'completed')
+              ? 'completed'
+              : snapshot.moduleRuns.some((module) => module.status === 'failed')
+                ? 'failed'
+                : snapshot.moduleRuns.some((module) => module.status === 'running')
+                  ? 'running'
+                  : 'pending'
+            : 'pending',
+        detail: `${snapshot?.moduleRuns?.length ?? 0} modules`,
+      },
+    ] as const;
+    const finalOutputStatus = snapshot?.status === 'completed' ? 'completed' : snapshot?.status === 'failed' ? 'failed' : 'pending';
     const moduleCards = snapshot?.moduleRuns?.length
       ? snapshot.moduleRuns
           .map(
@@ -152,15 +215,8 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
       .muted { color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.45; }
       .small { font-size: 10px; }
       .toolbar { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-      button {
-        border: 1px solid var(--vscode-button-border, transparent);
-        border-radius: 8px;
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-        padding: 7px 10px;
-        cursor: pointer;
-        font-size: 12px;
-      }
+      .toolbar { display: none; }
+      button { font: inherit; }
       .summary {
         display: grid;
         gap: 8px;
@@ -217,6 +273,66 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
         font-size: 10px;
         border: 1px solid var(--vscode-panel-border);
         background: var(--vscode-badge-background);
+      }
+      .pipeline {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: 1fr;
+      }
+      .stage {
+        border-radius: 10px;
+        border: 1px solid var(--vscode-panel-border);
+        padding: 10px;
+        background: rgba(255,255,255,0.02);
+        display: grid;
+        gap: 6px;
+      }
+      .stage.running { box-shadow: inset 0 0 0 1px #0ea5e933; }
+      .stage.completed { box-shadow: inset 0 0 0 1px #22c55e33; }
+      .stage.failed { box-shadow: inset 0 0 0 1px #ef444433; }
+      .stage.pending { box-shadow: inset 0 0 0 1px #f59e0b22; }
+      .stage-title {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        align-items: center;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .stage-detail {
+        color: var(--vscode-descriptionForeground);
+        font-size: 10px;
+        line-height: 1.35;
+      }
+      .stage-actions {
+        display: grid;
+        gap: 6px;
+        margin-top: 2px;
+      }
+      .stage-action {
+        width: 100%;
+        display: grid;
+        gap: 2px;
+        text-align: left;
+        border-radius: 8px;
+        border: 1px solid var(--vscode-panel-border);
+        background: rgba(255,255,255,0.02);
+        color: var(--vscode-foreground);
+        padding: 8px 10px;
+        cursor: pointer;
+      }
+      .stage-action:hover {
+        background: rgba(14, 165, 233, 0.08);
+        border-color: rgba(14, 165, 233, 0.35);
+      }
+      .stage-action span:first-child {
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .stage-action-hint {
+        font-size: 10px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.3;
       }
       .badge {
         text-transform: uppercase;
@@ -330,27 +446,98 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
           <div class="muted">${escapeHtml(snapshot ? `${snapshot.projectName} · ${snapshot.runId}` : 'No active recon run yet.')}</div>
           <div class="progress"><div class="bar" style="width:${computeProgress(snapshot)}%"></div></div>
           <div class="chips">
+            <span class="chip">ast: ${escapeHtml(snapshot?.astStatus ?? 'pending')}</span>
+            <span class="chip">code graph: ${escapeHtml(snapshot?.codeGraphStatus ?? 'pending')}</span>
             <span class="chip">project prompt: ${escapeHtml(snapshot?.projectPromptStatus ?? 'pending')}</span>
             <span class="chip">modules: ${escapeHtml(String(snapshot?.moduleRuns.length ?? 0))}</span>
             <span class="chip">status: ${escapeHtml(snapshot?.status ?? 'idle')}</span>
           </div>
         </div>
-        ${
-          snapshot?.activeTask || runningModule
-            ? `
-              <div class="activity">
-                <div class="activity-title">
-                  <span>Current activity</span>
-                  <span>${escapeHtml(snapshot?.activeTask || runningModule?.moduleRoot || 'idle')}</span>
+        <div class="pipeline">
+          ${stages
+            .map(
+              (stage) => {
+                const actionLabel = stage.status === 'completed' ? 'Re-run from checkpoint' : 'Resume from here';
+                const actionHint =
+                  stage.label === 'AST parse'
+                    ? 'Reuses cached AST if present, otherwise re-parses.'
+                    : stage.label === 'Code graph'
+                      ? 'Rebuilds the graph from cached AST / analysis.'
+                      : stage.label === 'Project prompt'
+                        ? 'Reuses cached prompt and continues from there.'
+                        : stage.label === 'Module agents'
+                          ? 'Reuses earlier outputs and reruns module agents if needed.'
+                          : 'Continues semantic rewrite from the latest checkpoint.';
+                return `
+              <div class="stage ${stage.status}">
+                <div class="stage-title">
+                  <span>${escapeHtml(stage.label)}</span>
+                  <span class="badge ${stage.status}">${escapeHtml(stage.status)}</span>
                 </div>
-                <div class="muted">The recon run updates this as module and project agents transition through the pipeline.</div>
+                <div class="stage-detail">${escapeHtml(stage.detail)}</div>
+                <div class="stage-actions">
+                  <button class="stage-action" data-command="resume-recon" data-stage="${escapeHtml(stage.label)}">
+                    <span>${escapeHtml(actionLabel)}</span>
+                    <span class="stage-action-hint">${escapeHtml(actionHint)}</span>
+                  </button>
+                </div>
               </div>
-            `
-            : ''
-        }
-        <div class="toolbar">
-          <button data-command="open-artifacts">Open artifacts</button>
-          <button data-command="open-actions">Open actions</button>
+              `;
+              },
+            )
+            .join('')}
+        </div>
+        <div class="activity">
+          <div class="activity-title">
+            <span>Current activity</span>
+            <span>${escapeHtml(snapshot?.activeTask || runningModule?.moduleRoot || 'idle')}</span>
+          </div>
+          <div class="muted">The recon run updates this as AST parsing, code graph building, and module/project agents transition through the pipeline.</div>
+          ${
+            snapshot?.astArtifactPath
+              ? `<div class="muted small">AST: ${escapeHtml(snapshot.astArtifactPath)}${snapshot.astFileCount != null ? ` · ${snapshot.astFileCount} files` : ''}</div>`
+              : ''
+          }
+          ${
+            snapshot?.codeGraphArtifactPath
+              ? `<div class="muted small">Code graph: ${escapeHtml(snapshot.codeGraphArtifactPath)}</div>`
+              : ''
+          }
+          ${
+            snapshot?.codeGraphProgressPath
+              ? `<div class="muted small">Code graph progress: ${escapeHtml(snapshot.codeGraphProgressPath)}${snapshot.codeGraphProgressUpdatedAt ? ` · updated ${escapeHtml(new Date(snapshot.codeGraphProgressUpdatedAt).toLocaleTimeString())}` : ''}</div>`
+              : ''
+          }
+          ${
+            typeof snapshot?.codeGraphHeartbeatCount === 'number'
+              ? `<div class="muted small">Code graph heartbeat: ${snapshot.codeGraphHeartbeatCount}</div>`
+              : ''
+          }
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="title">Final output</div>
+        <div class="stage ${finalOutputStatus}">
+          <div class="stage-title">
+            <span>Semantic assembly</span>
+            <span class="badge ${finalOutputStatus}">${escapeHtml(finalOutputStatus)}</span>
+          </div>
+          <div class="stage-detail">
+            ${
+              snapshot?.status === 'completed'
+                ? 'Final semantic markdown, graph, validation, and review artifacts are ready.'
+                : snapshot?.status === 'failed'
+                  ? 'The run failed before final semantic assembly completed.'
+                  : 'Waiting for the final semantic rewrite and artifact write.'
+            }
+          </div>
+          <div class="stage-actions">
+            <button class="stage-action" data-command="resume-recon" data-stage="semantic">
+              <span>${snapshot?.status === 'completed' ? 'Re-run final semantic assembly' : 'Resume final semantic assembly'}</span>
+              <span class="stage-action-hint">Runs the final rewrite and output-write pass from the latest checkpoint.</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -389,8 +576,17 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
     </div>
     <script nonce="${nonce}">
       const vscode = acquireVsCodeApi();
-      document.querySelectorAll('button[data-command]').forEach((button) => {
-        button.addEventListener('click', () => vscode.postMessage({ command: button.dataset.command }));
+      document.querySelectorAll('[data-command="resume-recon"]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const stage = button.getAttribute('data-stage') || '';
+          vscode.postMessage({ command: 'resume-recon', stage });
+        });
+      });
+      document.querySelectorAll('[data-command="open-artifacts"]').forEach((button) => {
+        button.addEventListener('click', () => vscode.postMessage({ command: 'open-artifacts' }));
+      });
+      document.querySelectorAll('[data-command="open-actions"]').forEach((button) => {
+        button.addEventListener('click', () => vscode.postMessage({ command: 'open-actions' }));
       });
     </script>
   </body>
@@ -400,11 +596,16 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
 
 function computeProgress(snapshot: ReconRunSnapshot | undefined): number {
   if (!snapshot || snapshot.moduleRuns.length === 0) {
-    return snapshot?.projectPromptStatus === 'completed' ? 100 : 0;
+    const baseCompleted = [snapshot?.astStatus, snapshot?.codeGraphStatus, snapshot?.projectPromptStatus].filter((status) => status === 'completed').length;
+    return Math.max(0, Math.min(100, Math.round((baseCompleted / 3) * 100)));
   }
 
-  const total = snapshot.moduleRuns.length + 1;
-  const completed = snapshot.moduleRuns.filter((module) => module.status === 'completed').length + (snapshot.projectPromptStatus === 'completed' ? 1 : 0);
+  const total = snapshot.moduleRuns.length + 3;
+  const completed =
+    snapshot.moduleRuns.filter((module) => module.status === 'completed').length +
+    (snapshot.astStatus === 'completed' ? 1 : 0) +
+    (snapshot.codeGraphStatus === 'completed' ? 1 : 0) +
+    (snapshot.projectPromptStatus === 'completed' ? 1 : 0);
   return Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
 }
 

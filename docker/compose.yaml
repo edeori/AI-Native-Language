@@ -43,3 +43,18 @@ services:
       - "3003:3003"
     volumes:
       - ../.ai-native:/app/.ai-native
+
+  java-parser:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.mcp
+      args:
+        SERVICE: java-parser
+    environment:
+      MCP_TRANSPORT_MODE: http
+      MCP_PATH: /mcp
+      PORT: 3004
+    ports:
+      - "3004:3004"
+    volumes:
+      - ../.ai-native:/app/.ai-native

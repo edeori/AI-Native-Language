@@ -6,6 +6,7 @@ export interface MpcConfigFile {
   semanticCoreUrl?: string;
   validatorUrl?: string;
   compilerUrl?: string;
+  javaParserUrl?: string;
   artifactRoot?: string;
   javaBasePackage?: string;
   reviewProvider?: 'codex' | 'claude';
@@ -66,6 +67,7 @@ export function getDefaultMcpConfigFile(): MpcConfigFile {
     semanticCoreUrl: 'http://10.9.0.2:3001/mcp',
     validatorUrl: 'http://10.9.0.2:3002/mcp',
     compilerUrl: 'http://10.9.0.2:3003/mcp',
+    javaParserUrl: 'http://10.9.0.2:3004/mcp',
     artifactRoot: '.ai-native',
     javaBasePackage: 'com.example.generated',
     reviewProvider: 'codex',

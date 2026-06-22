@@ -17,6 +17,7 @@ This directory contains the modular MCP server contracts that support the semant
 - `semantic-core`: parse Semantic Markdown, generate canonical graph models, and infer database schema drafts
 - `validator`: run validation, security checks, and issue reporting
 - `compiler`: generate Spring Boot / Java output
+- `java-parser`: parse Java source with tree-sitter and return AST snapshots
 - `cache`: store IR snapshots and generated artifacts
 - `legacy-introspection`: ingest existing code, docs, and system context
 
@@ -30,7 +31,7 @@ The repository now keeps a growing reference corpus under `reference-projects/`.
 - The ingest command is `npm run reference:ingest -- --root <project-root> --name <project-name> --out reference-projects/<project-name>`.
 - The batch command is `npm run reference:ingest:batch` and replays every project listed in `reference-projects/manifest.json`.
 - The `semantic-core` and `validator` servers consult the reference corpus when inferring module boundaries and enterprise-level warnings.
-- The source learning pipeline now emits module dossiers and a stored reconnaissance prompt so deeper scans can be replayed consistently across large Maven projects.
+- The source learning pipeline now emits module dossiers and MCP-generated reconnaissance / review prompts so deeper scans and semantic rewrites can be replayed consistently across large Maven projects without rebuilding the plugin.
 
 ## Implemented v0 tools
 
@@ -47,6 +48,11 @@ The repository now keeps a growing reference corpus under `reference-projects/`.
 ### `compiler`
 
 - `generate_spring_boot_skeleton`
+
+### `java-parser`
+
+- `parse_java_source`
+- `scan_java_project`
 
 ## Role
 
