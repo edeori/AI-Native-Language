@@ -12,7 +12,13 @@ This directory will contain local orchestration templates for the semantic workf
 ## Current layout
 
 - `Dockerfile.mcp`: shared container image for the MCP servers
-- `compose.yaml`: local multi-service orchestration for `semantic-core`, `validator`, and `compiler`
+- `compose.yaml`: local multi-service orchestration for:
+  - `semantic-core`
+  - `validator`
+  - `compiler`
+  - `java-parser`
+  - `jqassistant`
+  - `deterministic-graph`
 
 ## Remote runtime model
 

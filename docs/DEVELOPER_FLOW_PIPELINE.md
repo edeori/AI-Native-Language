@@ -3,6 +3,14 @@
 This document describes how developer-facing flow extraction currently works in the source import pipeline.
 The goal is to produce a structured `source.flow-map.json` artifact before semantic markdown assembly, while keeping deterministic graph facts authoritative.
 
+## Scope note
+
+This document covers only the developer-flow extraction part of the system.
+
+For the broader deterministic-first processing direction and artifact strategy, see:
+
+- `docs/CURRENT_PROCESSING_PIPELINE.md`
+
 ## Purpose
 
 The flow pipeline answers a different question than the architecture preview.

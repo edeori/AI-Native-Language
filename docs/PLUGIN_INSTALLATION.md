@@ -108,6 +108,8 @@ Default MCP endpoints:
 - `http://localhost:3002/mcp` for `validator`
 - `http://localhost:3003/mcp` for `compiler`
 - `http://localhost:3004/mcp` for `java-parser`
+- `http://localhost:3005/mcp` for `jqassistant`
+- `http://localhost:3006/mcp` for `deterministic-graph`
 
 If these services are not running, the extension can still load, but the workflow actions depending on them will fail.
 
@@ -120,6 +122,8 @@ npm run dev:http:semantic-core
 npm run dev:http:validator
 npm run dev:http:compiler
 npm run dev:http:java-parser
+npm run dev:http:jqassistant
+npm run dev:http:deterministic-graph
 ```
 
 ## Configure the extension after install
@@ -130,6 +134,8 @@ After installation, open the extension settings and verify:
 - validator URL
 - compiler URL
 - java-parser URL
+- jqassistant URL
+- deterministic-graph URL
 - artifact root
 - Java base package
 

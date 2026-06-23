@@ -69,6 +69,8 @@ export class McpRegistry {
       { server: 'validator', url: config.validatorUrl, connected: this.clients.has('validator') },
       { server: 'compiler', url: config.compilerUrl, connected: this.clients.has('compiler') },
       { server: 'javaParser', url: config.javaParserUrl, connected: this.clients.has('javaParser') },
+      { server: 'jqassistant', url: config.jqassistantUrl, connected: this.clients.has('jqassistant') },
+      { server: 'deterministicGraph', url: config.deterministicGraphUrl, connected: this.clients.has('deterministicGraph') },
     ];
   }
 
@@ -126,6 +128,10 @@ export class McpRegistry {
         return config.compilerUrl;
       case 'javaParser':
         return config.javaParserUrl;
+      case 'jqassistant':
+        return config.jqassistantUrl;
+      case 'deterministicGraph':
+        return config.deterministicGraphUrl;
     }
   }
 }

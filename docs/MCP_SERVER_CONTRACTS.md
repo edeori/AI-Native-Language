@@ -1,89 +1,61 @@
 # MCP Server Contracts
 
-This document describes the current MVP tool contracts for the AI-native semantic workflow.
+This document is a lightweight inventory of the currently relevant MCP service roles.
+
+Detailed processing behavior belongs in:
+
+- `docs/CURRENT_PROCESSING_PIPELINE.md`
+- `docs/DEVELOPER_FLOW_PIPELINE.md`
+- `docs/JQASSISTANT_INTEGRATION_PLAN.md`
 
 ## Shared expectations
 
-- transport: `stdio`
-- provider-neutral behavior
-- workspace-local artifact persistence for graph and generated code
-- JSON output payloads wrapped as text responses
-- strict separation between semantic source, canonical graph, validation, and code generation
+- Streamable HTTP is a first-class transport
+- `stdio` is still acceptable for local development
+- server responses are returned as text-wrapped JSON payloads
+- structural extraction, validation, compilation, and semantic processing remain separated by server responsibility
 
-## `semantic-core`
+## Current server roles
 
-### Tools
+### `semantic-core`
 
-- `parse_semantic_markdown`
-- `generate_canonical_graph`
+Primary role:
 
-### Inputs
+- semantic parsing
+- canonical graph generation
+- database schema generation
+- reconnaissance prompt generation
 
-- `path` optional file path to Semantic Markdown
-- `content` optional raw Markdown content
-- `persist` optional boolean
+### `validator`
 
-### Outputs
+Primary role:
 
-- parsed section list
-- canonical graph JSON
-- optional local cache path
+- semantic validation
+- issue reporting
+- diagnostics-oriented output
 
-### Local artifacts
+### `compiler`
 
-- `.ai-native/cache/`
-- `.ai-native/graph/`
+Primary role:
 
-## `validator`
+- generated application scaffolding
 
-### Tools
+### `java-parser`
 
-- `validate_semantic_markdown`
+Primary role:
 
-### Inputs
+- Java AST parsing
+- project-level AST catalog generation
 
-- `path` optional file path to Semantic Markdown
-- `content` optional raw Markdown content
-- `policyText` optional security policy input
-- `persist` optional boolean
+### `jqassistant`
 
-### Outputs
+Primary role:
 
-- validation status
-- gaps
-- conflicts
-- warnings
-- security violations
-- graph preview
-- diagnostics payload for the editor and Problems panel
+- structural scan orchestration
+- Maven/module/package evidence extraction
+- future deterministic merge evidence support
 
-### Local artifacts
+## Note
 
-- none by default; validation is surfaced inline in the editor and Problems panel
-
-## `compiler`
-
-### Tools
-
-- `generate_spring_boot_skeleton`
-
-### Inputs
-
-- `path` optional file path to Semantic Markdown
-- `content` optional raw Markdown content
-- `outputDir` optional target directory
-- `basePackage` optional Java package name
-- `artifactName` optional artifact name
-- `persist` optional boolean
-
-### Outputs
-
-- generated file list
-- generated file previews
-- manifest path
-- output directory
-
-### Local artifacts
-
-- `.ai-native/generated/`
-- chosen target output directory
+This document intentionally avoids duplicating full tool-by-tool pipeline descriptions.
+The contract surface is evolving, and the more detailed behavior should be maintained closer to the pipeline and integration docs.

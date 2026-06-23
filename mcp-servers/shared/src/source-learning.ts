@@ -5,7 +5,7 @@ import { parseSemanticMarkdown } from './semantic-markdown.js';
 import { generateCanonicalGraph } from './graph.js';
 import { generateDatabaseSchema } from './database-schema.js';
 import { buildCodeKnowledgeGraph, renderCodeKnowledgeGraphMarkdown, type CodeKnowledgeGraph } from './code-graph.js';
-import { parseJavaSourceFile, type JavaAstFile } from './java-ast.js';
+import { parseJavaSourceFile, type JavaAstFile, type JavaAstType } from './java-ast.js';
 import {
   readLocalAgentOutputs,
   runLocalAgentRole,
@@ -14,6 +14,7 @@ import {
   type LocalAgentOutput,
   type EnrichmentOutput,
 } from './enrichment.js';
+import { type JqassistantArtifact } from './jqassistant.js';
 
 export interface SourceLearningImportOptions {
   projectRoot: string;
@@ -22,6 +23,7 @@ export interface SourceLearningImportOptions {
   force?: boolean;
   resumeFromStage?: 'ast' | 'analysis' | 'snapshot' | 'graph' | 'prompt' | 'modules' | 'semantic';
   javaAstCatalog?: JavaAstFile[];
+  jqassistantArtifact?: JqassistantArtifact;
   onAnalysisProgress?: (event: {
     phase: 'files' | 'java' | 'packages' | 'sql';
     message: string;
@@ -38,9 +40,16 @@ export interface SourceLearningResult {
   projectRoot: string;
   outputDir: string;
   astPath: string;
+  astIndexPath: string;
   previewPath: string;
   componentMapPath: string;
   flowMapPath: string;
+  jqassistantSupportPath: string;
+  supportGraphPath: string;
+  graphVerificationPath: string;
+  graphVerificationSlicesPath: string;
+  aiGraphPath: string;
+  layerGraphsPath: string;
   enrichmentPath: string;
   enrichmentSchemaPath: string;
   reviewDossierPath: string;
@@ -48,6 +57,7 @@ export interface SourceLearningResult {
   reconnaissancePromptPath: string;
   reconnaissancePromptWritten: boolean;
   semanticJsonPath: string;
+  jqassistantPath: string;
   databaseSchemaPath: string;
   databaseSchemaMdPath: string;
   codeKnowledgeGraphPath: string;
@@ -66,6 +76,7 @@ export interface SourceLearningResult {
   codeKnowledgeGraph: CodeKnowledgeGraph;
   graph: ReturnType<typeof generateCanonicalGraph>;
   enrichment?: EnrichmentOutput;
+  jqassistant?: JqassistantArtifact;
   localAgents?: LocalAgentOutput[];
 }
 
@@ -132,6 +143,7 @@ export interface SourceProjectAnalysis {
   packageMap: Record<string, number>;
   databaseSchemaDraft?: DatabaseSchema;
   codeKnowledgeGraph?: CodeKnowledgeGraph;
+  jqassistant?: JqassistantArtifact;
   reconnaissancePrompt?: string;
   signals: {
     controllers: string[];
@@ -529,6 +541,259 @@ export interface SourceProjectSnapshot {
   layers: SourceProjectAnalysis['layers'];
 }
 
+export interface DeterministicGraphArtifacts {
+  astIndex: AstIndexArtifact;
+  jqassistantSupport: JqassistantSupportArtifact;
+  codeKnowledgeGraph: CodeKnowledgeGraph;
+  supportGraph: SupportGraphArtifact;
+  graphVerification: GraphVerificationArtifact;
+  graphVerificationSlices: GraphVerificationSlicesArtifact;
+  layerGraphs: LayerGraphsArtifact;
+  preview: ReturnType<typeof buildGraphPreviewMetadata>;
+  componentMap: Record<string, unknown>;
+  flowMap: Record<string, unknown>;
+}
+
+export async function buildDeterministicGraphArtifacts(
+  analysis: SourceProjectAnalysis,
+  snapshot: SourceProjectSnapshot,
+  jqassistantArtifact?: JqassistantArtifact,
+  prebuiltCodeKnowledgeGraph?: CodeKnowledgeGraph,
+  onCodeGraphProgress?: (event: { phase: string; message: string }) => void | Promise<void>,
+): Promise<DeterministicGraphArtifacts> {
+  const effectiveJqassistant = jqassistantArtifact ?? analysis.jqassistant ?? buildSkippedJqassistantArtifact(analysis.projectName, analysis.projectRoot, analysis);
+  analysis.jqassistant = effectiveJqassistant;
+  applyJqassistantEvidence(analysis, effectiveJqassistant);
+
+  const codeKnowledgeGraph = prebuiltCodeKnowledgeGraph ?? await buildCodeKnowledgeGraph(analysis, snapshot, onCodeGraphProgress);
+  const astIndex = buildAstIndexArtifact(analysis);
+  const jqassistantSupport = buildJqassistantSupportArtifact(analysis, effectiveJqassistant);
+  const supportGraph = buildSupportGraphArtifact(analysis, codeKnowledgeGraph);
+  const graphVerification = buildGraphVerificationArtifact(analysis, codeKnowledgeGraph);
+  const graphVerificationSlices = buildGraphVerificationSlicesArtifact(analysis, graphVerification);
+  const layerGraphs = buildLayerGraphsArtifact(supportGraph);
+  const preview = buildGraphPreviewMetadata(analysis, codeKnowledgeGraph, astIndex, jqassistantSupport, supportGraph, graphVerification);
+  const componentMap = buildComponentMapArtifact(analysis, preview, supportGraph, astIndex, jqassistantSupport);
+  const flowMap = buildFlowMapArtifact(analysis, codeKnowledgeGraph, astIndex, jqassistantSupport, supportGraph);
+
+  return {
+    astIndex,
+    jqassistantSupport,
+    codeKnowledgeGraph,
+    supportGraph,
+    graphVerification,
+    graphVerificationSlices,
+    layerGraphs,
+    preview,
+    componentMap,
+    flowMap,
+  };
+}
+
+export interface AstIndexArtifact {
+  schemaVersion: '1.0';
+  generatedAt: string;
+  projectName: string;
+  projectRoot: string;
+  summary: {
+    javaFileCount: number;
+    packageCount: number;
+    typeCount: number;
+    methodCount: number;
+    fieldCount: number;
+    endpointCount: number;
+    annotationCount: number;
+  };
+  packages: Array<{
+    packageName: string;
+    fileCount: number;
+    typeCount: number;
+    topImports: string[];
+  }>;
+  types: Array<{
+    id: string;
+    name: string;
+    kind: JavaAstType['kind'];
+    packageName?: string;
+    file: string;
+    applicationHint?: string;
+    layerHint?: string;
+    annotations: string[];
+    imports: string[];
+    fields: string[];
+    methods: Array<{
+      name: string;
+      returnType: string;
+      annotations: string[];
+      parameters: Array<{ name: string; type: string }>;
+    }>;
+  }>;
+  endpoints: Array<{
+    id: string;
+    method: string;
+    path: string;
+    typeName?: string;
+    file: string;
+  }>;
+  annotations: Array<{
+    name: string;
+    occurrences: number;
+    typeNames: string[];
+  }>;
+  lookups: {
+    packageToTypes: Record<string, string[]>;
+    typeToFile: Record<string, string>;
+    typeToMethods: Record<string, string[]>;
+    annotationToTypes: Record<string, string[]>;
+  };
+}
+
+export interface JqassistantSupportArtifact {
+  schemaVersion: '1.0';
+  generatedAt: string;
+  projectName: string;
+  projectRoot: string;
+  status: JqassistantArtifact['status'];
+  summary: JqassistantArtifact['summary'];
+  applications: Array<{
+    name: string;
+    role: string;
+    multiModule: boolean;
+    moduleRoots: string[];
+    internalModules: Array<{
+      name: string;
+      purpose: string;
+      source: string;
+      pathHints: string[];
+    }>;
+  }>;
+  runtimeLayers: Array<{ name: string; role: string }>;
+  supportModules: Array<{ name: string; role: string }>;
+  graphs?: {
+    projectGraph: {
+      projects: Array<{
+        artifactId: string;
+        groupId?: string;
+        name?: string;
+      }>;
+      modules: Array<{
+        parentArtifactId: string;
+        moduleName: string;
+      }>;
+    };
+    packageGraph: {
+      packages: string[];
+      relations: Array<{
+        fromPackage: string;
+        toPackage: string;
+        count: number;
+      }>;
+    };
+    typeGraph: {
+      types: Array<{
+        fqn: string;
+        packageName?: string;
+        simpleName: string;
+        kind?: string;
+      }>;
+      dependencies: Array<{
+        fromType: string;
+        toType: string;
+        fromPackage?: string;
+        toPackage?: string;
+      }>;
+    };
+  };
+  warnings: string[];
+  error?: string;
+}
+
+export interface SupportGraphArtifact {
+  schemaVersion: '1.0';
+  generatedAt: string;
+  projectName: string;
+  projectRoot: string;
+  nodes: Array<{
+    id: string;
+    type: 'project' | 'application' | 'layer' | 'component-group' | 'external-system' | 'flow-group' | 'module-group' | 'package-group';
+    name: string;
+    applicationId?: string;
+    description?: string;
+    items: string[];
+  }>;
+  edges: Array<{
+    from: string;
+    to: string;
+    type: 'contains' | 'uses' | 'exposes' | 'persists' | 'communicates-with';
+  }>;
+}
+
+export interface GraphVerificationArtifact {
+  schemaVersion: '1.0';
+  generatedAt: string;
+  projectName: string;
+  projectRoot: string;
+  summary: {
+    applicationCount: number;
+    endpointCount: number;
+    graphNodeCount: number;
+    graphEdgeCount: number;
+    issueCount: number;
+  };
+  checks: Array<{
+    id: string;
+    status: 'ok' | 'warning' | 'error';
+    category: 'applications' | 'endpoints' | 'layers' | 'flows' | 'persistence' | 'externals';
+    message: string;
+    evidence: string[];
+  }>;
+}
+
+export interface GraphVerificationSlicesArtifact {
+  schemaVersion: '1.0';
+  generatedAt: string;
+  projectName: string;
+  projectRoot: string;
+  slices: Array<{
+    id: string;
+    label: string;
+    category: 'api-routes' | 'scheduler-flows' | 'listener-flows' | 'persistence-heavy';
+    issueCount: number;
+    checks: GraphVerificationArtifact['checks'];
+  }>;
+}
+
+export interface AiGraphArtifact {
+  schemaVersion: '1.0';
+  generatedAt: string;
+  projectName: string;
+  projectRoot: string;
+  sourcePriority: string[];
+  nodes: Array<{
+    id: string;
+    applicationId?: string;
+    layer?: string;
+    kind: 'class-summary' | 'module-summary' | 'layer-summary' | 'flow-note' | 'validation-note';
+    title: string;
+    summary: string;
+    evidence: string[];
+  }>;
+}
+
+export interface LayerGraphsArtifact {
+  schemaVersion: '1.0';
+  generatedAt: string;
+  projectName: string;
+  projectRoot: string;
+  layers: Array<{
+    layer: string;
+    applications: Array<{
+      applicationId: string;
+      items: string[];
+    }>;
+  }>;
+}
+
 export async function importSourceProjectState(options: SourceLearningImportOptions): Promise<SourceLearningResult> {
   const outputDir = options.outputDir;
   await mkdir(outputDir, { recursive: true });
@@ -537,6 +802,7 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
   const analysisPath = join(outputDir, 'source.analysis.json');
   const snapshotPath = join(outputDir, 'source.snapshot.json');
   const codeKnowledgeGraphPath = join(outputDir, 'source.codegraph.json');
+  const jqassistantPath = join(outputDir, 'source.jqassistant.json');
   const resumeFromStage = options.resumeFromStage ?? 'ast';
   const cachedAnalysis = await readJsonIfExists<SourceProjectAnalysis>(analysisPath);
   const shouldReuseAnalysis = cachedAnalysis && isStageAtOrAfter(resumeFromStage, 'snapshot');
@@ -574,6 +840,12 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     await writeFile(snapshotPath, JSON.stringify(snapshot, null, 2) + '\n');
   }
 
+  const jqassistantResult = {
+    artifact: options.jqassistantArtifact ?? buildSkippedJqassistantArtifact(options.projectName, options.projectRoot, analysis),
+  };
+  analysis.jqassistant = jqassistantResult.artifact;
+  applyJqassistantEvidence(analysis, jqassistantResult.artifact);
+
   await options.onLifecycleProgress?.({ phase: 'graph', message: 'Building code knowledge graph from AST' });
   const cachedCodeGraph = await readJsonIfExists<CodeKnowledgeGraph>(codeKnowledgeGraphPath);
   const shouldReuseCodeGraph = cachedCodeGraph && isStageAtOrAfter(resumeFromStage, 'prompt');
@@ -601,7 +873,14 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
   );
   const analysisMdPath = join(outputDir, 'source.analysis.md');
   const astPath = join(outputDir, 'source.ast.json');
+  const astIndexPath = join(outputDir, 'source.ast-index.json');
   const codeKnowledgeGraphMdPath = join(outputDir, 'source.codegraph.md');
+  const jqassistantSupportPath = join(outputDir, 'source.jqassistant-graph.json');
+  const supportGraphPath = join(outputDir, 'source.support-graph.json');
+  const graphVerificationPath = join(outputDir, 'source.graph-verification.json');
+  const graphVerificationSlicesPath = join(outputDir, 'source.graph-verification-slices.json');
+  const aiGraphPath = join(outputDir, 'source.ai-graph.json');
+  const layerGraphsPath = join(outputDir, 'source.layer-graphs.json');
   const semanticJsonPath = join(outputDir, 'source.semantic.json');
   const previewPath = join(outputDir, 'source.preview.json');
   const componentMapPath = join(outputDir, 'source.component-map.json');
@@ -618,12 +897,31 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
   await writeFile(analysisPath, JSON.stringify(analysis, null, 2) + '\n');
   await writeFile(analysisMdPath, renderAnalysisMarkdown(analysis, snapshot));
   await writeFile(snapshotPath, JSON.stringify(snapshot, null, 2) + '\n');
+  const deterministicArtifacts = await buildDeterministicGraphArtifacts(
+    analysis,
+    snapshot,
+    jqassistantResult.artifact,
+    codeKnowledgeGraph,
+    options.onCodeGraphProgress,
+  );
+  const astIndexArtifact = deterministicArtifacts.astIndex;
+  const jqassistantSupportArtifact = deterministicArtifacts.jqassistantSupport;
+  const supportGraphArtifact = deterministicArtifacts.supportGraph;
+  const graphVerificationArtifact = deterministicArtifacts.graphVerification;
+  const graphVerificationSlicesArtifact = deterministicArtifacts.graphVerificationSlices;
+  await writeFile(astPath, JSON.stringify(analysis.javaAstCatalog, null, 2) + '\n');
+  await writeFile(astIndexPath, JSON.stringify(astIndexArtifact, null, 2) + '\n');
+  await writeFile(jqassistantPath, JSON.stringify(jqassistantResult.artifact, null, 2) + '\n');
+  await writeFile(jqassistantSupportPath, JSON.stringify(jqassistantSupportArtifact, null, 2) + '\n');
   await writeFile(codeKnowledgeGraphPath, JSON.stringify(codeKnowledgeGraph, null, 2) + '\n');
   await writeFile(codeKnowledgeGraphMdPath, renderCodeKnowledgeGraphMarkdown(codeKnowledgeGraph));
+  await writeFile(supportGraphPath, JSON.stringify(supportGraphArtifact, null, 2) + '\n');
+  await writeFile(graphVerificationPath, JSON.stringify(graphVerificationArtifact, null, 2) + '\n');
+  await writeFile(graphVerificationSlicesPath, JSON.stringify(graphVerificationSlicesArtifact, null, 2) + '\n');
 
-  const previewMetadata = buildGraphPreviewMetadata(analysis, codeKnowledgeGraph);
-  const componentMap = buildComponentMapArtifact(analysis, previewMetadata);
-  const deterministicFlowMap = buildFlowMapArtifact(analysis, codeKnowledgeGraph);
+  const previewMetadata = deterministicArtifacts.preview;
+  const componentMap = deterministicArtifacts.componentMap;
+  const deterministicFlowMap = deterministicArtifacts.flowMap;
   const flowCandidateOutput = await safeRunLocalAgentHook(
     options.projectRoot,
     'flowCandidate',
@@ -631,7 +929,7 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     buildFlowCandidateSlices(analysis, codeKnowledgeGraph, deterministicFlowMap),
     options.onLifecycleProgress,
   );
-  const flowMap = buildFlowMapArtifact(analysis, codeKnowledgeGraph, flowCandidateOutput);
+  const flowMap = buildFlowMapArtifact(analysis, codeKnowledgeGraph, astIndexArtifact, jqassistantSupportArtifact, supportGraphArtifact, flowCandidateOutput);
 
   await safeRunLocalAgentHook(
     options.projectRoot,
@@ -652,16 +950,36 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     componentMap,
     flowMap,
   });
+  const aiGraphArtifact = buildAiGraphArtifact(
+    analysis,
+    astIndexArtifact,
+    jqassistantSupportArtifact,
+    supportGraphArtifact,
+    graphVerificationArtifact,
+    flowMap,
+    enrichmentResult.output,
+  );
+  const layerGraphsArtifact = buildLayerGraphsArtifact(supportGraphArtifact);
+  await writeFile(aiGraphPath, JSON.stringify(aiGraphArtifact, null, 2) + '\n');
+  await writeFile(layerGraphsPath, JSON.stringify(layerGraphsArtifact, null, 2) + '\n');
 
   analysis.codeKnowledgeGraph = codeKnowledgeGraph;
   analysis.reconnaissancePrompt = buildReconnaissancePrompt(analysis, analysis.moduleDossiers ?? []);
 
-  const suggestedSemantic = renderSuggestedSemanticMarkdown(analysis, snapshot, codeKnowledgeGraph);
+  const suggestedSemantic = renderSuggestedSemanticMarkdown(
+    analysis,
+    snapshot,
+    codeKnowledgeGraph,
+    astIndexArtifact,
+    jqassistantSupportArtifact,
+    supportGraphArtifact,
+    graphVerificationArtifact,
+  );
   await writeFile(suggestedSemanticPath, suggestedSemantic);
   await safeRunLocalAgentHook(
     options.projectRoot,
     'semanticPolishing',
-    buildSemanticPolishingPrompt(analysis.projectName, suggestedSemantic, previewMetadata, componentMap, flowMap),
+    buildSemanticPolishingPrompt(analysis.projectName, suggestedSemantic, previewMetadata, componentMap, flowMap, supportGraphArtifact, astIndexArtifact, jqassistantSupportArtifact, graphVerificationArtifact),
     undefined,
     options.onLifecycleProgress,
   );
@@ -702,6 +1020,14 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
       semanticPath,
       suggestedSemanticPath,
       codeKnowledgeGraphPath,
+      jqassistantPath,
+      jqassistantSupportPath,
+      astIndexPath,
+      supportGraphPath,
+      graphVerificationPath,
+      graphVerificationSlicesPath,
+      aiGraphPath,
+      layerGraphsPath,
       previewPath,
       componentMapPath,
       flowMapPath,
@@ -713,6 +1039,7 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     snapshot,
     codeKnowledgeGraph,
     enrichment: enrichmentResult.output,
+    jqassistant: jqassistantResult.artifact,
     reconnaissance: {
       moduleDossiers: analysis.moduleDossiers,
       promptSource: 'mcp-generated-in-plugin-flow',
@@ -750,6 +1077,12 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     previewPath,
     componentMapPath,
     flowMapPath,
+    jqassistantSupportPath,
+    supportGraphPath,
+    graphVerificationPath,
+    graphVerificationSlicesPath,
+    aiGraphPath,
+    layerGraphsPath,
     enrichmentPath: enrichmentResult.paths.outputPath,
     enrichmentSchemaPath: enrichmentResult.paths.schemaPath,
     reviewDossierPath: enrichmentResult.paths.reviewDossierPath,
@@ -757,10 +1090,12 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     reconnaissancePromptPath,
     reconnaissancePromptWritten: false,
     semanticJsonPath,
+    jqassistantPath,
     analysisPath,
     analysisMdPath,
     snapshotPath,
     astPath,
+    astIndexPath,
     suggestedSemanticPath,
     semanticPath,
     graphPath,
@@ -776,6 +1111,7 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     codeKnowledgeGraph,
     graph,
     enrichment: enrichmentResult.output,
+    jqassistant: jqassistantResult.artifact,
     localAgents: await readLocalAgentOutputs(options.projectRoot),
   };
 }
@@ -783,6 +1119,10 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
 function buildGraphPreviewMetadata(
   analysis: SourceProjectAnalysis,
   codeGraph: CodeKnowledgeGraph,
+  astIndex: AstIndexArtifact,
+  jqassistantSupport: JqassistantSupportArtifact,
+  supportGraph: SupportGraphArtifact,
+  verification: GraphVerificationArtifact,
 ): {
   applications: string[];
   applicationsDetailed: Array<{
@@ -809,13 +1149,18 @@ function buildGraphPreviewMetadata(
   service: { catalog: string[]; details: string[]; exceptions: string[]; violations: string[] };
   security: string[];
 } {
+  const supportCards = buildSupportApplicationCardMap(supportGraph);
+  const verificationWarnings = verification.checks
+    .filter((check) => check.status !== 'ok')
+    .map((check) => `${check.category}: ${check.message}`);
   const api = [
     ...(analysis.apiSurface.contractSource === 'openapi-generated' ? ['OpenAPI-generated contracts'] : []),
     ...(analysis.apiSurface.swaggerConfigPresent ? ['Swagger / OpenAPI docs'] : []),
     ...(analysis.apiSurface.validationEnabled ? ['API validation'] : []),
-    ...analysis.apiSurface.families.map((family) => `${family.family} (${family.endpointCount} endpoints)`),
+    ...jqassistantOrDeterministicApiFamilies(analysis, jqassistantSupport),
     ...analysis.apiSurface.clientImplementations.map((item) => `client: ${item.name} — ${item.purpose}`),
     ...analysis.apiSurface.enumTypes.map((item) => `enum: ${item.name} — ${item.purpose}`),
+    ...astIndex.endpoints.slice(0, 8).map((endpoint) => `endpoint: ${endpoint.method} ${endpoint.path}`),
   ];
   const app = [
     ...(analysis.appRuntime.applicationEntryPoint ? [`entry point: ${analysis.appRuntime.applicationEntryPoint}`] : []),
@@ -823,6 +1168,7 @@ function buildGraphPreviewMetadata(
     ...analysis.appRuntime.configurationBeans.map((item) => `${item.name} — ${item.purpose}`),
     ...analysis.appRuntime.runtimeFeatures,
     ...analysis.appRuntime.externalDependencies.map((item) => `external dependency: ${item}`),
+    ...verificationWarnings.slice(0, 4).map((warning) => `verification: ${warning}`),
   ];
   const common = [
     ...analysis.commonSummary.crossCuttingComponents.map((item) => `${item.name} — ${item.role}`),
@@ -981,6 +1327,7 @@ function buildGraphPreviewMetadata(
   };
 
   const applicationsDetailed = analysis.applicationLayouts.map((layout) => {
+    const layoutSupportCards = supportCards.get(layout.appRoot) ?? new Map<string, string[]>();
     if (layout.appRoot === 'event-backend') {
       const backendModules = [
         ...analysis.repositoryStructure.backendSupportModules.map((item) => item.name.replace(/^event-backend\//, '')),
@@ -994,9 +1341,9 @@ function buildGraphPreviewMetadata(
         multiModule: layout.multiModule,
         modules: backendModules,
         cards: [
-          { key: 'api', title: 'API', items: api },
-          { key: 'app', title: 'App', items: app },
-          { key: 'common', title: 'Common', items: common },
+          { key: 'api', title: 'API', items: mergeCardItems(layoutSupportCards.get('api'), api) },
+          { key: 'app', title: 'App', items: mergeCardItems(layoutSupportCards.get('app'), app) },
+          { key: 'common', title: 'Common', items: mergeCardItems(layoutSupportCards.get('common'), common) },
           {
             key: 'events',
             title: 'Events',
@@ -1007,29 +1354,29 @@ function buildGraphPreviewMetadata(
           {
             key: 'web',
             title: 'Web',
-            items: unique([
+            items: mergeCardItems(layoutSupportCards.get('web'), unique([
               ...web.ingress.map((item) => `ingress: ${item}`),
               ...web.validation.map((item) => `validation: ${item}`),
               ...web.errorHandling.map((item) => `error handling: ${item}`),
               ...web.configuration.map((item) => `configuration: ${item}`),
               ...web.securityBoundary.map((item) => `security boundary: ${item}`),
-            ]),
+            ])),
           },
           {
             key: 'persistence.repositories',
             title: 'Persistence · Repositories',
-            items: analysis.persistenceSummary.repositories.map((item) => `${item.name} — ${item.purpose}; ops: ${item.operationGroups.join(', ') || 'general persistence'}${item.notableOperation ? `; notable: ${item.notableOperation}` : ''}`),
+            items: mergeCardItems(layoutSupportCards.get('persistence'), analysis.persistenceSummary.repositories.map((item) => `${item.name} — ${item.purpose}; ops: ${item.operationGroups.join(', ') || 'general persistence'}${item.notableOperation ? `; notable: ${item.notableOperation}` : ''}`)),
           },
           { key: 'persistence.mappers', title: 'Persistence · Mappers', items: mapperParts },
-          { key: 'persistence.entities', title: 'Persistence · Entities', items: analysis.persistenceSummary.entityNames },
-          { key: 'service.catalog', title: 'Service', items: serviceCatalog },
+          { key: 'persistence.entities', title: 'Persistence · Entities', items: mergeCardItems(layoutSupportCards.get('persistence'), analysis.persistenceSummary.entityNames) },
+          { key: 'service.catalog', title: 'Service', items: mergeCardItems(layoutSupportCards.get('service'), serviceCatalog) },
           { key: 'service.details', title: 'Service Details', items: serviceDetails },
           {
             key: 'service.exceptions',
             title: 'Service Exceptions',
             items: analysis.serviceSummary.exceptionTypes.map((item) => `${item.name} — ${item.purpose}${item.thrownBy.length ? `; thrown by ${item.thrownBy.join(', ')}` : ''}`),
           },
-          { key: 'security', title: 'Security', items: analysis.commonSummary.securityDetails.filter((item) => !/access_token cookie/i.test(item)) },
+          { key: 'security', title: 'Security', items: mergeCardItems(layoutSupportCards.get('security'), analysis.commonSummary.securityDetails.filter((item) => !/access_token cookie/i.test(item))) },
           { key: 'buildSupport', title: 'Build Support', items: backendBuildItems },
           { key: 'runtimeModules', title: 'Runtime Modules', items: backendRuntimeModuleItems },
         ],
@@ -1043,19 +1390,19 @@ function buildGraphPreviewMetadata(
         multiModule: layout.multiModule,
         modules: notificationStructure,
         cards: [
-          { key: 'api', title: 'API', items: notification.api },
-          { key: 'app', title: 'App', items: notification.app },
-          { key: 'web', title: 'Web', items: notification.web },
-          { key: 'service', title: 'Service', items: notification.service },
+          { key: 'api', title: 'API', items: mergeCardItems(layoutSupportCards.get('api'), notification.api) },
+          { key: 'app', title: 'App', items: mergeCardItems(layoutSupportCards.get('app'), notification.app) },
+          { key: 'web', title: 'Web', items: mergeCardItems(layoutSupportCards.get('web'), notification.web) },
+          { key: 'service', title: 'Service', items: mergeCardItems(layoutSupportCards.get('service'), notification.service) },
           {
             key: 'persistence.repositories',
             title: 'Persistence · Repositories',
-            items: notification.persistence.filter((item) => /^repository:/i.test(item) || /^repository method:/i.test(item)),
+            items: mergeCardItems(layoutSupportCards.get('persistence'), notification.persistence.filter((item) => /^repository:/i.test(item) || /^repository method:/i.test(item))),
           },
           {
             key: 'persistence.entities',
             title: 'Persistence · Entities',
-            items: notification.persistence.filter((item) => /^entity:/i.test(item)),
+            items: mergeCardItems(layoutSupportCards.get('persistence'), notification.persistence.filter((item) => /^entity:/i.test(item))),
           },
           {
             key: 'persistence.schema',
@@ -1076,7 +1423,7 @@ function buildGraphPreviewMetadata(
             ],
           },
           { key: 'realtime', title: 'Realtime', items: notification.realtime },
-          { key: 'security', title: 'Security', items: notification.security },
+          { key: 'security', title: 'Security', items: mergeCardItems(layoutSupportCards.get('security'), notification.security) },
           { key: 'config', title: 'Config', items: notification.config },
         ],
       };
@@ -1199,6 +1546,46 @@ function inferNotificationRealtimeMethodPurpose(name: string): string {
   if (/sendToUser/i.test(name)) return 'fan out a notification to active websocket sessions';
   if (/extractToken|extractUserId/i.test(name)) return 'resolve caller identity from websocket authentication data';
   return 'realtime operation';
+}
+
+function buildSupportApplicationCardMap(supportGraph: SupportGraphArtifact): Map<string, Map<string, string[]>> {
+  const result = new Map<string, Map<string, string[]>>();
+  const applicationNodes = new Map(
+    supportGraph.nodes
+      .filter((node) => node.type === 'application')
+      .map((node) => [node.id, node]),
+  );
+  for (const edge of supportGraph.edges) {
+    if (edge.type !== 'contains') continue;
+    const sourceApplication = applicationNodes.get(edge.from);
+    if (!sourceApplication) continue;
+    const targetNode = supportGraph.nodes.find((node) => node.id === edge.to);
+    if (!targetNode || (targetNode.type !== 'layer' && targetNode.type !== 'module-group' && targetNode.type !== 'package-group')) continue;
+    const appKey = sourceApplication.name;
+    const bucket = result.get(appKey) ?? new Map<string, string[]>();
+    bucket.set(targetNode.name.toLowerCase(), mergeCardItems(bucket.get(targetNode.name.toLowerCase()), targetNode.items));
+    result.set(appKey, bucket);
+  }
+  return result;
+}
+
+function mergeCardItems(...groups: Array<string[] | undefined>): string[] {
+  return unique(groups.flatMap((group) => group ?? []).filter(Boolean));
+}
+
+function jqassistantOrDeterministicApiFamilies(
+  analysis: SourceProjectAnalysis,
+  jqassistantSupport: JqassistantSupportArtifact,
+): string[] {
+  const packageHints = jqassistantSupport.graphs?.packageGraph.packages ?? [];
+  const apiPackages = packageHints.filter((item) => /\.api(\.|$)/i.test(item));
+  if (apiPackages.length > 0) {
+    return unique([
+      ...analysis.apiSurface.families.map((family) => `${family.family} (${family.endpointCount} endpoints)`),
+      ...apiPackages.slice(0, 8).map((packageName) => `package: ${packageName}`),
+    ]);
+  }
+  return analysis.apiSurface.families.map((family) => `${family.family} (${family.endpointCount} endpoints)`);
 }
 
 async function analyzeProject(
@@ -2957,6 +3344,15 @@ function renderAnalysisMarkdown(analysis: SourceProjectAnalysis, snapshot: Sourc
   const topPackages = Object.entries(analysis.packageMap)
     .sort((left, right) => right[1] - left[1])
     .slice(0, 12);
+  const jqassistantLines = analysis.jqassistant
+    ? [
+        `- status: ${analysis.jqassistant.status}`,
+        `- enabled: ${analysis.jqassistant.enabled ? 'yes' : 'no'}`,
+        `- command: ${analysis.jqassistant.command}`,
+        ...(analysis.jqassistant.version ? [`- version: ${analysis.jqassistant.version}`] : []),
+        ...(analysis.jqassistant.error ? [`- error: ${analysis.jqassistant.error}`] : []),
+      ].join('\n')
+    : '- not available';
   return `# ${analysis.projectName} source-to-semantic analysis\n\n` +
     `## Overview\n` +
     `- source root: ${analysis.projectRoot}\n` +
@@ -2974,6 +3370,8 @@ function renderAnalysisMarkdown(analysis: SourceProjectAnalysis, snapshot: Sourc
     `## Source snapshot\n` +
     `- top-level directories: ${snapshot.topLevelDirectories.join(', ') || 'none'}\n` +
     `- top-level files: ${snapshot.topLevelFiles.join(', ') || 'none'}\n\n` +
+    `## jQAssistant\n` +
+    `${jqassistantLines}\n\n` +
     `## Detected module roots\n` +
     (analysis.modules.length ? analysis.modules.map((module) => `- ${module}`).join('\n') : '- none detected') + '\n\n' +
     `## Top packages\n` +
@@ -3023,28 +3421,156 @@ function renderAnalysisMarkdown(analysis: SourceProjectAnalysis, snapshot: Sourc
     (analysis.technologies.length ? analysis.technologies.map((item) => `- ${item}`).join('\n') : '- none') + '\n';
 }
 
+function applyJqassistantEvidence(analysis: SourceProjectAnalysis, artifact: JqassistantArtifact): void {
+  applyJqassistantMergeEvidence(analysis, artifact);
+  const mergedObservations = [...analysis.observations];
+  if (!artifact.enabled) {
+    mergedObservations.push('jQAssistant deterministic scan hook configured but disabled');
+  } else if (artifact.status === 'completed') {
+    mergedObservations.push('jQAssistant deterministic scan available');
+    if (artifact.version) {
+      mergedObservations.push(`jQAssistant version detected: ${artifact.version}`);
+    }
+  } else if (artifact.status === 'failed') {
+    mergedObservations.push('jQAssistant scan attempted but failed');
+  }
+  if (artifact.detectedBinary) {
+    mergedObservations.push('jQAssistant binary available on host environment');
+  }
+  analysis.observations = unique(mergedObservations);
+}
+
+function applyJqassistantMergeEvidence(analysis: SourceProjectAnalysis, artifact: JqassistantArtifact): void {
+  const evidence = artifact.mergeEvidence;
+  if (!evidence) return;
+
+  if (typeof evidence.multiModuleMaven === 'boolean') {
+    analysis.repositoryStructure.multiModuleMaven = evidence.multiModuleMaven;
+  }
+
+  if (evidence.topLevelProjects?.length) {
+    analysis.repositoryStructure.topLevelProjects = uniqueBy(
+      [...analysis.repositoryStructure.topLevelProjects, ...evidence.topLevelProjects],
+      (item) => item.name,
+    );
+  }
+
+  if (evidence.backendSupportModules?.length) {
+    analysis.repositoryStructure.backendSupportModules = uniqueBy(
+      [...analysis.repositoryStructure.backendSupportModules, ...evidence.backendSupportModules],
+      (item) => item.name,
+    );
+  }
+
+  if (evidence.backendRuntimeLayers?.length) {
+    analysis.repositoryStructure.backendRuntimeLayers = uniqueBy(
+      [...analysis.repositoryStructure.backendRuntimeLayers, ...evidence.backendRuntimeLayers],
+      (item) => item.name,
+    );
+  }
+
+  if (evidence.applicationLayouts?.length) {
+    const mergedLayouts = [...analysis.applicationLayouts];
+    for (const incoming of evidence.applicationLayouts) {
+      const existing = mergedLayouts.find((layout) => layout.appRoot === incoming.appRoot);
+      if (!existing) {
+        mergedLayouts.push({
+          appRoot: incoming.appRoot,
+          role: incoming.role,
+          multiModule: incoming.multiModule,
+          moduleRoots: incoming.moduleRoots,
+          internalModules: incoming.internalModules.map((module) => ({
+            name: module.name,
+            purpose: module.purpose,
+            source: module.source === 'jqassistant' ? 'maven' : module.source,
+            pathHints: module.pathHints,
+          })),
+        });
+        continue;
+      }
+      existing.role = existing.role || incoming.role;
+      existing.multiModule = existing.multiModule || incoming.multiModule;
+      existing.moduleRoots = unique([...existing.moduleRoots, ...incoming.moduleRoots]);
+      existing.internalModules = uniqueBy(
+        [
+          ...existing.internalModules,
+          ...incoming.internalModules.map((module) => ({
+            name: module.name,
+            purpose: module.purpose,
+            source: module.source === 'jqassistant' ? 'maven' : module.source,
+            pathHints: module.pathHints,
+          })),
+        ],
+        (item) => item.name,
+      );
+    }
+    analysis.applicationLayouts = mergedLayouts;
+  }
+}
+
+function buildSkippedJqassistantArtifact(
+  projectName: string,
+  projectRoot: string,
+  analysis: SourceProjectAnalysis,
+): JqassistantArtifact {
+  return {
+    schemaVersion: '1.0',
+    generatedAt: new Date().toISOString(),
+    status: 'skipped',
+    projectName,
+    projectRoot,
+    enabled: false,
+    command: 'jqassistant',
+    scanMode: 'scan-only',
+    detectedBinary: false,
+    summary: {
+      applicationCount: analysis.applicationLayouts.length,
+      applications: analysis.applicationLayouts.map((layout) => layout.appRoot),
+      moduleCount: analysis.modules.length,
+      modules: analysis.modules,
+      technologyCount: analysis.technologies.length,
+      technologies: analysis.technologies,
+    },
+    warnings: ['No jqassistant MCP artifact was supplied to the source import pipeline.'],
+  };
+}
+
 function renderSuggestedSemanticMarkdown(
   analysis: SourceProjectAnalysis,
   snapshot: SourceProjectSnapshot,
   codeGraph: CodeKnowledgeGraph,
+  astIndex: AstIndexArtifact,
+  jqassistantSupport: JqassistantSupportArtifact,
+  supportGraph: SupportGraphArtifact,
+  verification: GraphVerificationArtifact,
 ): string {
   const apiSurface = analysis.apiSurface ?? createEmptyApiSurfaceSummary();
+  const sourcePriority = ['support-graph', 'jqassistant-graph', 'ast-index', 'codegraph', 'analysis'];
+  const verificationWarnings = verification.checks
+    .filter((check) => check.status !== 'ok')
+    .map((check) => `- ${check.category}: ${check.message}`);
+  const applicationSupport = supportGraph.nodes
+    .filter((node) => node.type === 'application')
+    .map((node) => `- \`${node.name}\`: ${node.description ?? 'application boundary'}; items: ${node.items.slice(0, 8).join(', ') || 'none'}`);
   const topLevelProjects = analysis.repositoryStructure.topLevelProjects.map((item) => `- \`${item.name}\`: ${item.role}`);
   const backendRuntimeLayers = analysis.repositoryStructure.backendRuntimeLayers.map((item) => `- \`${item.name.replace(/^event-backend\//, '')}\`: ${item.role}`);
   const backendSupportModules = analysis.repositoryStructure.backendSupportModules.map((item) => `- \`${item.name.replace(/^event-backend\//, '')}\`: ${item.role}`);
-  const apiFamilies = apiSurface.families.map((family) => {
+  const apiFamilies = jqassistantOrDeterministicApiFamilies(analysis, jqassistantSupport).map((family) => {
+    if (!family.startsWith('/')) return `- \`${family}\``;
+    const matching = apiSurface.families.find((item) => item.family === family.split(' ')[0]);
+    if (!matching) return `- \`${family}\``;
     const details = [
-      `${family.endpointCount} ${family.endpointCount === 1 ? 'endpoint' : 'endpoints'}`,
-      family.authMode === 'public'
+      `${matching.endpointCount} ${matching.endpointCount === 1 ? 'endpoint' : 'endpoints'}`,
+      matching.authMode === 'public'
         ? 'public'
-        : family.authMode === 'protected'
-          ? `protected by ${family.securitySchemes.join(', ') || 'auth'}`
-          : `mixed visibility (${family.securitySchemes.join(', ') || 'partial auth'})`,
-      family.permissionHints.length ? `rights: ${family.permissionHints.join(', ')}` : '',
-      family.dtoTypes.length ? `DTOs: ${family.dtoTypes.slice(0, 6).join(', ')}` : '',
-      family.enumTypes.length ? `enums: ${family.enumTypes.slice(0, 4).join(', ')}` : '',
+        : matching.authMode === 'protected'
+          ? `protected by ${matching.securitySchemes.join(', ') || 'auth'}`
+          : `mixed visibility (${matching.securitySchemes.join(', ') || 'partial auth'})`,
+      matching.permissionHints.length ? `rights: ${matching.permissionHints.join(', ')}` : '',
+      matching.dtoTypes.length ? `DTOs: ${matching.dtoTypes.slice(0, 6).join(', ')}` : '',
+      matching.enumTypes.length ? `enums: ${matching.enumTypes.slice(0, 4).join(', ')}` : '',
     ].filter(Boolean);
-    return `- \`${family.family}\`: ${details.join('; ')}`;
+    return `- \`${matching.family}\`: ${details.join('; ')}`;
   });
   const commonComponents = analysis.commonSummary.crossCuttingComponents.map((item) => `- \`${item.name}\`: ${item.role}`);
   const webBoundaries = [
@@ -3156,6 +3682,9 @@ function renderSuggestedSemanticMarkdown(
   return [
     `# ${analysis.projectName}`,
     '',
+    '## source_priority',
+    ...sourcePriority.map((item) => `- ${item}`),
+    '',
     '## system',
     `${analysis.projectName} source-derived system slice.`,
     '',
@@ -3169,12 +3698,16 @@ function renderSuggestedSemanticMarkdown(
     `- discovered endpoints: ${analysis.endpointCatalog.length}`,
     `- discovered API families: ${apiSurface.families.length}`,
     `- discovered schema hints: ${analysis.schemaHints.length}`,
+    `- ast types indexed: ${astIndex.summary.typeCount}`,
+    `- jqassistant packages indexed: ${jqassistantSupport.summary.packageCount ?? 0}`,
+    `- support graph nodes: ${supportGraph.nodes.length}`,
     '',
     '## Overview',
     `${analysis.projectName} is a source-derived architectural summary focused on the backend application. The repository is organized as a multi-module Maven codebase with explicit separation between build support, runtime modules, and a separate notification application. The goal of this semantic file is to explain the system in human terms, while graph-preview and flow helper artifacts are kept in separate machine-oriented files.`,
     '',
     '## Repository structure',
     ...topLevelProjects,
+    ...(applicationSupport.length ? ['', '### Application boundaries from support graph', ...applicationSupport] : []),
     ...(backendSupportModules.length ? ['', '### Build support modules', ...backendSupportModules] : []),
     ...(backendRuntimeLayers.length ? ['', '### Event-backend runtime modules', ...backendRuntimeLayers] : []),
     '',
@@ -3226,6 +3759,7 @@ function renderSuggestedSemanticMarkdown(
     '',
     '## Security',
     ...securitySection,
+    ...(verificationWarnings.length ? ['', '## verification_warnings', ...verificationWarnings] : []),
     '',
     '## processes',
     ...(processSection.length ? processSection : ['- Processes still need to be refined from the source.']),
@@ -5131,6 +5665,788 @@ function renderDatabaseSchemaMarkdown(schema: DatabaseSchema): string {
       : '- none') + '\n';
 }
 
+function buildAstIndexArtifact(analysis: SourceProjectAnalysis): AstIndexArtifact {
+  const astFiles = analysis.javaAstCatalog ?? [];
+  const packageBuckets = new Map<string, { fileCount: number; typeCount: number; imports: string[] }>();
+  const annotationBuckets = new Map<string, { occurrences: number; typeNames: Set<string> }>();
+  const packageToTypes = new Map<string, string[]>();
+  const typeToFile: Record<string, string> = {};
+  const typeToMethods: Record<string, string[]> = {};
+  const types: AstIndexArtifact['types'] = [];
+  let methodCount = 0;
+  let fieldCount = 0;
+
+  for (const astFile of astFiles) {
+    const packageName = astFile.packageName ?? '(default)';
+    const packageBucket = packageBuckets.get(packageName) ?? { fileCount: 0, typeCount: 0, imports: [] };
+    packageBucket.fileCount += 1;
+    packageBucket.typeCount += astFile.types.length;
+    packageBucket.imports.push(...astFile.imports);
+    packageBuckets.set(packageName, packageBucket);
+
+    for (const type of astFile.types) {
+      packageToTypes.set(packageName, [...(packageToTypes.get(packageName) ?? []), type.name]);
+      typeToFile[`${packageName}.${type.name}`] = relativePath(astFile.file, analysis.projectRoot);
+      typeToMethods[`${packageName}.${type.name}`] = type.methods.map((method) => method.name);
+      methodCount += type.methods.length;
+      fieldCount += type.fields.length;
+      const combinedAnnotations = unique([
+        ...type.annotations,
+        ...type.fields.flatMap((field) => field.annotations),
+        ...type.methods.flatMap((method) => method.annotations),
+      ]);
+      for (const annotation of combinedAnnotations) {
+        const bucket = annotationBuckets.get(annotation) ?? { occurrences: 0, typeNames: new Set<string>() };
+        bucket.occurrences += 1;
+        bucket.typeNames.add(type.name);
+        annotationBuckets.set(annotation, bucket);
+      }
+      types.push({
+        id: `${packageName}.${type.name}`,
+        name: type.name,
+        kind: type.kind,
+        packageName: astFile.packageName,
+        file: relativePath(astFile.file, analysis.projectRoot),
+        applicationHint: inferApplicationFromFile(astFile.file, analysis),
+        layerHint: inferLayerFromPackageOrFile(astFile.packageName, astFile.file),
+        annotations: type.annotations,
+        imports: astFile.imports,
+        fields: type.fields.map((field) => `${field.name}:${field.type}`),
+        methods: type.methods.map((method) => ({
+          name: method.name,
+          returnType: method.returnType,
+          annotations: method.annotations,
+          parameters: method.parameters,
+        })),
+      });
+    }
+  }
+
+  return {
+    schemaVersion: '1.0',
+    generatedAt: new Date().toISOString(),
+    projectName: analysis.projectName,
+    projectRoot: analysis.projectRoot,
+    summary: {
+      javaFileCount: astFiles.length,
+      packageCount: packageBuckets.size,
+      typeCount: types.length,
+      methodCount,
+      fieldCount,
+      endpointCount: analysis.endpointCatalog.length,
+      annotationCount: annotationBuckets.size,
+    },
+    packages: [...packageBuckets.entries()]
+      .map(([packageName, bucket]) => ({
+        packageName,
+        fileCount: bucket.fileCount,
+        typeCount: bucket.typeCount,
+        topImports: unique(bucket.imports).sort((left, right) => left.localeCompare(right)).slice(0, 12),
+      }))
+      .sort((left, right) => left.packageName.localeCompare(right.packageName)),
+    types: types.sort((left, right) => left.id.localeCompare(right.id)),
+    endpoints: analysis.endpointCatalog.map((endpoint) => ({
+      id: `${endpoint.method} ${endpoint.path}`,
+      method: endpoint.method,
+      path: endpoint.path,
+      typeName: endpoint.typeName,
+      file: relativePath(endpoint.file, analysis.projectRoot),
+    })),
+    annotations: [...annotationBuckets.entries()]
+      .map(([name, bucket]) => ({
+        name,
+        occurrences: bucket.occurrences,
+        typeNames: [...bucket.typeNames].sort((left, right) => left.localeCompare(right)),
+      }))
+      .sort((left, right) => right.occurrences - left.occurrences || left.name.localeCompare(right.name)),
+    lookups: {
+      packageToTypes: Object.fromEntries([...packageToTypes.entries()].map(([packageName, typeNames]) => [packageName, unique(typeNames).sort((left, right) => left.localeCompare(right))])),
+      typeToFile,
+      typeToMethods,
+      annotationToTypes: Object.fromEntries([...annotationBuckets.entries()].map(([name, bucket]) => [name, [...bucket.typeNames].sort((left, right) => left.localeCompare(right))])),
+    },
+  };
+}
+
+function buildJqassistantSupportArtifact(
+  analysis: SourceProjectAnalysis,
+  jqassistant: JqassistantArtifact,
+): JqassistantSupportArtifact {
+  const applications = analysis.applicationLayouts.map((application) => ({
+    name: basename(application.appRoot),
+    role: application.role,
+    multiModule: application.multiModule,
+    moduleRoots: application.moduleRoots,
+    internalModules: application.internalModules.map((module) => ({
+      name: module.name,
+      purpose: module.purpose,
+      source: module.source,
+      pathHints: module.pathHints,
+    })),
+  }));
+
+  return {
+    schemaVersion: '1.0',
+    generatedAt: new Date().toISOString(),
+    projectName: analysis.projectName,
+    projectRoot: analysis.projectRoot,
+    status: jqassistant.status,
+    summary: jqassistant.summary,
+    applications,
+    runtimeLayers: analysis.repositoryStructure.backendRuntimeLayers,
+    supportModules: analysis.repositoryStructure.backendSupportModules,
+    graphs: jqassistant.graphs,
+    warnings: jqassistant.warnings,
+    error: jqassistant.error,
+  };
+}
+
+function buildSupportGraphArtifact(
+  analysis: SourceProjectAnalysis,
+  codeGraph: CodeKnowledgeGraph,
+): SupportGraphArtifact {
+  const nodes: SupportGraphArtifact['nodes'] = [];
+  const edges: SupportGraphArtifact['edges'] = [];
+  const projectId = `project:${slug(analysis.projectName)}`;
+  nodes.push({
+    id: projectId,
+    type: 'project',
+    name: analysis.projectName,
+    items: analysis.repositoryStructure.topLevelProjects.map((item) => `${item.name} (${item.role})`),
+  });
+
+  for (const layout of analysis.applicationLayouts) {
+    const applicationId = `application:${slug(layout.appRoot)}`;
+    const applicationName = basename(layout.appRoot);
+    nodes.push({
+      id: applicationId,
+      type: 'application',
+      name: applicationName,
+      applicationId,
+      description: layout.role,
+      items: layout.moduleRoots.length ? layout.moduleRoots : layout.internalModules.map((module) => module.name),
+    });
+    edges.push({ from: projectId, to: applicationId, type: 'contains' });
+
+    const layerGroups = buildApplicationLayerGroups(analysis, applicationName);
+    for (const [layerKey, items] of Object.entries(layerGroups)) {
+      if (!items.length) continue;
+      const layerId = `${applicationId}:layer:${slug(layerKey)}`;
+      nodes.push({
+        id: layerId,
+        type: 'layer',
+        name: layerKey,
+        applicationId,
+        items: items.slice(0, 20),
+      });
+      edges.push({ from: applicationId, to: layerId, type: 'contains' });
+    }
+
+    const jqassistantModules = (analysis.jqassistant?.graphs?.projectGraph.modules ?? [])
+      .filter((module) => module.parentArtifactId === applicationName || module.parentArtifactId === layout.appRoot || module.parentArtifactId.endsWith(applicationName))
+      .map((module) => module.moduleName);
+    if (jqassistantModules.length) {
+      const moduleNodeId = `${applicationId}:jqassistant-modules`;
+      nodes.push({
+        id: moduleNodeId,
+        type: 'module-group',
+        name: 'jqassistant modules',
+        applicationId,
+        items: unique(jqassistantModules),
+      });
+      edges.push({ from: applicationId, to: moduleNodeId, type: 'contains' });
+    }
+
+    const packageHints = summarizePackagesForApplication(analysis, applicationName);
+    if (packageHints.length) {
+      const packageNodeId = `${applicationId}:packages`;
+      nodes.push({
+        id: packageNodeId,
+        type: 'package-group',
+        name: 'package slices',
+        applicationId,
+        items: packageHints.slice(0, 20),
+      });
+      edges.push({ from: applicationId, to: packageNodeId, type: 'contains' });
+    }
+  }
+
+  const externalSystems = unique(codeGraph.summary.externalSystems);
+  for (const system of externalSystems) {
+    const nodeId = `external:${slug(system)}`;
+    nodes.push({
+      id: nodeId,
+      type: 'external-system',
+      name: system,
+      items: [],
+    });
+    edges.push({ from: projectId, to: nodeId, type: 'communicates-with' });
+  }
+
+  const flowGroups = groupSemanticFlowsByApplication(analysis);
+  for (const [applicationName, flows] of flowGroups) {
+    const applicationId = `application:${slug(findApplicationRootByName(analysis, applicationName) ?? applicationName)}`;
+    const flowId = `${applicationId}:flows`;
+    nodes.push({
+      id: flowId,
+      type: 'flow-group',
+      name: `${applicationName} flows`,
+      applicationId,
+      items: flows.slice(0, 20),
+    });
+    edges.push({ from: applicationId, to: flowId, type: 'contains' });
+  }
+
+  return {
+    schemaVersion: '1.0',
+    generatedAt: new Date().toISOString(),
+    projectName: analysis.projectName,
+    projectRoot: analysis.projectRoot,
+    nodes,
+    edges,
+  };
+}
+
+function buildGraphVerificationArtifact(
+  analysis: SourceProjectAnalysis,
+  codeGraph: CodeKnowledgeGraph,
+): GraphVerificationArtifact {
+  const checks: GraphVerificationArtifact['checks'] = [];
+  const graphNodeNames = new Set(codeGraph.nodes.map((node) => node.name));
+  const graphNodeRefs = new Set(codeGraph.nodes.map((node) => node.sourceRef).filter((value): value is string => Boolean(value)));
+
+  if (analysis.applicationLayouts.length > 0) {
+    checks.push({
+      id: 'applications-detected',
+      status: 'ok',
+      category: 'applications',
+      message: `Detected ${analysis.applicationLayouts.length} application boundaries`,
+      evidence: analysis.applicationLayouts.map((layout) => layout.appRoot),
+    });
+  } else {
+    checks.push({
+      id: 'applications-missing',
+      status: 'warning',
+      category: 'applications',
+      message: 'No application layouts were detected',
+      evidence: analysis.repositoryStructure.topLevelProjects.map((project) => `${project.name}:${project.role}`),
+    });
+  }
+
+  const missingEndpoints = analysis.endpointCatalog.filter((endpoint) => !graphNodeNames.has(`${endpoint.method} ${endpoint.path}`));
+  checks.push({
+    id: 'endpoint-coverage',
+    status: missingEndpoints.length ? 'warning' : 'ok',
+    category: 'endpoints',
+    message: missingEndpoints.length
+      ? `${missingEndpoints.length} endpoints are missing from the deterministic code graph`
+      : 'All detected endpoints are represented in the deterministic code graph',
+    evidence: (missingEndpoints.length ? missingEndpoints : analysis.endpointCatalog)
+      .slice(0, 20)
+      .map((endpoint) => `${endpoint.method} ${endpoint.path}`),
+  });
+
+  const missingRepositories = analysis.persistenceSummary.repositories.filter((repository) => !graphNodeNames.has(repository.name));
+  checks.push({
+    id: 'persistence-coverage',
+    status: missingRepositories.length ? 'warning' : 'ok',
+    category: 'persistence',
+    message: missingRepositories.length
+      ? `${missingRepositories.length} repositories are missing from the deterministic code graph`
+      : 'All repository summaries are represented in the deterministic code graph',
+    evidence: (missingRepositories.length ? missingRepositories : analysis.persistenceSummary.repositories)
+      .slice(0, 20)
+      .map((repository) => repository.name),
+  });
+
+  const missingServiceRefs = analysis.serviceSummary.executionServices
+    .filter((service) => !graphNodeNames.has(service.name))
+    .map((service) => service.name);
+  checks.push({
+    id: 'service-coverage',
+    status: missingServiceRefs.length ? 'warning' : 'ok',
+    category: 'layers',
+    message: missingServiceRefs.length
+      ? `${missingServiceRefs.length} execution services are missing from the deterministic code graph`
+      : 'Execution services are represented in the deterministic code graph',
+    evidence: (missingServiceRefs.length ? missingServiceRefs : analysis.serviceSummary.executionServices.map((service) => service.name)).slice(0, 20),
+  });
+
+  const unresolvedFlowTargets = analysis.flowSummary.triggers
+    .filter((trigger) => !graphNodeNames.has(trigger.target))
+    .map((trigger) => `${trigger.kind}:${trigger.source} -> ${trigger.target}`);
+  checks.push({
+    id: 'flow-target-resolution',
+    status: unresolvedFlowTargets.length ? 'warning' : 'ok',
+    category: 'flows',
+    message: unresolvedFlowTargets.length
+      ? `${unresolvedFlowTargets.length} flow trigger targets were not found as graph nodes`
+      : 'Flow trigger targets resolve to deterministic graph nodes',
+    evidence: (unresolvedFlowTargets.length ? unresolvedFlowTargets : analysis.flowSummary.triggers.map((trigger) => `${trigger.kind}:${trigger.source} -> ${trigger.target}`)).slice(0, 20),
+  });
+
+  const externalSystems = unique(collectExternalDependenciesForVerification(analysis));
+  const missingExternalRefs = externalSystems.filter((system) => !graphNodeNames.has(system));
+  checks.push({
+    id: 'external-system-coverage',
+    status: missingExternalRefs.length ? 'warning' : 'ok',
+    category: 'externals',
+    message: missingExternalRefs.length
+      ? `${missingExternalRefs.length} inferred external systems are missing from the deterministic code graph`
+      : 'External systems inferred from analysis are represented in the deterministic code graph',
+    evidence: (missingExternalRefs.length ? missingExternalRefs : externalSystems).slice(0, 20),
+  });
+
+  const astRefsMissingFromGraph = analysis.javaAstCatalog
+    .slice(0, 50)
+    .map((astFile) => `file://${relativePath(astFile.file, analysis.projectRoot)}`)
+    .filter((sourceRef) => !graphNodeRefs.has(sourceRef));
+  checks.push({
+    id: 'ast-file-reference-sampling',
+    status: astRefsMissingFromGraph.length > 10 ? 'warning' : 'ok',
+    category: 'layers',
+    message: astRefsMissingFromGraph.length
+      ? `Sampled AST files show ${astRefsMissingFromGraph.length} source references not directly represented as graph nodes`
+      : 'Sampled AST file references are represented in the deterministic code graph',
+    evidence: astRefsMissingFromGraph.slice(0, 20),
+  });
+
+  const jqassistantPackages = analysis.jqassistant?.graphs?.packageGraph.packages ?? [];
+  checks.push({
+    id: 'jqassistant-package-capture',
+    status: jqassistantPackages.length ? 'ok' : 'warning',
+    category: 'applications',
+    message: jqassistantPackages.length
+      ? `jQAssistant captured ${jqassistantPackages.length} Java packages for deterministic reuse`
+      : 'jQAssistant did not provide reusable package graph data',
+    evidence: jqassistantPackages.slice(0, 20),
+  });
+
+  return {
+    schemaVersion: '1.0',
+    generatedAt: new Date().toISOString(),
+    projectName: analysis.projectName,
+    projectRoot: analysis.projectRoot,
+    summary: {
+      applicationCount: analysis.applicationLayouts.length,
+      endpointCount: analysis.endpointCatalog.length,
+      graphNodeCount: codeGraph.nodes.length,
+      graphEdgeCount: codeGraph.edges.length,
+      issueCount: checks.filter((check) => check.status !== 'ok').length,
+    },
+    checks,
+  };
+}
+
+function buildGraphVerificationSlicesArtifact(
+  analysis: SourceProjectAnalysis,
+  verification: GraphVerificationArtifact,
+): GraphVerificationSlicesArtifact {
+  const categories: Array<GraphVerificationSlicesArtifact['slices'][number]['category']> = [
+    'api-routes',
+    'scheduler-flows',
+    'listener-flows',
+    'persistence-heavy',
+  ];
+  const categoryChecks = new Map(categories.map((category) => [category, [] as GraphVerificationArtifact['checks']]));
+  for (const check of verification.checks) {
+    if (check.category === 'endpoints' || check.category === 'applications') {
+      categoryChecks.get('api-routes')?.push(check);
+    }
+    if (check.category === 'flows') {
+      categoryChecks.get('scheduler-flows')?.push(check);
+      categoryChecks.get('listener-flows')?.push(check);
+    }
+    if (check.category === 'persistence') {
+      categoryChecks.get('persistence-heavy')?.push(check);
+    }
+  }
+  if (analysis.serviceSummary.scheduledJobs.length) {
+    categoryChecks.get('scheduler-flows')?.push({
+      id: 'scheduled-job-presence',
+      status: 'ok',
+      category: 'flows',
+      message: `${analysis.serviceSummary.scheduledJobs.length} scheduled jobs detected for verification slicing`,
+      evidence: analysis.serviceSummary.scheduledJobs.map((job) => `${job.name}: ${job.schedule}`),
+    });
+  }
+  if (analysis.serviceSummary.asyncListeners.length) {
+    categoryChecks.get('listener-flows')?.push({
+      id: 'listener-presence',
+      status: 'ok',
+      category: 'flows',
+      message: `${analysis.serviceSummary.asyncListeners.length} async listeners detected for verification slicing`,
+      evidence: analysis.serviceSummary.asyncListeners.map((listener) => listener.name),
+    });
+  }
+  return {
+    schemaVersion: '1.0',
+    generatedAt: new Date().toISOString(),
+    projectName: analysis.projectName,
+    projectRoot: analysis.projectRoot,
+    slices: categories.map((category) => ({
+      id: category,
+      label: category.replace(/-/g, ' '),
+      category,
+      issueCount: (categoryChecks.get(category) ?? []).filter((check) => check.status !== 'ok').length,
+      checks: categoryChecks.get(category) ?? [],
+    })),
+  };
+}
+
+function buildAiGraphArtifact(
+  analysis: SourceProjectAnalysis,
+  astIndex: AstIndexArtifact,
+  jqassistantSupport: JqassistantSupportArtifact,
+  supportGraph: SupportGraphArtifact,
+  verification: GraphVerificationArtifact,
+  flowMap: Record<string, unknown>,
+  enrichment: EnrichmentOutput,
+): AiGraphArtifact {
+  const nodes: AiGraphArtifact['nodes'] = [];
+  for (const application of analysis.applicationLayouts) {
+    nodes.push({
+      id: `module-summary:${application.appRoot}`,
+      applicationId: application.appRoot,
+      kind: 'module-summary',
+      title: `${application.appRoot} application`,
+      summary: `${application.role}; modules: ${(application.moduleRoots.length ? application.moduleRoots : application.internalModules.map((module) => module.name)).slice(0, 8).join(', ') || 'none'}`,
+      evidence: [application.appRoot],
+    });
+  }
+  for (const layerNode of supportGraph.nodes.filter((node) => node.type === 'layer')) {
+    nodes.push({
+      id: `layer-summary:${layerNode.applicationId ?? 'app'}:${layerNode.name}`,
+      applicationId: layerNode.applicationId,
+      layer: layerNode.name,
+      kind: 'layer-summary',
+      title: `${layerNode.name} layer`,
+      summary: layerNode.items.slice(0, 8).join('; ') || 'no summarized items',
+      evidence: layerNode.items.slice(0, 8),
+    });
+  }
+  for (const type of astIndex.types.slice(0, 120)) {
+    nodes.push({
+      id: `class-summary:${type.id}`,
+      applicationId: type.applicationHint,
+      layer: type.layerHint,
+      kind: 'class-summary',
+      title: type.name,
+      summary: `${type.kind}${type.layerHint ? ` in ${type.layerHint}` : ''}; methods: ${type.methods.slice(0, 5).map((method) => method.name).join(', ') || 'none'}`,
+      evidence: [type.file, ...(type.annotations.slice(0, 4))],
+    });
+  }
+  const flows = (flowMap.flows as Array<Record<string, unknown>> | undefined) ?? [];
+  for (const flow of flows.slice(0, 48)) {
+    nodes.push({
+      id: `flow-note:${slug(String(flow.name ?? 'flow'))}`,
+      applicationId: inferApplicationFromText(String(flow.name ?? ''), analysis),
+      kind: 'flow-note',
+      title: String(flow.name ?? 'flow'),
+      summary: String(flow.summary ?? ''),
+      evidence: ((flow.steps as string[] | undefined) ?? []).slice(0, 8),
+    });
+  }
+  for (const check of verification.checks.filter((item) => item.status !== 'ok').slice(0, 40)) {
+    nodes.push({
+      id: `validation-note:${check.id}`,
+      kind: 'validation-note',
+      title: check.id,
+      summary: check.message,
+      evidence: check.evidence.slice(0, 6),
+    });
+  }
+  for (const task of enrichment.tasks.slice(0, 20)) {
+    for (const candidate of task.candidates.slice(0, 6)) {
+      nodes.push({
+        id: `enrichment:${task.task}:${candidate.targetId}`,
+        kind: 'class-summary',
+        title: candidate.title ?? `${task.task}:${candidate.targetId}`,
+        summary: candidate.summary,
+        evidence: candidate.evidence.map((item) => `${item.kind}:${item.ref}`),
+      });
+    }
+  }
+  return {
+    schemaVersion: '1.0',
+    generatedAt: new Date().toISOString(),
+    projectName: analysis.projectName,
+    projectRoot: analysis.projectRoot,
+    sourcePriority: ['support-graph', 'jqassistant-graph', 'ast-index', 'verification', 'enrichment'],
+    nodes: uniqueBy(nodes, (node) => node.id),
+  };
+}
+
+function buildLayerGraphsArtifact(supportGraph: SupportGraphArtifact): LayerGraphsArtifact {
+  const groups = new Map<string, Map<string, string[]>>();
+  for (const node of supportGraph.nodes.filter((item) => item.type === 'layer')) {
+    const layer = node.name;
+    const applicationId = node.applicationId ?? 'application';
+    const layerBucket = groups.get(layer) ?? new Map<string, string[]>();
+    layerBucket.set(applicationId, mergeCardItems(layerBucket.get(applicationId), node.items));
+    groups.set(layer, layerBucket);
+  }
+  return {
+    schemaVersion: '1.0',
+    generatedAt: new Date().toISOString(),
+    projectName: supportGraph.projectName,
+    projectRoot: supportGraph.projectRoot,
+    layers: [...groups.entries()].map(([layer, applications]) => ({
+      layer,
+      applications: [...applications.entries()].map(([applicationId, items]) => ({
+        applicationId,
+        items,
+      })),
+    })),
+  };
+}
+
+function buildApplicationLayerGroups(
+  analysis: SourceProjectAnalysis,
+  applicationName: string,
+): Record<string, string[]> {
+  const backendLike = /backend/i.test(applicationName);
+  const notificationLike = /notification/i.test(applicationName);
+  return {
+    api: filterApplicationScopedItems(analysis.apiSurface.families.map((family) => `${family.family} (${family.endpointCount} endpoints)`), applicationName),
+    app: filterApplicationScopedItems([
+      ...(analysis.appRuntime.applicationEntryPoint ? [analysis.appRuntime.applicationEntryPoint] : []),
+      ...analysis.appRuntime.runtimeFeatures,
+    ], applicationName),
+    common: backendLike
+      ? [
+          ...analysis.commonSummary.crossCuttingComponents.map((item) => `${item.name} — ${item.role}`),
+          ...analysis.commonSummary.eventTypes.map((item) => `${item.name} — ${item.purpose}`),
+        ]
+      : [],
+    persistence: filterApplicationScopedItems([
+      ...analysis.persistenceSummary.repositories.map((item) => `${item.name} — ${item.purpose}`),
+      ...analysis.persistenceSummary.entityNames,
+    ], applicationName),
+    service: filterApplicationScopedItems([
+      ...analysis.serviceSummary.executionServices.map((item) => `${item.name} — ${item.purpose}`),
+      ...analysis.serviceSummary.clientImplementations.map((item) => `${item.name} — ${item.purpose}`),
+      ...analysis.serviceSummary.scheduledJobs.map((item) => `${item.name} — ${item.purpose}`),
+      ...analysis.serviceSummary.asyncListeners.map((item) => `${item.name} — ${item.purpose}`),
+    ], applicationName),
+    web: filterApplicationScopedItems([
+      ...collectValidationBoundaryNames(analysis),
+      ...collectExceptionHandlerNames(analysis),
+      ...collectWebConfigurationNames(analysis),
+    ], applicationName),
+    security: filterApplicationScopedItems([
+      ...analysis.commonSummary.securityComponents,
+      ...analysis.commonSummary.securityDetails,
+      ...analysis.appRuntime.securityConfigurations,
+    ], applicationName),
+    notification: notificationLike
+      ? filterApplicationScopedItems([
+          ...analysis.serviceSummary.asyncListeners.map((item) => `${item.name} — ${item.purpose}`),
+          ...analysis.appRuntime.externalDependencies,
+        ], applicationName)
+      : [],
+  };
+}
+
+function filterApplicationScopedItems(items: string[], applicationName: string): string[] {
+  const normalizedApplication = applicationName.toLowerCase();
+  const filtered = items.filter((item) => {
+    const text = item.toLowerCase();
+    if (normalizedApplication.includes('notification')) {
+      return text.includes('notification') || text.includes('redis') || text.includes('ws') || text.includes('websocket');
+    }
+    if (normalizedApplication.includes('backend')) {
+      return !text.includes('notification');
+    }
+    return true;
+  });
+  return unique(filtered);
+}
+
+function collectExternalDependenciesForVerification(analysis: SourceProjectAnalysis): string[] {
+  return unique([
+    ...analysis.appRuntime.externalDependencies,
+    ...analysis.serviceSummary.mailCapabilities.config,
+    ...analysis.serviceSummary.storageCapabilities.summary,
+    ...(analysis.commonSummary.eventFlow ? [analysis.commonSummary.eventFlow.transport] : []),
+  ]);
+}
+
+function buildTypeDependencyIndex(
+  jqassistantSupport: JqassistantSupportArtifact,
+): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const dependency of jqassistantSupport.graphs?.typeGraph.dependencies ?? []) {
+    const fromSimple = simpleNameOfType(dependency.fromType);
+    const toSimple = simpleNameOfType(dependency.toType);
+    const bucket = index.get(fromSimple) ?? new Set<string>();
+    bucket.add(toSimple);
+    index.set(fromSimple, bucket);
+  }
+  return index;
+}
+
+function buildSupportLayerIndex(
+  supportGraph: SupportGraphArtifact,
+): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  for (const node of supportGraph.nodes.filter((item) => item.type === 'layer')) {
+    index.set(`${node.applicationId ?? 'application'}:${node.name}`, node.items);
+  }
+  return index;
+}
+
+function inferRepositoryCandidatesFromService(
+  serviceName: string,
+  operationName: string,
+  analysis: SourceProjectAnalysis,
+  astIndex: AstIndexArtifact,
+  typeDependencyIndex: Map<string, Set<string>>,
+  supportLayerIndex: Map<string, string[]>,
+): string[] {
+  const repositories = analysis.persistenceSummary.repositories.map((item) => item.name);
+  const directDeps = [...(typeDependencyIndex.get(serviceName) ?? new Set<string>())];
+  const byDependency = repositories.filter((repository) => directDeps.some((dependency) => repository.includes(dependency) || dependency.includes(repository.replace(/Repository$/, ''))));
+  if (byDependency.length) return unique(byDependency);
+
+  const serviceType = astIndex.types.find((type) => type.name === serviceName);
+  const app = serviceType?.applicationHint ?? 'event-backend';
+  const supportItems = supportLayerIndex.get(`${app}:persistence`) ?? [];
+  const bySupport = repositories.filter((repository) => supportItems.some((item) => item.includes(repository)));
+  if (bySupport.length) return unique(bySupport);
+
+  const words = `${serviceName} ${operationName}`.toLowerCase();
+  return repositories.filter((repository) => {
+    const normalizedRepository = repository.toLowerCase();
+    return words.includes(normalizedRepository.replace(/repository$/, ''))
+      || normalizedRepository.replace(/repository$/, '').split(/(?=[A-Z])|_/).some((part) => part && words.includes(part.toLowerCase()));
+  });
+}
+
+function simpleNameOfType(fqn: string): string {
+  const index = fqn.lastIndexOf('.');
+  return index >= 0 ? fqn.slice(index + 1) : fqn;
+}
+
+function summarizePackagesForApplication(
+  analysis: SourceProjectAnalysis,
+  applicationName: string,
+): string[] {
+  const allPackages = analysis.jqassistant?.graphs?.packageGraph.packages
+    ?? analysis.javaAstCatalog.map((astFile) => astFile.packageName).filter((value): value is string => Boolean(value));
+  const normalizedApplication = applicationName.toLowerCase();
+  const filtered = allPackages.filter((packageName) => {
+    const normalized = packageName.toLowerCase();
+    if (normalizedApplication.includes('notification')) {
+      return normalized.includes('notification');
+    }
+    if (normalizedApplication.includes('backend')) {
+      return !normalized.includes('notification');
+    }
+    return true;
+  });
+  return unique(filtered.map((packageName) => packageName.split('.').slice(0, 4).join('.'))).sort((left, right) => left.localeCompare(right));
+}
+
+function groupSemanticFlowsByApplication(analysis: SourceProjectAnalysis): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+  for (const flow of analysis.flowSummary.flows) {
+    const applicationName = inferApplicationFromText(flow.summary, analysis) ?? inferApplicationFromText(flow.name, analysis) ?? 'application';
+    const bucket = groups.get(applicationName) ?? [];
+    bucket.push(`${flow.trigger} -> ${flow.name}`);
+    groups.set(applicationName, bucket);
+  }
+  return groups;
+}
+
+function inferApplicationFromText(text: string | undefined, analysis: SourceProjectAnalysis): string | undefined {
+  if (!text) return undefined;
+  const normalized = text.toLowerCase();
+  for (const layout of analysis.applicationLayouts) {
+    const name = basename(layout.appRoot);
+    if (normalized.includes(name.toLowerCase())) return name;
+  }
+  if (normalized.includes('notification')) return 'event-notification';
+  if (normalized.includes('backend')) return 'event-backend';
+  return undefined;
+}
+
+function findApplicationRootByName(analysis: SourceProjectAnalysis, applicationName: string): string | undefined {
+  return analysis.applicationLayouts.find((layout) => basename(layout.appRoot) === applicationName)?.appRoot;
+}
+
+function inferApplicationFromFile(file: string, analysis: SourceProjectAnalysis): string | undefined {
+  const normalizedFile = file.toLowerCase();
+  for (const layout of analysis.applicationLayouts) {
+    if (normalizedFile.includes(layout.appRoot.toLowerCase())) {
+      return basename(layout.appRoot);
+    }
+  }
+  if (normalizedFile.includes('event-notification')) return 'event-notification';
+  if (normalizedFile.includes('event-backend')) return 'event-backend';
+  return undefined;
+}
+
+function inferLayerFromPackageOrFile(packageName?: string, file?: string): string | undefined {
+  const text = `${packageName ?? ''} ${file ?? ''}`.toLowerCase();
+  const layers = ['api', 'web', 'service', 'persistence', 'repository', 'common', 'security', 'app', 'config', 'listener', 'job', 'scheduler', 'domain', 'dto', 'controller', 'ws', 'redis'];
+  return layers.find((layer) => text.includes(layer));
+}
+
+function collectValidationBoundaryNames(analysis: SourceProjectAnalysis): string[] {
+  const result: string[] = [];
+  for (const astFile of analysis.javaAstCatalog ?? []) {
+    for (const type of astFile.types) {
+      const typeText = `${type.name} ${astFile.packageName ?? ''} ${astFile.file}`.toLowerCase();
+      const hasValidatedType = type.annotations.some((annotation) => /Validated|Valid/i.test(annotation));
+      const hasMethodValidation = type.methods.some((method) => method.annotations.some((annotation) => /Valid/i.test(annotation)));
+      if (hasValidatedType || hasMethodValidation || /validator|validation/.test(typeText)) {
+        result.push(type.name);
+      }
+    }
+  }
+  return unique(result);
+}
+
+function collectExceptionHandlerNames(analysis: SourceProjectAnalysis): string[] {
+  const result: string[] = [];
+  for (const astFile of analysis.javaAstCatalog ?? []) {
+    const inErrorHandlerPackage = /\/errorhandler\//i.test(astFile.file) || /\.errorhandler(?:\.|$)/i.test(astFile.packageName ?? '');
+    for (const type of astFile.types) {
+      const hasAdvice = type.annotations.some((annotation) => /RestControllerAdvice|ControllerAdvice/i.test(annotation));
+      const hasExceptionHandler = type.methods.some((method) => method.annotations.some((annotation) => /ExceptionHandler/i.test(annotation)));
+      if ((hasAdvice || hasExceptionHandler || inErrorHandlerPackage) && /Handler|Advice/i.test(type.name)) {
+        result.push(type.name);
+      }
+    }
+  }
+  return unique(result);
+}
+
+function collectWebConfigurationNames(analysis: SourceProjectAnalysis): string[] {
+  const result: string[] = [];
+  for (const astFile of analysis.javaAstCatalog ?? []) {
+    const packageName = astFile.packageName ?? '';
+    for (const type of astFile.types) {
+      const isWebConfig = /\/web\/config\//i.test(astFile.file)
+        || /\.web\.config(?:\.|$)/i.test(packageName)
+        || (type.annotations.some((annotation) => /Configuration/i.test(annotation)) && /cors|web/.test(`${type.name} ${astFile.file}`.toLowerCase()));
+      if (isWebConfig) {
+        result.push(type.name);
+      }
+    }
+  }
+  return unique(result);
+}
+
+function slug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
 function buildState(analysis: SourceProjectAnalysis, snapshot: SourceProjectSnapshot, createdSemantic: boolean) {
   return {
     projectName: analysis.projectName,
@@ -5141,6 +6457,7 @@ function buildState(analysis: SourceProjectAnalysis, snapshot: SourceProjectSnap
     previewPath: 'source.preview.json',
     componentMapPath: 'source.component-map.json',
     flowMapPath: 'source.flow-map.json',
+    jqassistantPath: 'source.jqassistant.json',
     enrichmentPath: '.ai-native/enrichment/latest.json',
     enrichmentSchemaPath: '.ai-native/enrichment/enrichment-output.schema.json',
     reviewDossierPath: '.ai-native/enrichment/review-dossier.json',
@@ -5149,8 +6466,15 @@ function buildState(analysis: SourceProjectAnalysis, snapshot: SourceProjectSnap
     analysisMdPath: 'source.analysis.md',
     snapshotPath: 'source.snapshot.json',
     astPath: 'source.ast.json',
+    astIndexPath: 'source.ast-index.json',
     codeKnowledgeGraphPath: 'source.codegraph.json',
     codeKnowledgeGraphMdPath: 'source.codegraph.md',
+    jqassistantSupportPath: 'source.jqassistant-graph.json',
+    supportGraphPath: 'source.support-graph.json',
+    graphVerificationPath: 'source.graph-verification.json',
+    graphVerificationSlicesPath: 'source.graph-verification-slices.json',
+    aiGraphPath: 'source.ai-graph.json',
+    layerGraphsPath: 'source.layer-graphs.json',
     semanticCreatedFromScan: createdSemantic,
     counts: analysis.counts,
     layers: analysis.layers,
@@ -5175,14 +6499,22 @@ function renderProjectReadme(analysis: SourceProjectAnalysis, snapshot: SourcePr
     `- source.analysis.md\n` +
     `- source.snapshot.json\n` +
     `- source.ast.json\n` +
+    `- source.ast-index.json\n` +
     `- source.semantic.json\n` +
     `- source.preview.json\n` +
     `- source.component-map.json\n` +
     `- source.flow-map.json\n` +
+    `- source.jqassistant.json\n` +
+    `- source.jqassistant-graph.json\n` +
     `- .ai-native/enrichment/latest.json\n` +
     `- .ai-native/enrichment/enrichment-output.schema.json\n` +
     `- source.codegraph.json\n` +
     `- source.codegraph.md\n` +
+    `- source.support-graph.json\n` +
+    `- source.graph-verification.json\n` +
+    `- source.graph-verification-slices.json\n` +
+    `- source.ai-graph.json\n` +
+    `- source.layer-graphs.json\n` +
     `- source.recon.json\n` +
     `- source.recon.prompt.md\n` +
     `- source.database.json\n` +
@@ -5200,7 +6532,7 @@ function renderProjectReadme(analysis: SourceProjectAnalysis, snapshot: SourcePr
     `- reconnaissance prompt: handled by the MCP-driven plugin flow\n\n` +
     `## How to use this state\n` +
     `1. Edit \`source.semantic.md\` to refine the human-readable system description.\n` +
-    `2. Use \`source.preview.json\`, \`source.component-map.json\`, \`source.flow-map.json\`, and \`.ai-native/enrichment/latest.json\` as machine support artifacts for preview and agent assembly.\n` +
+    `2. Use \`source.ast-index.json\`, \`source.jqassistant-graph.json\`, \`source.support-graph.json\`, \`source.graph-verification.json\`, \`source.graph-verification-slices.json\`, \`source.ai-graph.json\`, \`source.layer-graphs.json\`, \`source.preview.json\`, \`source.component-map.json\`, \`source.flow-map.json\`, and \`.ai-native/enrichment/latest.json\` as machine support artifacts for preview and agent assembly.\n` +
     `3. Re-run the source-to-semantic import when the source project changes.\n` +
     `4. Use the graph and validator to see what the semantic model still misses.\n\n` +
     `## Current snapshot\n` +
@@ -5212,9 +6544,19 @@ function renderProjectReadme(analysis: SourceProjectAnalysis, snapshot: SourcePr
 function buildComponentMapArtifact(
   analysis: SourceProjectAnalysis,
   preview: ReturnType<typeof buildGraphPreviewMetadata>,
+  supportGraph: SupportGraphArtifact,
+  astIndex: AstIndexArtifact,
+  jqassistantSupport: JqassistantSupportArtifact,
 ): Record<string, unknown> {
   return {
+    schemaVersion: '2.0',
     projectName: analysis.projectName,
+    sourcePriority: ['support-graph', 'jqassistant-graph', 'ast-index', 'analysis'],
+    support: {
+      supportGraphNodeCount: supportGraph.nodes.length,
+      astTypeCount: astIndex.summary.typeCount,
+      jqassistantPackageCount: jqassistantSupport.summary.packageCount ?? 0,
+    },
     applications: preview.applicationsDetailed,
   };
 }
@@ -5222,10 +6564,13 @@ function buildComponentMapArtifact(
 function buildFlowMapArtifact(
   analysis: SourceProjectAnalysis,
   codeGraph: CodeKnowledgeGraph,
+  astIndex: AstIndexArtifact,
+  jqassistantSupport: JqassistantSupportArtifact,
+  supportGraph: SupportGraphArtifact,
   flowCandidateOutput?: LocalAgentOutput,
 ): Record<string, unknown> {
-  const entrypoints = discoverFlowEntrypoints(analysis);
-  const traces = buildDeterministicFlowTraces(analysis, codeGraph, entrypoints);
+  const entrypoints = discoverFlowEntrypoints(analysis, astIndex);
+  const traces = buildDeterministicFlowTraces(analysis, codeGraph, astIndex, jqassistantSupport, supportGraph, entrypoints);
   const clusters = clusterFlowTraces(entrypoints, traces);
   const semanticFlows = interpretFlowSemantics(analysis, entrypoints, traces, clusters, flowCandidateOutput);
   const validation = validateStructuredFlows(codeGraph, traces, semanticFlows);
@@ -5234,6 +6579,14 @@ function buildFlowMapArtifact(
     schemaVersion: '2.0',
     generatedAt: new Date().toISOString(),
     projectName: analysis.projectName,
+    sourcePriority: ['support-graph', 'jqassistant-graph', 'ast-index', 'codegraph', 'analysis'],
+    support: {
+      astEndpoints: astIndex.summary.endpointCount,
+      jqassistantPackages: jqassistantSupport.summary.packageCount ?? 0,
+      jqassistantTypeDependencies: jqassistantSupport.summary.typeDependencyCount ?? 0,
+      supportGraphNodes: supportGraph.nodes.length,
+      supportGraphEdges: supportGraph.edges.length,
+    },
     applications: analysis.applicationLayouts.map((layout) => layout.appRoot),
     stages: {
       entrypointDiscovery: {
@@ -5286,9 +6639,10 @@ function buildFlowMapArtifact(
   };
 }
 
-function discoverFlowEntrypoints(analysis: SourceProjectAnalysis): FlowMapEntrypoint[] {
+function discoverFlowEntrypoints(analysis: SourceProjectAnalysis, astIndex: AstIndexArtifact): FlowMapEntrypoint[] {
   const results: FlowMapEntrypoint[] = [];
   for (const endpoint of analysis.endpointCatalog) {
+    const astMatch = astIndex.endpoints.find((item) => item.method === endpoint.method && item.path === endpoint.path);
     const kind = /webhook/i.test(endpoint.path)
       ? 'webhook-endpoint'
       : /callback/i.test(endpoint.path)
@@ -5303,7 +6657,7 @@ function discoverFlowEntrypoints(analysis: SourceProjectAnalysis): FlowMapEntryp
       target: endpoint.typeName ?? pathBase(endpoint.file),
       sourceRef: endpoint.file,
       nodeHints: [endpoint.typeName ?? pathBase(endpoint.file)],
-      notes: [endpoint.source],
+      notes: [endpoint.source, ...(astMatch ? [`ast:${astMatch.typeName ?? astMatch.id}`] : [])],
       evidence: [{
         kind: 'endpoint',
         ref: endpoint.file,
@@ -5402,8 +6756,13 @@ function discoverFlowEntrypoints(analysis: SourceProjectAnalysis): FlowMapEntryp
 function buildDeterministicFlowTraces(
   analysis: SourceProjectAnalysis,
   codeGraph: CodeKnowledgeGraph,
+  astIndex: AstIndexArtifact,
+  jqassistantSupport: JqassistantSupportArtifact,
+  supportGraph: SupportGraphArtifact,
   entrypoints: FlowMapEntrypoint[],
 ): FlowTraceRecord[] {
+  const supportLayerIndex = buildSupportLayerIndex(supportGraph);
+  const typeDependencyIndex = buildTypeDependencyIndex(jqassistantSupport);
   return entrypoints.map((entrypoint) => {
     const candidates = matchServiceCandidatesForEntrypoint(entrypoint, analysis.serviceSummary.executionServices);
     const primary = candidates[0];
@@ -5430,6 +6789,14 @@ function buildDeterministicFlowTraces(
           kind: 'service-summary',
           ref: primary.service.name,
           detail: `collaborator ${collaborator} used by ${primary.operation.name}`,
+        }]));
+      }
+      const repositoryCandidates = inferRepositoryCandidatesFromService(primary.service.name, primary.operation.name, analysis, astIndex, typeDependencyIndex, supportLayerIndex);
+      for (const repositoryName of repositoryCandidates.slice(0, 3)) {
+        steps.push(buildTraceStep(codeGraph, repositoryName, 'repository', `repository:${repositoryName}`, [{
+          kind: 'inference',
+          ref: primary.service.name,
+          detail: `repository candidate inferred for ${primary.operation.name}`,
         }]));
       }
     } else {
@@ -6010,17 +7377,27 @@ function buildSemanticPolishingPrompt(
   preview: ReturnType<typeof buildGraphPreviewMetadata>,
   componentMap: Record<string, unknown>,
   flowMap: Record<string, unknown>,
+  supportGraph: SupportGraphArtifact,
+  astIndex: AstIndexArtifact,
+  jqassistantSupport: JqassistantSupportArtifact,
+  verification: GraphVerificationArtifact,
 ): string {
   return buildLocalAgentPrompt('semantic-polishing-agent', [
     'Improve readability of the semantic markdown without introducing new facts.',
+    'Use support-graph, jqassistant-graph, ast-index, flow-map, and verification artifacts as the primary evidence source.',
     'Preserve section structure and prefer minimal markdown patches over rewrites.',
     'Return { "records": [...] } where each record contains targetFile, patchType, summary and patch.',
   ], {
     projectName,
+    sourcePriority: ['support-graph', 'jqassistant-graph', 'ast-index', 'flow-map', 'component-map', 'preview'],
     semanticMarkdown,
     preview,
     componentMap,
     flowMap,
+    supportGraph,
+    astIndexSummary: astIndex.summary,
+    jqassistantSummary: jqassistantSupport.summary,
+    verification,
   });
 }
 

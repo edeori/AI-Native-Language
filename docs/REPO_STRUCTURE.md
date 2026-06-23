@@ -39,18 +39,17 @@ The goal is to keep the semantic model, tooling contracts, examples, and impleme
 
 ### `mcp-servers/`
 
-- semantic core server contract
-- validation server contract
-- compiler / generator server contract
-- optional cache and legacy introspection server contracts
+- semantic core server implementation
+- validation server implementation
+- compiler / generator server implementation
+- Java parser implementation
+- `jqassistant` integration server
+- shared deterministic and artifact utilities
 
 ### `local-runners/`
 
-- deterministic local tasks
-- parser runner
-- validator runner
-- graph normalizer runner
-- smoke test runner
+- optional local helper area
+- not the primary architecture focus anymore compared to MCP-driven execution
 
 ### `vscode-extension/`
 
@@ -81,3 +80,15 @@ The goal is to keep the semantic model, tooling contracts, examples, and impleme
 - The generated artifacts should be derivable from the committed source.
 - The toolchain should be provider-neutral and cloneable by other teams.
 
+## Current note
+
+The repository is now evolving toward a deterministic-first artifact pipeline where:
+
+- AST outputs
+- `jqassistant` outputs
+- deterministic graphs
+- AI-facing support artifacts
+
+are central to later AI-assisted implementation work.
+
+That means the repo is no longer only about semantic markdown and generated graph output.

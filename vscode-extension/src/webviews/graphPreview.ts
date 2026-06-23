@@ -1,3 +1,5 @@
+import * as path from 'node:path';
+import { promises as fs } from 'node:fs';
 import * as vscode from 'vscode';
 
 type GraphNode = {
@@ -14,23 +16,9 @@ type GraphEdge = {
   type: string;
 };
 
-interface DiagramItem {
-  name: string;
-  detail?: string;
-  sourceRef?: string;
-}
-
-interface DiagramLayer {
-  title: string;
-  description?: string;
-  accent?: string;
-  items: DiagramItem[];
-}
-
 interface DiagramClassification {
   title?: string;
   summary?: string;
-  layers: DiagramLayer[];
   databaseSchema?: {
     title?: string;
     summary?: string;
@@ -126,80 +114,143 @@ type CanonicalGraph = {
   };
 };
 
-type Region = 'center' | 'north' | 'west' | 'east' | 'south';
-
-interface LayoutNode extends GraphNode {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  region: Region;
-  fill: string;
-  accent: string;
+interface AstIndexArtifactLite {
+  summary?: {
+    javaFileCount?: number;
+    packageCount?: number;
+    typeCount?: number;
+    methodCount?: number;
+    fieldCount?: number;
+    endpointCount?: number;
+    annotationCount?: number;
+  };
+  packages?: Array<{
+    packageName: string;
+    fileCount: number;
+    typeCount: number;
+    topImports?: string[];
+  }>;
+  types?: Array<{
+    name: string;
+    applicationHint?: string;
+    layerHint?: string;
+    annotations?: string[];
+    methods?: Array<{ name: string }>;
+  }>;
+  endpoints?: Array<{
+    method: string;
+    path: string;
+    typeName?: string;
+  }>;
+  annotations?: Array<{
+    name: string;
+    occurrences: number;
+  }>;
 }
 
-interface LayoutEdge {
-  from: LayoutNode;
-  to: LayoutNode;
-  type: string;
-  labelX: number;
-  labelY: number;
-  path: string;
-  color: string;
+interface JqassistantSupportArtifactLite {
+  status?: string;
+  summary?: {
+    applicationCount?: number;
+    moduleCount?: number;
+    technologyCount?: number;
+    packageCount?: number;
+    typeDependencyCount?: number;
+    technologies?: string[];
+  };
+  applications?: Array<{
+    name: string;
+    role: string;
+    multiModule: boolean;
+    moduleRoots: string[];
+    internalModules: Array<{
+      name: string;
+      purpose: string;
+      source: string;
+      pathHints: string[];
+    }>;
+  }>;
+  runtimeLayers?: Array<{ name: string; role: string }>;
+  supportModules?: Array<{ name: string; role: string }>;
+  graphs?: {
+    projectGraph?: {
+      projects?: Array<{
+        artifactId: string;
+        groupId?: string;
+        name?: string;
+      }>;
+      modules?: Array<{
+        parentArtifactId: string;
+        moduleName: string;
+      }>;
+    };
+    packageGraph?: {
+      packages?: string[];
+      relations?: Array<{
+        fromPackage: string;
+        toPackage: string;
+        count: number;
+      }>;
+    };
+  };
+  warnings?: string[];
 }
 
-const TYPE_ORDER = [
-  'SystemSlice',
-  'Module',
-  'Service',
-  'SecurityPolicy',
-  'Rule',
-  'Interface',
-  'IntegrationEndpoint',
-  'ExternalSystem',
-  'Dependency',
-  'Persistence',
-  'Process',
-  'Transformation',
-  'DataFlow',
-  'Monitor',
-  'Metric',
-  'Alert',
-  'Example',
-  'AcceptanceCriterion',
-];
+interface FlowMapArtifactLite {
+  support?: {
+    astEndpoints?: number;
+    jqassistantPackages?: number;
+    jqassistantTypeDependencies?: number;
+    supportGraphNodes?: number;
+    supportGraphEdges?: number;
+  };
+  triggers?: Array<{
+    kind: string;
+    name: string;
+    source: string;
+    target: string;
+    notes?: string[];
+  }>;
+  flows?: Array<{
+    name: string;
+    trigger: string;
+    summary: string;
+    steps: string[];
+    confidence?: number;
+    warnings?: string[];
+  }>;
+  stages?: {
+    entrypointDiscovery?: {
+      count?: number;
+      entrypoints?: Array<{
+        kind: string;
+        name: string;
+        trigger: string;
+        target: string;
+        notes?: string[];
+      }>;
+    };
+    flowValidation?: {
+      count?: number;
+      issues?: Array<{
+        severity: string;
+        category: string;
+        message: string;
+      }>;
+    };
+  };
+}
 
-const REGION_TITLES: Record<Region, string> = {
-  center: 'System',
-  north: 'Rules and security',
-  west: 'Entry points and dependencies',
-  east: 'Processing and runtime',
-  south: 'Examples and acceptance',
-};
-
-const TYPE_COLORS: Record<string, string> = {
-  SystemSlice: '#7c3aed',
-  Module: '#a855f7',
-  Service: '#2563eb',
-  SecurityPolicy: '#ef4444',
-  Rule: '#f97316',
-  Interface: '#0ea5e9',
-  IntegrationEndpoint: '#14b8a6',
-  ExternalSystem: '#06b6d4',
-  Dependency: '#8b5cf6',
-  Persistence: '#0891b2',
-  Process: '#22c55e',
-  Transformation: '#16a34a',
-  DataFlow: '#0f766e',
-  Monitor: '#eab308',
-  Metric: '#fb923c',
-  Alert: '#f43f5e',
-  Example: '#64748b',
-  AcceptanceCriterion: '#334155',
-};
+interface DeveloperArtifacts {
+  outputDir?: string;
+  astIndex?: AstIndexArtifactLite;
+  jqassistant?: JqassistantSupportArtifactLite;
+  flowMap?: FlowMapArtifactLite;
+}
 
 export class GraphPreviewPanel {
   private static currentPanel: GraphPreviewPanel | undefined;
+  private renderVersion = 0;
 
   static show(
     context: vscode.ExtensionContext,
@@ -254,15 +305,22 @@ export class GraphPreviewPanel {
   }
 
   private render(): void {
+    const version = ++this.renderVersion;
+    void this.renderAsync(version);
+  }
+
+  private async renderAsync(version: number): Promise<void> {
+    const developerArtifacts = await loadDeveloperArtifacts(this.graph);
+    if (version !== this.renderVersion) {
+      return;
+    }
     const cspSource = this.panel.webview.cspSource;
     const nonce = createNonce();
     const insights = deriveInsights(this.graph);
-    const diagramClassification = extractDiagramClassification(this.graph);
     const artifacts = extractArtifactSummary(this.graph);
     const graphJson = escapeHtml(JSON.stringify(this.graph, null, 2));
     const summary = `nodes=${this.graph.nodes.length}, edges=${this.graph.edges.length}`;
-    const applicationDiagram = renderApplicationDiagram(insights, diagramClassification);
-    const detailSections = renderDetailSections(insights);
+    const developerSections = renderDeveloperSections(insights, developerArtifacts);
 
     this.panel.webview.html = /* html */ `<!doctype html>
 <html lang="en">
@@ -348,224 +406,6 @@ export class GraphPreviewPanel {
       }
       .reading-order strong {
         margin-right: 8px;
-      }
-      .legend {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin: 12px 0 14px;
-      }
-      .application-diagram {
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 16px;
-        background: var(--vscode-sideBar-background);
-        padding: 14px;
-        margin-bottom: 14px;
-      }
-      .application-diagram-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 12px;
-        margin-bottom: 10px;
-      }
-      .application-diagram-title {
-        font-size: 14px;
-        font-weight: 800;
-      }
-      .application-diagram-subtitle {
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-      }
-      .application-diagram-grid {
-        display: grid;
-        grid-template-columns: minmax(180px, 1fr) 28px minmax(180px, 1fr) 28px minmax(180px, 1fr) 28px minmax(180px, 1fr);
-        gap: 10px;
-        align-items: stretch;
-      }
-      .application-layer {
-        border-radius: 14px;
-        padding: 12px;
-        border: 1px solid var(--vscode-panel-border);
-        background: var(--vscode-editor-background);
-        min-height: 340px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .application-layer.highlight {
-        background: linear-gradient(180deg, var(--vscode-editor-background), var(--vscode-editor-inactiveSelectionBackground));
-      }
-      .application-layer-title {
-        font-size: 12px;
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: var(--vscode-descriptionForeground);
-      }
-      .application-layer-subtitle {
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-        line-height: 1.35;
-      }
-      .application-layer-items {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        flex: 1 1 auto;
-      }
-      .application-layer-item {
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 12px;
-        background: var(--vscode-sideBar-background);
-        padding: 10px 12px;
-        display: grid;
-        gap: 4px;
-      }
-      .application-layer-item-title {
-        font-size: 12px;
-        font-weight: 800;
-        line-height: 1.25;
-      }
-      .application-layer-item-meta {
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-        line-height: 1.35;
-      }
-      .application-layer-divider {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--vscode-descriptionForeground);
-        font-size: 20px;
-        font-weight: 700;
-      }
-      .drawio-board {
-        display: grid;
-        gap: 12px;
-      }
-      .drawio-stage-row {
-        display: flex;
-        gap: 12px;
-        align-items: stretch;
-        overflow-x: auto;
-        padding-bottom: 2px;
-      }
-      .drawio-stage {
-        flex: 1 1 0;
-        min-width: 180px;
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 14px;
-        background: linear-gradient(180deg, var(--vscode-editor-background), var(--vscode-sideBar-background));
-        padding: 12px;
-        display: grid;
-        gap: 6px;
-      }
-      .drawio-stage-title {
-        font-size: 12px;
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-      }
-      .drawio-stage-desc {
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-        line-height: 1.35;
-      }
-      .drawio-stage-arrow {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 22px;
-        color: var(--vscode-descriptionForeground);
-        font-weight: 700;
-      }
-      .drawio-swimlanes {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 12px;
-        align-items: stretch;
-      }
-      .drawio-lane {
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 16px;
-        background: var(--vscode-editor-background);
-        display: grid;
-        grid-template-rows: auto 1fr;
-        overflow: hidden;
-        min-height: 180px;
-      }
-      .drawio-lane-header {
-        border-bottom: 1px solid var(--vscode-panel-border);
-        padding: 12px 12px 10px;
-        background: linear-gradient(180deg, color-mix(in srgb, var(--vscode-editor-background) 94%, transparent), var(--vscode-sideBar-background));
-      }
-      .drawio-lane-title {
-        font-size: 13px;
-        font-weight: 800;
-      }
-      .drawio-lane-desc {
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-        line-height: 1.35;
-        margin-top: 4px;
-      }
-      .drawio-lane-body {
-        padding: 12px;
-        display: grid;
-        gap: 8px;
-        align-content: start;
-      }
-      .drawio-box {
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 12px;
-        background: linear-gradient(180deg, var(--vscode-sideBar-background), var(--vscode-editor-background));
-        padding: 10px 12px;
-        display: grid;
-        gap: 4px;
-        box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--box-accent) 22%, transparent);
-      }
-      .drawio-box-title {
-        font-size: 12px;
-        font-weight: 800;
-        line-height: 1.25;
-      }
-      .drawio-box-detail {
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-        line-height: 1.35;
-      }
-      .application-module-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-        gap: 8px;
-      }
-      .application-module {
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 10px;
-        background: linear-gradient(180deg, var(--vscode-editor-background), var(--vscode-sideBar-background));
-        padding: 8px 10px;
-        font-size: 11px;
-        font-weight: 700;
-        line-height: 1.25;
-        box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--box-accent) 18%, transparent);
-      }
-      .drawio-buzzwords {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-      .drawio-box-tag {
-        display: inline-flex;
-        align-self: start;
-        border-radius: 999px;
-        padding: 2px 8px;
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        font-weight: 800;
-        color: var(--vscode-editor-background);
-        background: var(--box-accent);
       }
       .component-section {
         border: 1px solid var(--vscode-panel-border);
@@ -808,82 +648,6 @@ export class GraphPreviewPanel {
         font-size: 9px;
         font-weight: 800;
       }
-      .application-diagram-empty {
-        color: var(--vscode-descriptionForeground);
-        font-size: 12px;
-        line-height: 1.35;
-      }
-      .legend-group {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-right: 10px;
-      }
-      .legend-item {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 4px 8px;
-        border-radius: 999px;
-        background: var(--vscode-editor-inactiveSelectionBackground);
-        font-size: 12px;
-      }
-      .swatch {
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-      }
-      .canvas {
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 12px;
-        background: var(--vscode-editor-background);
-        overflow: auto;
-        padding: 8px;
-      }
-      .schematic {
-        display: grid;
-        gap: 14px;
-        min-width: 1180px;
-      }
-      .schematic-topbar {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-      }
-      .schematic-rail {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(220px, 1fr));
-        gap: 12px;
-        align-items: stretch;
-      }
-      .schematic-column {
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 16px;
-        background: var(--vscode-sideBar-background);
-        padding: 12px;
-        min-height: 150px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-      .schematic-top-note {
-        min-height: 92px;
-      }
-      .schematic-header {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 8px;
-      }
-      .schematic-title {
-        font-size: 13px;
-        font-weight: 800;
-      }
-      .schematic-subtitle {
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-        line-height: 1.35;
-      }
       .schematic-items {
         display: flex;
         flex-wrap: wrap;
@@ -902,61 +666,6 @@ export class GraphPreviewPanel {
       }
       .schematic-pill strong {
         font-weight: 700;
-      }
-      .schematic-arrow-row {
-        display: grid;
-        grid-template-columns: repeat(7, auto);
-        justify-content: center;
-        align-items: center;
-        gap: 10px;
-        color: var(--vscode-descriptionForeground);
-        font-size: 22px;
-        line-height: 1;
-        margin-top: -4px;
-      }
-      .schematic-arrow-label {
-        font-size: 11px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: var(--vscode-descriptionForeground);
-        text-align: center;
-      }
-      .schematic-footer {
-        display: grid;
-        grid-template-columns: 1.15fr 0.85fr;
-        gap: 12px;
-      }
-      .schematic-note {
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 14px;
-        background: var(--vscode-sideBar-background);
-        padding: 12px;
-      }
-      .schematic-note-title {
-        font-weight: 800;
-        margin-bottom: 8px;
-      }
-      .schematic-relations {
-        display: grid;
-        gap: 8px;
-      }
-      .schematic-relation {
-        display: flex;
-        gap: 8px;
-        align-items: baseline;
-        line-height: 1.35;
-      }
-      .schematic-relation code {
-        flex: 0 0 auto;
-        font-size: 11px;
-        background: var(--vscode-editor-inactiveSelectionBackground);
-        padding: 2px 6px;
-        border-radius: 999px;
-      }
-      .schematic-flow-summary {
-        display: grid;
-        gap: 8px;
       }
       .flow-panel {
         margin-top: 14px;
@@ -1013,39 +722,6 @@ export class GraphPreviewPanel {
         align-items: stretch;
         overflow-x: auto;
         padding-bottom: 4px;
-      }
-      .timeline-card {
-        min-width: 180px;
-        flex: 1 0 180px;
-        border-radius: 12px;
-        padding: 10px 12px;
-        border: 1px solid var(--vscode-panel-border);
-        background: var(--vscode-editor-background);
-        box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
-      }
-      .timeline-step {
-        font-size: 11px;
-        font-weight: 800;
-        color: var(--vscode-descriptionForeground);
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        margin-bottom: 6px;
-      }
-      .timeline-title {
-        font-size: 14px;
-        font-weight: 700;
-        margin-bottom: 6px;
-      }
-      .timeline-text {
-        font-size: 12px;
-        color: var(--vscode-descriptionForeground);
-        line-height: 1.45;
-      }
-      .timeline-arrow {
-        align-self: center;
-        font-size: 20px;
-        color: var(--vscode-descriptionForeground);
-        padding: 0 2px;
       }
       svg {
         display: block;
@@ -1110,47 +786,12 @@ export class GraphPreviewPanel {
       li {
         margin: 4px 0;
       }
-      .node-box {
-        stroke: var(--vscode-panel-border);
-        stroke-width: 1.2;
-      }
-      .node-label {
-        fill: var(--vscode-foreground);
-        font-size: 12px;
-        font-weight: 600;
-      }
-      .node-type {
-        fill: var(--vscode-descriptionForeground);
-        font-size: 10px;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .edge {
-        fill: none;
-        stroke-width: 1.7;
-        opacity: 0.75;
-      }
-      .edge-label {
-        fill: var(--vscode-descriptionForeground);
-        font-size: 10px;
-        font-weight: 600;
-        paint-order: stroke;
-        stroke: var(--vscode-editor-background);
-        stroke-width: 3px;
-      }
-      .region-title {
-        fill: var(--vscode-descriptionForeground);
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
     </style>
   </head>
   <body>
     <div class="header">
       <div class="title">${escapeHtml(this.title || 'Graph Preview')}</div>
-      <div class="subtitle">Repository applications, component sections, and selected execution flows.</div>
+      <div class="subtitle">Developer view built from deterministic artifacts: AST, jqassistant structure, execution flows, and ER schema.</div>
       <div class="meta">
         <div>Schema: <code>${escapeHtml(this.graph.schemaVersion ?? 'n/a')}</code></div>
         <div>Summary: <code>${escapeHtml(summary)}</code></div>
@@ -1183,11 +824,10 @@ export class GraphPreviewPanel {
 
     <div class="reading-order">
       <strong>Reading order:</strong>
-      1) identify the incoming interface, 2) confirm the security gate, 3) follow the service path, 4) check external calls, 5) verify persistence, 6) read the outcome.
+      1) inspect AST structure, 2) inspect jqassistant structure and dependencies, 3) review deterministic flow-map, 4) verify ER schema, 5) open raw graph only if needed.
     </div>
 
-    ${applicationDiagram}
-    ${detailSections}
+    ${developerSections}
 
     <div class="panel">
       <div class="panel-title">External dependencies</div>
@@ -1218,566 +858,210 @@ export class GraphPreviewPanel {
   }
 }
 
+async function loadDeveloperArtifacts(graph: CanonicalGraph): Promise<DeveloperArtifacts> {
+  const sourcePath = graph.metadata?.sourcePath;
+  if (!sourcePath) {
+    return {};
+  }
+  const outputDir = path.dirname(sourcePath);
+  const [astIndex, jqassistant, flowMap] = await Promise.all([
+    readJsonIfExists<AstIndexArtifactLite>(path.join(outputDir, 'source.ast-index.json')),
+    readJsonIfExists<JqassistantSupportArtifactLite>(path.join(outputDir, 'source.jqassistant-graph.json')),
+    readJsonIfExists<FlowMapArtifactLite>(path.join(outputDir, 'source.flow-map.json')),
+  ]);
+  return { outputDir, astIndex, jqassistant, flowMap };
+}
+
+async function readJsonIfExists<T>(filePath: string): Promise<T | undefined> {
+  try {
+    const raw = await fs.readFile(filePath, 'utf8');
+    return JSON.parse(raw) as T;
+  } catch {
+    return undefined;
+  }
+}
+
 function createNonce(): string {
   return Math.random().toString(36).slice(2);
 }
 
-function layoutRelationGraph(graph: CanonicalGraph): {
-  nodes: LayoutNode[];
-  edges: LayoutEdge[];
-  width: number;
-  height: number;
-  regionLegend: Array<{ label: string; color: string }>;
-  edgeLegend: Array<{ label: string; color: string }>;
-} {
-  const nodeById = new Map(graph.nodes.map((node) => [node.id, node] as const));
-  const preview = graph.metadata?.preview;
-  const systemNode = graph.nodes.find((node) => node.type === 'SystemSlice') ?? graph.nodes[0];
-
-  const grouped = new Map<Region, GraphNode[]>();
-  for (const region of ['north', 'west', 'east', 'south'] as const) {
-    grouped.set(region, []);
-  }
-
-  for (const node of graph.nodes) {
-    if (node.id === systemNode?.id) continue;
-    grouped.get(regionForType(node.type))?.push(node);
-  }
-
-  const width = 1600;
-  const height = 1080;
-  const centerX = width / 2;
-  const centerY = height / 2 + 20;
-
-  const layoutNodes: LayoutNode[] = [];
-  const regionLegend = Object.entries(REGION_TITLES).map(([region, label]) => ({
-    label,
-    color: regionColor(region as Region),
-  }));
-  const edgeLegend = [
-    { label: 'contains', color: edgeColor('contains') },
-    { label: 'uses', color: edgeColor('uses') },
-    { label: 'flowsTo', color: edgeColor('flowsTo') },
-    { label: 'dependsOn', color: edgeColor('dependsOn') },
-    { label: 'requires', color: edgeColor('requires') },
-    { label: 'supports', color: edgeColor('supports') },
-  ];
-
-  if (systemNode) {
-    layoutNodes.push({
-      ...systemNode,
-      x: centerX - 165,
-      y: centerY - 82,
-      width: 330,
-      height: 164,
-      region: 'center',
-      fill: '#ede9fe',
-      accent: TYPE_COLORS[systemNode.type] ?? '#7c3aed',
-    });
-  }
-
-  positionGroup(layoutNodes, grouped.get('north') ?? [], {
-    region: 'north',
-    baseX: 240,
-    baseY: 64,
-    spacingX: 250,
-    spacingY: 98,
-    columns: 4,
-  });
-  positionGroup(layoutNodes, grouped.get('west') ?? [], {
-    region: 'west',
-    baseX: 68,
-    baseY: 250,
-    spacingX: 0,
-    spacingY: 110,
-    columns: 1,
-  });
-  positionGroup(layoutNodes, grouped.get('east') ?? [], {
-    region: 'east',
-    baseX: 1288,
-    baseY: 250,
-    spacingX: 0,
-    spacingY: 110,
-    columns: 1,
-  });
-  positionGroup(layoutNodes, grouped.get('south') ?? [], {
-    region: 'south',
-    baseX: 240,
-    baseY: 896,
-    spacingX: 250,
-    spacingY: 98,
-    columns: 4,
-  });
-
-  const byId = new Map(layoutNodes.map((node) => [node.id, node] as const));
-  const edges = graph.edges
-    .map((edge) => {
-      const from = byId.get(edge.from);
-      const to = byId.get(edge.to);
-      if (!from || !to) {
-        return undefined;
-      }
-      const path = buildEdgePath(from, to);
-      const [labelX, labelY] = midpoint(from, to);
-      return {
-        from,
-        to,
-        type: edge.type,
-        path,
-        labelX,
-        labelY,
-        color: edgeColor(edge.type),
-      };
-    })
-    .filter((edge): edge is LayoutEdge => Boolean(edge));
-
-  return { nodes: layoutNodes, edges, width, height, regionLegend, edgeLegend };
-}
-
-function positionGroup(
-  target: LayoutNode[],
-  nodes: GraphNode[],
-  config: { region: Region; baseX: number; baseY: number; spacingX: number; spacingY: number; columns: number },
-): void {
-  const sorted = [...nodes].sort((left, right) => {
-    const leftOrder = TYPE_ORDER.indexOf(left.type);
-    const rightOrder = TYPE_ORDER.indexOf(right.type);
-    return (leftOrder === -1 ? 999 : leftOrder) - (rightOrder === -1 ? 999 : rightOrder) || left.name.localeCompare(right.name);
-  });
-
-  sorted.forEach((node, index) => {
-    const column = config.columns > 1 ? index % config.columns : 0;
-    const row = config.columns > 1 ? Math.floor(index / config.columns) : index;
-    const width = config.region === 'north' || config.region === 'south' ? 220 : 238;
-    const wrapped = wrapText(node.name, 23);
-    const height = Math.max(72, 34 + wrapped.length * 16);
-    const x =
-      config.region === 'north' || config.region === 'south'
-        ? config.baseX + column * config.spacingX
-        : config.baseX;
-    const y =
-      config.region === 'north' || config.region === 'south'
-        ? config.baseY
-        : config.baseY + row * config.spacingY;
-
-    target.push({
-      ...node,
-      x,
-      y,
-      width,
-      height,
-      region: config.region,
-      fill: regionFill(config.region),
-      accent: TYPE_COLORS[node.type] ?? '#64748b',
-    });
-  });
-}
-
-function renderSvg(layout: ReturnType<typeof layoutRelationGraph>): string {
-  const countByRegion = layout.nodes.reduce<Record<Region, number>>(
-    (accumulator, node) => {
-      accumulator[node.region] = (accumulator[node.region] ?? 0) + 1;
-      return accumulator;
-    },
-    { center: 0, north: 0, west: 0, east: 0, south: 0 },
-  );
-
-  const nodeLabels = layout.nodes
-    .map((node) => {
-      const lines = wrapText(node.name, 24);
-      const textY = node.y + 30;
-      return `
-        <g transform="translate(${node.x}, ${node.y})">
-          <rect class="node-box" rx="16" ry="16" width="${node.width}" height="${node.height}" fill="${node.fill}22" />
-          <rect x="0.5" y="0.5" rx="16" ry="16" width="${node.width - 1}" height="${node.height - 1}" fill="transparent" class="node-box" />
-          <rect x="0" y="0" rx="16" ry="16" width="8" height="${node.height}" fill="${node.accent}" opacity="0.9" />
-          <text x="16" y="18" class="node-type">${escapeHtml(node.type)}</text>
-          ${lines
-            .map((line, index) => `<text x="16" y="${textY + index * 16}" class="node-label">${escapeHtml(line)}</text>`)
-            .join('')}
-          <title>${escapeHtml(`${node.type}: ${node.name}${node.description ? `\n${node.description}` : ''}${node.sourceRef ? `\n${node.sourceRef}` : ''}`)}</title>
-        </g>
-      `;
-    })
-    .join('');
-
-  const regionPanels = [
-    regionPanel('north', 50, 18, 1500, 210, `Rules and security · ${countByRegion.north}`),
-    regionPanel('west', 18, 220, 440, 700, `Ingress and dependencies · ${countByRegion.west}`),
-    regionPanel('east', 1140, 220, 442, 700, `Service and runtime · ${countByRegion.east}`),
-    regionPanel('south', 50, 850, 1500, 200, `Examples and acceptance · ${countByRegion.south}`),
-    regionPanel('center', 500, 250, 600, 460, `System core · ${countByRegion.center}`),
-  ].join('');
-
-  const regionTitles = [
-    regionTitle('north', 800, 46),
-    regionTitle('west', 238, 244),
-    regionTitle('east', 1360, 244),
-    regionTitle('south', 800, 876),
-    regionTitle('center', 800, 418),
-  ].join('');
-
-  const edges = layout.edges
-    .map((edge) => {
-      const label = edge.type.replace(/([a-z])([A-Z])/g, '$1 $2');
-      return `
-        <g>
-          <path class="edge" d="${edge.path}" stroke="${edge.color}" marker-end="url(#arrow-${edge.color.replace('#', '')})" />
-          <text class="edge-label" x="${edge.labelX}" y="${edge.labelY - 4}" text-anchor="middle">${escapeHtml(label)}</text>
-        </g>
-      `;
-    })
-    .join('');
-
-  const markers = [...new Set(layout.edges.map((edge) => edge.color))]
-    .map((color) => {
-      const id = `arrow-${color.replace('#', '')}`;
-      return `
-        <marker id="${id}" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-          <path d="M0,0 L0,6 L9,3 z" fill="${color}" />
-        </marker>
-      `;
-    })
-    .join('');
-
-  return `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">
-      <defs>${markers}</defs>
-      ${regionPanels}
-      ${regionTitles}
-      ${edges}
-      ${nodeLabels}
-    </svg>
-  `;
-}
-
-function renderSchematic(insights: ReturnType<typeof deriveInsights>): string {
-  const layers = [
-    {
-      title: 'API Contract Layer',
-      subtitle: 'Families, auth, generated contracts, DTOs, enums, clients, and Swagger signals.',
-      items: insights.api,
-      accent: '#2563eb',
-      empty: 'No API contract signal found.',
-    },
-    {
-      title: 'Application Runtime Layer',
-      subtitle: 'Entry point, imported config, security/runtime bootstrap, Flyway, and Actuator.',
-      items: insights.app.map((item) => item.replace(/^APP:\s*/i, '')),
-      accent: '#14b8a6',
-      empty: 'No app runtime signal found.',
-    },
-    {
-      title: 'Data Access Layer',
-      subtitle: 'Repositories, databases, stores, and durable state.',
-      items: insights.persistence,
-      accent: '#0ea5e9',
-      empty: 'No persistence boundary found.',
-    },
-    {
-      title: 'Business Logic',
-      subtitle: 'Services, modules, rules, and orchestration.',
-      items: [...insights.services, ...insights.modules, ...insights.security].filter(Boolean),
-      accent: '#22c55e',
-      empty: 'No service or module boundary found.',
-    },
-    {
-      title: 'Flow Logic',
-      subtitle: 'Processes, transformations, and execution steps.',
-      items: [...insights.flowTrace],
-      accent: '#8b5cf6',
-      empty: 'No flow trace found.',
-    },
-    {
-      title: 'Presentation Logic',
-      subtitle: 'REST, UI, inbound endpoints, and entry points.',
-      items: insights.interfaces,
-      accent: '#f59e0b',
-      empty: 'No inbound interface found.',
-    },
-  ];
-
-  const layerCards = layers
-    .map(
-      (layer) => `
-        <div class="schematic-column" style="box-shadow: inset 0 0 0 1px ${layer.accent}22;">
-          <div class="schematic-header">
-            <div class="schematic-title">${escapeHtml(layer.title)}</div>
-            <span class="schematic-pill" style="border: 1px solid ${layer.accent}55;">
-              <strong>${layer.items.length}</strong>
-            </span>
-          </div>
-          <div class="schematic-subtitle">${escapeHtml(layer.subtitle)}</div>
-          <div class="schematic-items">
-            ${
-              layer.items.length > 0
-                ? layer.items.slice(0, 6).map((item) => `<span class="schematic-pill">${escapeHtml(item)}</span>`).join('')
-                : `<span class="schematic-pill">${escapeHtml(layer.empty)}</span>`
-            }
-            ${
-              layer.items.length > 6
-                ? `<span class="schematic-pill">+${layer.items.length - 6} more</span>`
-                : ''
-            }
-          </div>
-        </div>
-      `,
-    )
-    .join('');
-
-  const flowSketch = insights.flowScenarios.slice(0, 3);
-
-  const flowRail = flowSketch
-    .map(
-      (flow) => `
-        <div class="schematic-note">
-          <div class="schematic-note-title">${escapeHtml(flow.title)}</div>
-          <div class="schematic-subtitle">${escapeHtml(flow.summary)}</div>
-        </div>
-      `,
-    )
-    .join('<div style="font-size:18px;color:var(--vscode-descriptionForeground);align-self:center;">→</div>');
-
-  const relations = insights.relationships.slice(0, 5);
-  const relationList =
-    relations.length > 0
-      ? relations
-          .map(
-            (relation) => `
-              <div class="schematic-relation">
-                <code>relation</code>
-                <div>${escapeHtml(relation)}</div>
-              </div>
-            `,
-          )
-          .join('')
-      : '<div class="schematic-subtitle">No explicit relations were inferred from the source slice.</div>';
-
-  const flowTrace = insights.flowTrace.slice(0, 8);
-  const traceList =
-    flowTrace.length > 0
-      ? flowTrace
-          .map(
-            (step, index) => `
-              <div class="schematic-relation">
-                <code>${index + 1}</code>
-                <div>${escapeHtml(step)}</div>
-              </div>
-            `,
-          )
-          .join('')
-      : '<div class="schematic-subtitle">No explicit flow trace was inferred from the source slice.</div>';
-
-  return `
-    <div class="schematic">
-      <div class="schematic-topbar">
-        <div class="schematic-note schematic-top-note">
-          <div class="schematic-note-title">External dependencies</div>
-          <div class="schematic-items">
-            ${insights.externalDependencies.length > 0 ? insights.externalDependencies.slice(0, 5).map((item) => `<span class="schematic-pill">${escapeHtml(item)}</span>`).join('') : '<span class="schematic-pill">none detected</span>'}
-          </div>
-        </div>
-        <div class="schematic-note schematic-top-note">
-        <div class="schematic-note-title">Security</div>
-        <div class="schematic-items">
-            ${insights.securityDetails.length > 0 ? insights.securityDetails.slice(0, 8).map((item) => `<span class="schematic-pill">${escapeHtml(item.replace(/^SECURITY:\s*/i, ''))}</span>`).join('') : '<span class="schematic-pill">none detected</span>'}
-          </div>
-        </div>
-      </div>
-      <div class="schematic-arrow-row" aria-hidden="true">
-        <span>◉</span><span>→</span><span>◉</span><span>→</span><span>◉</span><span>→</span><span>◉</span>
-      </div>
-      <div class="schematic-arrow-row" style="margin-top:-6px; grid-template-columns: repeat(4, auto);">
-        <div class="schematic-arrow-label">Presentation</div>
-        <div class="schematic-arrow-label">Business</div>
-        <div class="schematic-arrow-label">Flow</div>
-        <div class="schematic-arrow-label">Data access</div>
-      </div>
-      <div class="schematic-rail">${layerCards}</div>
-      <div class="schematic-footer">
-        <div class="schematic-note">
-          <div class="schematic-note-title">Execution sketch</div>
-          <div class="schematic-flow-summary">${flowRail}</div>
-        </div>
-        <div class="schematic-note">
-          <div class="schematic-note-title">Key relations</div>
-          <div class="schematic-relations">${relationList}</div>
-          <div class="schematic-note-title" style="margin-top:12px;">Flow trace</div>
-          <div class="schematic-relations">${traceList}</div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderApplicationDiagram(
+function renderDeveloperSections(
   insights: ReturnType<typeof deriveInsights>,
-  diagramClassification?: DiagramClassification,
+  artifacts: DeveloperArtifacts,
 ): string {
-  const applicationDetails = insights.preview?.applicationsDetailed?.length
-    ? insights.preview.applicationsDetailed
-    : (insights.applications.length > 0
-      ? insights.applications.map((item) => {
-          const cleaned = item.replace(/^APPLICATION:\s*/i, '');
-          const [namePart, detailPart] = cleaned.split(/\s+—\s+/, 2);
-          return {
-            name: namePart.trim(),
-            role: detailPart?.trim() || 'Application boundary',
-            modules: insights.modules
-              .filter((moduleName) => moduleName.startsWith(`${namePart.trim()}/`))
-              .map((moduleName) => moduleName.slice(namePart.trim().length + 1))
-              .sort((left, right) => left.localeCompare(right)),
-            cards: [],
-          };
-        })
-      : [
-          { name: 'event-backend', role: 'primary backend application boundary in this repository', modules: [], cards: [] },
-          { name: 'event-notification', role: 'separate notification application boundary in this repository', modules: [], cards: [] },
-        ]);
+  return [
+    renderAstSection(artifacts.astIndex),
+    renderJqassistantSection(artifacts.jqassistant, insights),
+    renderFlowMapSection(artifacts.flowMap, insights),
+  ].join('');
+}
 
-  const renderApplicationBox = (item: NonNullable<PreviewMetadata['applicationsDetailed']>[number], index: number): string => {
-    const accent = index === 0 ? '#2563eb' : '#7c3aed';
-    const rootName = item.name.trim();
-    const moduleItems = (item.modules ?? []).length > 0
-      ? (item.modules ?? [])
-      : insights.modules
-        .filter((moduleName) => moduleName.startsWith(`${rootName}/`))
-        .map((moduleName) => moduleName.slice(rootName.length + 1))
-        .sort((left, right) => left.localeCompare(right));
-    const moduleGrid = moduleItems.length > 0
-      ? `
-        <div class="application-module-grid">
-          ${moduleItems.map((moduleName) => `<div class="application-module" style="--box-accent:${accent};">${escapeHtml(moduleName)}</div>`).join('')}
-        </div>
-      `
-      : `
-        <div class="drawio-box-detail">No nested modules inferred for this application.</div>
-      `;
-    return `
-      <div class="drawio-lane">
-        <div class="drawio-lane-header">
-          <div class="drawio-lane-title" style="color:${accent};">${escapeHtml(rootName)}</div>
-          <div class="drawio-lane-desc">${escapeHtml(item.role || 'Application boundary')}</div>
-        </div>
-        <div class="drawio-lane-body">
-          <div class="drawio-box" style="--box-accent:${accent};">
-            <div class="drawio-box-tag">Application</div>
-            <div class="drawio-box-title">${escapeHtml(rootName)}</div>
-            <div class="drawio-box-detail">${escapeHtml(item.role || 'Application boundary')}</div>
-          </div>
-          ${moduleGrid}
-        </div>
-      </div>
-    `;
-  };
+function renderAstSection(astIndex: AstIndexArtifactLite | undefined): string {
+  const summary = astIndex?.summary;
+  const types = astIndex?.types ?? [];
+  const packages = [...(astIndex?.packages ?? [])].sort((left, right) => (right.typeCount - left.typeCount) || left.packageName.localeCompare(right.packageName));
+  const endpoints = astIndex?.endpoints ?? [];
+  const annotations = [...(astIndex?.annotations ?? [])].sort((left, right) => (right.occurrences - left.occurrences) || left.name.localeCompare(right.name));
+  const applicationHints = countLabels(types.map((item) => item.applicationHint).filter(Boolean) as string[]);
+  const layerHints = countLabels(types.map((item) => item.layerHint).filter(Boolean) as string[]);
 
-  const topNotes = `
-    <div class="drawio-notes">
-      <div class="drawio-note">
-        <div class="drawio-note-title">External dependencies</div>
-        <div class="schematic-items">
-          ${
-            insights.externalDependencies.length > 0
-              ? insights.externalDependencies.map((item) => `<span class="schematic-pill">${escapeHtml(item)}</span>`).join('')
-              : '<span class="schematic-pill">none detected</span>'
-          }
-        </div>
-      </div>
-      <div class="drawio-note">
-        <div class="drawio-note-title">Security</div>
-        <div class="schematic-items">
-          ${
-            insights.securityDetails.length > 0
-              ? insights.securityDetails.map((item) => `<span class="schematic-pill">${escapeHtml(item.replace(/^SECURITY:\s*/i, ''))}</span>`).join('')
-              : '<span class="schematic-pill">none detected</span>'
-          }
-        </div>
+  return `
+    <div class="component-section">
+      <div class="component-section-title">AST view</div>
+      <div class="component-section-subtitle">AST = Abstract Syntax Tree. Deterministic source structure indexed from Java code.</div>
+      <div class="component-grid">
+        ${renderMetricCard('AST summary', [
+          `Java files: ${summary?.javaFileCount ?? 0}`,
+          `Packages: ${summary?.packageCount ?? 0}`,
+          `Types: ${summary?.typeCount ?? 0}`,
+          `Methods: ${summary?.methodCount ?? 0}`,
+          `Fields: ${summary?.fieldCount ?? 0}`,
+          `Endpoints: ${summary?.endpointCount ?? 0}`,
+          `Annotations: ${summary?.annotationCount ?? 0}`,
+        ], 'AST summary not available.')}
+        ${renderMetricCard('Application hints', applicationHints, 'No application hints inferred from AST types.')}
+        ${renderMetricCard('Layer hints', layerHints, 'No layer hints inferred from AST types.')}
+        ${renderMetricCard('Top packages', packages.slice(0, 12).map((item) => `${item.packageName} — ${item.typeCount} types, ${item.fileCount} files`), 'No package index found.')}
+        ${renderMetricCard('Endpoints', endpoints.slice(0, 12).map((item) => `${item.method} ${item.path}${item.typeName ? ` → ${item.typeName}` : ''}`), 'No endpoints found in AST index.')}
+        ${renderMetricCard('Top annotations', annotations.slice(0, 12).map((item) => `${item.name} — ${item.occurrences}`), 'No annotation summary found.')}
       </div>
     </div>
   `;
+}
+
+function renderJqassistantSection(
+  jqassistant: JqassistantSupportArtifactLite | undefined,
+  insights: ReturnType<typeof deriveInsights>,
+): string {
+  const summary = jqassistant?.summary;
+  const apps = jqassistant?.applications ?? [];
+  const runtimeLayers = jqassistant?.runtimeLayers ?? [];
+  const supportModules = jqassistant?.supportModules ?? [];
+  const projectModules = jqassistant?.graphs?.projectGraph?.modules ?? [];
+  const packageRelations = [...(jqassistant?.graphs?.packageGraph?.relations ?? [])]
+    .sort((left, right) => (right.count - left.count) || left.fromPackage.localeCompare(right.fromPackage))
+    .slice(0, 12)
+    .map((item) => `${item.fromPackage} → ${item.toPackage} (${item.count})`);
 
   return `
-    <div class="application-diagram">
-      <div class="application-diagram-header">
-        <div class="application-diagram-title">Software architecture</div>
-        <div class="application-diagram-subtitle">
-          ${
-            diagramClassification?.summary
-              ? escapeHtml(diagramClassification.summary)
-              : 'Repository-level application boundaries.'
-          }
-        </div>
+    <div class="component-section">
+      <div class="component-section-title">jqassistant structure graph</div>
+      <div class="component-section-subtitle">Repository structure, Maven/application boundaries, package relations, and architectural support evidence.</div>
+      <div class="component-grid">
+        ${renderMetricCard('jqassistant summary', [
+          `Status: ${jqassistant?.status ?? 'not available'}`,
+          `Applications: ${summary?.applicationCount ?? apps.length}`,
+          `Modules: ${summary?.moduleCount ?? projectModules.length}`,
+          `Technologies: ${summary?.technologyCount ?? summary?.technologies?.length ?? 0}`,
+          `Packages: ${summary?.packageCount ?? 0}`,
+          `Type dependencies: ${summary?.typeDependencyCount ?? 0}`,
+        ], 'jqassistant summary not available.')}
+        ${renderMetricCard('Applications', apps.length > 0
+          ? apps.map((app) => `${app.name} — ${app.role}${app.multiModule ? ' · multi-module' : ' · single application root'}`)
+          : insights.applications.map((item) => item.replace(/^APPLICATION:\s*/i, '')), 'No applications found.')}
+        ${renderMetricCard('Internal modules', apps.flatMap((app) => app.internalModules.map((module) => `${app.name} / ${module.name} — ${module.purpose}`)), 'No internal modules found.')}
+        ${renderMetricCard('Runtime layers', runtimeLayers.map((item) => `${item.name} — ${item.role}`), 'No runtime layers found.')}
+        ${renderMetricCard('Support modules', supportModules.map((item) => `${item.name} — ${item.role}`), 'No support modules found.')}
+        ${renderMetricCard('Project graph modules', projectModules.map((item) => `${item.parentArtifactId} → ${item.moduleName}`), 'No Maven/project graph modules found.')}
+        ${renderMetricCard('Package relations', packageRelations, 'No package relations found.')}
+        ${renderMetricCard('Warnings', jqassistant?.warnings ?? [], 'No jqassistant warnings.')}
       </div>
-      ${topNotes}
-      <div class="drawio-board">
-        <div class="drawio-swimlanes" style="grid-template-columns: minmax(0, 1fr);">
-          ${applicationDetails.map(renderApplicationBox).join('')}
+    </div>
+  `;
+}
+
+function renderFlowMapSection(
+  flowMap: FlowMapArtifactLite | undefined,
+  insights: ReturnType<typeof deriveInsights>,
+): string {
+  const flows = flowMap?.flows ?? insights.flowScenarios.map((item) => ({
+    name: item.title,
+    trigger: item.summary,
+    summary: item.summary,
+    steps: item.steps,
+    confidence: undefined,
+    warnings: [],
+  }));
+  const entrypoints = flowMap?.stages?.entrypointDiscovery?.entrypoints ?? [];
+  const issues = flowMap?.stages?.flowValidation?.issues ?? [];
+
+  return `
+    <div class="component-section">
+      <div class="component-section-title">Execution flows</div>
+      <div class="component-section-subtitle">Deterministic flow-map assembled from entrypoints, traces, clustering, interpretation, and validation.</div>
+      <div class="component-grid">
+        ${renderMetricCard('Flow-map summary', [
+          `Entrypoints: ${flowMap?.stages?.entrypointDiscovery?.count ?? entrypoints.length}`,
+          `Flows: ${flows.length}`,
+          `Validation issues: ${flowMap?.stages?.flowValidation?.count ?? issues.length}`,
+          ...(flowMap?.support ? [
+            `AST endpoints: ${flowMap.support.astEndpoints ?? 0}`,
+            `jqassistant packages: ${flowMap.support.jqassistantPackages ?? 0}`,
+            `Support graph nodes: ${flowMap.support.supportGraphNodes ?? 0}`,
+          ] : []),
+        ], 'Flow-map summary not available.')}
+        ${renderMetricCard('Entrypoints', entrypoints.slice(0, 12).map((item) => `${item.kind} — ${item.name} → ${item.target}`), 'No entrypoints found.')}
+        ${renderMetricCard('Validation issues', issues.slice(0, 12).map((item) => `${item.severity} / ${item.category} — ${item.message}`), 'No flow validation issues.')}
+      </div>
+      <div class="flow-panel">
+        <div class="panel-title">Flow paths</div>
+        <div class="flow-grid">
+          ${flows.length > 0
+            ? flows.slice(0, 8).map((flow, index) => renderDeveloperFlowCard(flow, index)).join('')
+            : renderFlowScenarios(insights.flowScenarios)}
         </div>
       </div>
     </div>
   `;
 }
 
-function renderDetailSections(insights: ReturnType<typeof deriveInsights>): string {
-  const preview = insights.preview;
+function renderDeveloperFlowCard(
+  flow: {
+    name: string;
+    trigger: string;
+    summary: string;
+    steps: string[];
+    confidence?: number;
+    warnings?: string[];
+  },
+  index: number,
+): string {
+  return `
+    <div class="flow-card">
+      <div class="flow-card-header">
+        <div class="flow-card-title">${escapeHtml(flow.name)}</div>
+        <div class="flow-card-subtitle">Flow ${index + 1}${typeof flow.confidence === 'number' ? ` · confidence ${Math.round(flow.confidence * 100)}%` : ''}</div>
+      </div>
+      <div class="flow-card-subtitle"><strong>Trigger:</strong> ${escapeHtml(flow.trigger)}</div>
+      <div class="flow-card-subtitle">${escapeHtml(flow.summary)}</div>
+      <div class="flow-card-steps">
+        ${flow.steps.slice(0, 10).map((step, stepIndex) => `<div class="flow-step"><code>${stepIndex + 1}</code><div>${escapeHtml(step)}</div></div>`).join('')}
+      </div>
+      ${flow.warnings?.length ? `<div class="component-list" style="margin-top:10px;">${flow.warnings.map((warning) => `<div class="component-list-item">${escapeHtml(warning)}</div>`).join('')}</div>` : ''}
+    </div>
+  `;
+}
 
-  const renderList = (items: string[], empty: string): string =>
-    items.length
-      ? `<div class="component-list">${items.map((item) => `<div class="component-list-item">${escapeHtml(item)}</div>`).join('')}</div>`
-      : `<div class="component-list"><div class="component-list-item">${escapeHtml(empty)}</div></div>`;
-
-  const renderCard = (title: string, items: string[], empty: string): string => `
+function renderMetricCard(title: string, items: string[], empty: string): string {
+  const filtered = items.filter(Boolean);
+  return `
     <div class="component-card">
       <div class="component-card-title">${escapeHtml(title)}</div>
-      ${renderList(items, empty)}
+      <div class="component-list">
+        ${(filtered.length > 0 ? filtered : [empty]).map((item) => `<div class="component-list-item">${escapeHtml(item)}</div>`).join('')}
+      </div>
     </div>
   `;
-  const renderFlowCard = (title: string, items: string[], flow: string[] | undefined, empty: string, subtitle?: string): string => {
-    return `
-      <div class="component-card">
-        <div class="component-card-title">${escapeHtml(title)}</div>
-        ${subtitle ? `<div class="component-card-subtitle">${escapeHtml(subtitle)}</div>` : ''}
-        ${renderList(items, empty)}
-        ${flow?.length
-          ? `<div class="mini-flow">
-              ${flow.map((step, index) => `${index > 0 ? '<span class="mini-flow-arrow">→</span>' : ''}<div class="mini-flow-box">${escapeHtml(step)}</div>`).join('')}
-            </div>`
-          : ''}
-      </div>
-    `;
-  };
-  const detailedApps = preview?.applicationsDetailed ?? [];
-  if (detailedApps.length > 0) {
-    return detailedApps
-      .map((app) => `
-        <div class="component-section">
-          <div class="component-section-title">${escapeHtml(app.name)} components</div>
-          <div class="component-section-subtitle">${escapeHtml(app.role || 'Application component summary.')}</div>
-          <div class="component-grid">
-            ${(app.cards ?? []).map((card) => {
-              const cleanedItems = (card.items ?? []).map((item) =>
-                item
-                  .replace(/^API:\s*/i, '')
-                  .replace(/^APP:\s*/i, '')
-                  .replace(/^COMMON:\s*/i, '')
-                  .replace(/^PERSISTENCE:\s*/i, '')
-                  .replace(/^SERVICE_SUMMARY:\s*/i, '')
-                  .replace(/^SERVICE_EXCEPTIONS:\s*/i, '')
-                  .replace(/^SERVICE:\s*/i, '')
-                  .replace(/^entity:\s*/i, ''),
-              );
-              if (card.flow?.length) {
-                return renderFlowCard(card.title, cleanedItems, card.flow, `No ${card.title.toLowerCase()} signal found.`, card.subtitle);
-              }
-              return renderCard(card.title, cleanedItems, `No ${card.title.toLowerCase()} signal found.`);
-            }).join('')}
-          </div>
-        </div>
-      `)
-      .join('');
-  }
+}
 
-  return '';
+function countLabels(items: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    counts.set(item, (counts.get(item) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([label, count]) => `${label} — ${count}`);
 }
 
 function renderDatabaseSchema(
@@ -2140,20 +1424,6 @@ function extractDatabaseSchema(graph: CanonicalGraph): DiagramClassification['da
   return schema;
 }
 
-function extractDiagramClassification(graph: CanonicalGraph): DiagramClassification | undefined {
-  const review = graph.metadata?.review;
-  if (!review || typeof review !== 'object') {
-    return undefined;
-  }
-
-  const diagramClassification = (review as { diagramClassification?: DiagramClassification }).diagramClassification;
-  if (!diagramClassification || !Array.isArray(diagramClassification.layers) || diagramClassification.layers.length === 0) {
-    return undefined;
-  }
-
-  return diagramClassification;
-}
-
 function extractArtifactSummary(graph: CanonicalGraph): {
   semanticView: string;
   semanticMeta: string;
@@ -2184,192 +1454,6 @@ function extractArtifactSummary(graph: CanonicalGraph): {
 
 function pathBaseName(value: string): string {
   return value.split(/[/\\]/).pop() ?? value;
-}
-
-function regionPanel(region: Region, x: number, y: number, width: number, height: number, label: string): string {
-  return `
-    <g>
-      <rect x="${x}" y="${y}" width="${width}" height="${height}" rx="22" ry="22" fill="${regionFill(region)}" opacity="0.12" stroke="${regionColor(region)}" stroke-width="1.4" stroke-dasharray="8 6" />
-      <text x="${x + 18}" y="${y + 24}" class="region-title">${escapeHtml(label)}</text>
-    </g>
-  `;
-}
-
-function regionTitle(region: Region, x: number, y: number): string {
-  return `<text x="${x}" y="${y}" text-anchor="middle" class="region-title">${escapeHtml(REGION_TITLES[region])}</text>`;
-}
-
-function regionForType(type: string): Region {
-  switch (type) {
-    case 'SystemSlice':
-      return 'center';
-    case 'Module':
-      return 'west';
-    case 'Service':
-      return 'east';
-    case 'SecurityPolicy':
-    case 'Rule':
-      return 'north';
-    case 'Interface':
-    case 'IntegrationEndpoint':
-    case 'ExternalSystem':
-    case 'Dependency':
-      return 'west';
-    case 'Persistence':
-    case 'Process':
-    case 'Transformation':
-    case 'DataFlow':
-    case 'Monitor':
-    case 'Metric':
-    case 'Alert':
-      return 'east';
-    case 'Example':
-    case 'AcceptanceCriterion':
-      return 'south';
-    default:
-      return 'east';
-  }
-}
-
-function regionFill(region: Region): string {
-  switch (region) {
-    case 'center':
-      return '#ede9fe';
-    case 'north':
-      return '#fef3c7';
-    case 'west':
-      return '#e0f2fe';
-    case 'east':
-      return '#dcfce7';
-    case 'south':
-      return '#e2e8f0';
-  }
-}
-
-function regionColor(region: Region): string {
-  switch (region) {
-    case 'center':
-      return '#7c3aed';
-    case 'north':
-      return '#f59e0b';
-    case 'west':
-      return '#0ea5e9';
-    case 'east':
-      return '#22c55e';
-    case 'south':
-      return '#64748b';
-  }
-}
-
-function edgeColor(type: string): string {
-  switch (type) {
-    case 'contains':
-      return '#94a3b8';
-    case 'uses':
-      return '#0ea5e9';
-    case 'exposes':
-      return '#2563eb';
-    case 'dependsOn':
-      return '#8b5cf6';
-    case 'flowsTo':
-      return '#22c55e';
-    case 'transformsInto':
-      return '#16a34a';
-    case 'writesTo':
-      return '#f59e0b';
-    case 'readsFrom':
-      return '#14b8a6';
-    case 'guardedBy':
-      return '#ef4444';
-    case 'requires':
-      return '#e879f9';
-    case 'supports':
-      return '#64748b';
-    case 'belongsTo':
-      return '#64748b';
-    case 'observes':
-      return '#f97316';
-    case 'emits':
-      return '#fb7185';
-    case 'triggers':
-      return '#ea580c';
-    case 'describes':
-      return '#0f766e';
-    case 'refines':
-      return '#0f766e';
-    default:
-      return '#94a3b8';
-  }
-}
-
-function buildEdgePath(from: LayoutNode, to: LayoutNode): string {
-  const start = anchorPoint(from, to);
-  const end = anchorPoint(to, from);
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const bend = Math.max(80, Math.abs(dx) * 0.35, Math.abs(dy) * 0.35);
-  const c1 = { x: start.x + Math.sign(dx) * bend, y: start.y };
-  const c2 = { x: end.x - Math.sign(dx) * bend, y: end.y };
-  return `M ${start.x} ${start.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${end.x} ${end.y}`;
-}
-
-function anchorPoint(node: LayoutNode, other: LayoutNode): { x: number; y: number } {
-  const horizontal = other.x > node.x ? 1 : -1;
-  const vertical = other.y > node.y ? 1 : -1;
-
-  switch (node.region) {
-    case 'center':
-      return {
-        x: node.x + node.width / 2 + horizontal * node.width / 2,
-        y: node.y + node.height / 2 + vertical * 0,
-      };
-    case 'west':
-      return {
-        x: node.x + node.width,
-        y: node.y + node.height / 2,
-      };
-    case 'east':
-      return {
-        x: node.x,
-        y: node.y + node.height / 2,
-      };
-    case 'north':
-      return {
-        x: node.x + node.width / 2,
-        y: node.y + node.height,
-      };
-    case 'south':
-      return {
-        x: node.x + node.width / 2,
-        y: node.y,
-      };
-  }
-}
-
-function midpoint(from: LayoutNode, to: LayoutNode): [number, number] {
-  return [from.x + from.width / 2 + (to.x - from.x) * 0.25, from.y + from.height / 2 + (to.y - from.y) * 0.25];
-}
-
-function wrapText(value: string, maxChars: number): string[] {
-  const words = value.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let current = '';
-
-  for (const word of words) {
-    const candidate = current ? `${current} ${word}` : word;
-    if (candidate.length <= maxChars || !current) {
-      current = candidate;
-    } else {
-      lines.push(current);
-      current = word;
-    }
-  }
-
-  if (current) {
-    lines.push(current);
-  }
-
-  return lines.slice(0, 3);
 }
 
 function escapeHtml(value: string): string {
@@ -2649,10 +1733,6 @@ function renderList(items: string[]): string {
   return items.map((item) => `<span class="insight-pill">${escapeHtml(item)}</span>`).join('');
 }
 
-function renderFlowSteps(items: string[]): string {
-  return items.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
-}
-
 function renderFlowScenarios(items: Array<{ title: string; summary: string; steps: string[] }>): string {
   return items
     .map(
@@ -2673,36 +1753,6 @@ function renderFlowScenarios(items: Array<{ title: string; summary: string; step
       `,
     )
     .join('');
-}
-
-function renderTimeline(items: string[]): string {
-  if (items.length === 0) {
-    return `<div class="timeline-card"><div class="timeline-step">No flow</div><div class="timeline-title">No explicit execution path</div><div class="timeline-text">Add process and data flow detail to the semantic source to make the flow visible here.</div></div>`;
-  }
-
-  return items
-    .slice(0, 8)
-    .map((item, index) => {
-      const phase = classifyTimelineStep(item);
-      return `
-        <div class="timeline-card">
-          <div class="timeline-step">Step ${index + 1}</div>
-          <div class="timeline-title">${escapeHtml(phase)}</div>
-          <div class="timeline-text">${escapeHtml(item)}</div>
-        </div>
-      `;
-    })
-    .join('<div class="timeline-arrow">→</div>');
-}
-
-function classifyTimelineStep(value: string): string {
-  if (/auth|authoriz|permission|role/i.test(value)) return 'Security gate';
-  if (/validate|required|reject|invalid/i.test(value)) return 'Validation';
-  if (/load|read|fetch|lookup|current state/i.test(value)) return 'State lookup';
-  if (/audit|notification|external call|call|request|query|invoke/i.test(value)) return 'External dependency';
-  if (/persist|save|store|write|record|database/i.test(value)) return 'Persistence';
-  if (/return|response|result/i.test(value)) return 'Response';
-  return 'Process step';
 }
 
 function unique(items: string[]): string[] {

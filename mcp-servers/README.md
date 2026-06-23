@@ -18,6 +18,7 @@ This directory contains the modular MCP server contracts that support the semant
 - `validator`: run validation, security checks, and issue reporting
 - `compiler`: generate Spring Boot / Java output
 - `java-parser`: parse Java source with tree-sitter and return AST snapshots
+- `deterministic-graph`: build deterministic support graphs, preview artifacts, and flow maps from analysis + AST + jqassistant evidence
 - `cache`: store IR snapshots and generated artifacts
 - `legacy-introspection`: ingest existing code, docs, and system context
 
@@ -53,6 +54,10 @@ The repository now keeps a growing reference corpus under `reference-projects/`.
 
 - `parse_java_source`
 - `scan_java_project`
+
+### `deterministic-graph`
+
+- `deterministic_graph_build`
 
 ## Role
 

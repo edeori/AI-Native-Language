@@ -38,6 +38,10 @@ export interface ReconRunSnapshot {
   astFinishedAt?: string;
   astArtifactPath?: string;
   astFileCount?: number;
+  analysisStatus?: ReconTaskStatus;
+  analysisStartedAt?: string;
+  analysisFinishedAt?: string;
+  analysisPhase?: string;
   codeGraphStatus?: ReconTaskStatus;
   codeGraphStartedAt?: string;
   codeGraphFinishedAt?: string;
@@ -109,12 +113,17 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
     const events = snapshot?.events?.slice(-8) ?? [];
     const stages = [
       {
-        label: 'AST parse',
+        label: 'AST catalog',
         status: snapshot?.astStatus ?? 'pending',
-        detail: snapshot?.astArtifactPath ? `${snapshot.astFileCount ?? 0} files` : 'Waiting for parser output.',
+        detail: snapshot?.astArtifactPath ? `${snapshot.astFileCount ?? 0} files indexed` : 'Waiting for java-parser output.',
       },
       {
-        label: 'Code graph',
+        label: 'Deterministic analysis',
+        status: snapshot?.analysisStatus ?? 'pending',
+        detail: snapshot?.analysisPhase ?? 'Waiting for analysis, snapshot, and deterministic classification.',
+      },
+      {
+        label: 'Deterministic graph bundle',
         status: snapshot?.codeGraphStatus ?? 'pending',
         detail:
           snapshot?.codeGraphPhase ??
@@ -122,31 +131,32 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
             ? `Progress: ${snapshot.codeGraphProgressPath}`
             : snapshot?.codeGraphArtifactPath
               ? 'Ready'
-              : 'Waiting for graph build.'),
+              : 'Waiting for deterministic graph artifact build.'),
       },
       {
-        label: 'Local agents',
+        label: 'Local enrichment',
         status: snapshot?.localAgentStatus ?? 'pending',
-        detail: snapshot?.localAgentPhase ?? 'Waiting for local agent slices.',
+        detail: snapshot?.localAgentPhase ?? 'Waiting for optional local enrichment slices.',
       },
       {
-        label: 'Project prompt',
-        status: snapshot?.projectPromptStatus ?? 'pending',
-        detail: snapshot?.projectPromptArtifactPath ? 'Ready' : 'Waiting for MCP prompt.',
-      },
-      {
-        label: 'Module agents',
+        label: 'Recon prompts and agents',
         status:
-          snapshot?.moduleRuns?.length
+          snapshot?.projectPromptStatus === 'completed' && snapshot?.moduleRuns?.length === 0
+            ? 'completed'
+            : snapshot?.moduleRuns?.length
             ? snapshot.moduleRuns.every((module) => module.status === 'completed')
               ? 'completed'
               : snapshot.moduleRuns.some((module) => module.status === 'failed')
                 ? 'failed'
                 : snapshot.moduleRuns.some((module) => module.status === 'running')
                   ? 'running'
-                  : 'pending'
-            : 'pending',
-        detail: `${snapshot?.moduleRuns?.length ?? 0} modules`,
+                  : snapshot?.projectPromptStatus === 'running'
+                    ? 'running'
+                    : 'pending'
+            : snapshot?.projectPromptStatus ?? 'pending',
+        detail: snapshot?.projectPromptArtifactPath
+          ? `recon prompt ready; ${snapshot?.moduleRuns?.length ?? 0} module agents`
+          : 'Waiting for MCP reconnaissance prompt bundle.',
       },
     ] as const;
     const finalOutputStatus = snapshot?.status === 'completed' ? 'completed' : snapshot?.status === 'failed' ? 'failed' : 'pending';
@@ -447,8 +457,9 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
           <div class="progress"><div class="bar" style="width:${computeProgress(snapshot)}%"></div></div>
           <div class="chips">
             <span class="chip">ast: ${escapeHtml(snapshot?.astStatus ?? 'pending')}</span>
-            <span class="chip">code graph: ${escapeHtml(snapshot?.codeGraphStatus ?? 'pending')}</span>
-            <span class="chip">project prompt: ${escapeHtml(snapshot?.projectPromptStatus ?? 'pending')}</span>
+            <span class="chip">analysis: ${escapeHtml(snapshot?.analysisStatus ?? 'pending')}</span>
+            <span class="chip">graph: ${escapeHtml(snapshot?.codeGraphStatus ?? 'pending')}</span>
+            <span class="chip">prompt: ${escapeHtml(snapshot?.projectPromptStatus ?? 'pending')}</span>
             <span class="chip">modules: ${escapeHtml(String(snapshot?.moduleRuns.length ?? 0))}</span>
             <span class="chip">status: ${escapeHtml(snapshot?.status ?? 'idle')}</span>
           </div>
@@ -459,14 +470,16 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
               (stage) => {
                 const actionLabel = stage.status === 'completed' ? 'Re-run from checkpoint' : 'Resume from here';
                 const actionHint =
-                  stage.label === 'AST parse'
+                  stage.label === 'AST catalog'
                     ? 'Reuses cached AST if present, otherwise re-parses.'
-                    : stage.label === 'Code graph'
-                      ? 'Rebuilds the graph from cached AST / analysis.'
-                      : stage.label === 'Project prompt'
-                        ? 'Reuses cached prompt and continues from there.'
-                        : stage.label === 'Module agents'
-                          ? 'Reuses earlier outputs and reruns module agents if needed.'
+                    : stage.label === 'Deterministic analysis'
+                      ? 'Reuses cached AST and reruns deterministic analysis and snapshot stages.'
+                      : stage.label === 'Deterministic graph bundle'
+                        ? 'Rebuilds the deterministic graph artifacts from cached analysis.'
+                        : stage.label === 'Local enrichment'
+                          ? 'Re-runs optional local enrichment slices from deterministic artifacts.'
+                          : stage.label === 'Recon prompts and agents'
+                            ? 'Rebuilds recon prompts and reruns project/module recon agents if needed.'
                           : 'Continues semantic rewrite from the latest checkpoint.';
                 return `
               <div class="stage ${stage.status}">
@@ -492,7 +505,7 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
             <span>Current activity</span>
             <span>${escapeHtml(snapshot?.activeTask || runningModule?.moduleRoot || 'idle')}</span>
           </div>
-          <div class="muted">The recon run updates this as AST parsing, code graph building, and module/project agents transition through the pipeline.</div>
+          <div class="muted">The recon run updates this as AST indexing, deterministic analysis, deterministic graph construction, enrichment, and recon agents move through the new pipeline.</div>
           ${
             snapshot?.astArtifactPath
               ? `<div class="muted small">AST: ${escapeHtml(snapshot.astArtifactPath)}${snapshot.astFileCount != null ? ` · ${snapshot.astFileCount} files` : ''}</div>`
@@ -528,14 +541,14 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
               snapshot?.status === 'completed'
                 ? 'Final semantic markdown, graph, validation, and review artifacts are ready.'
                 : snapshot?.status === 'failed'
-                  ? 'The run failed before final semantic assembly completed.'
+                  ? 'The run failed before the final semantic assembly stage completed.'
                   : 'Waiting for the final semantic rewrite and artifact write.'
             }
           </div>
           <div class="stage-actions">
             <button class="stage-action" data-command="resume-recon" data-stage="semantic">
-              <span>${snapshot?.status === 'completed' ? 'Re-run final semantic assembly' : 'Resume final semantic assembly'}</span>
-              <span class="stage-action-hint">Runs the final rewrite and output-write pass from the latest checkpoint.</span>
+              <span>${snapshot?.status === 'completed' ? 'Re-run semantic assembly' : 'Resume semantic assembly'}</span>
+              <span class="stage-action-hint">Runs the semantic rewrite, review, validation output, and final artifact write from the latest checkpoint.</span>
             </button>
           </div>
         </div>
@@ -596,15 +609,17 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
 
 function computeProgress(snapshot: ReconRunSnapshot | undefined): number {
   if (!snapshot || snapshot.moduleRuns.length === 0) {
-    const baseCompleted = [snapshot?.astStatus, snapshot?.codeGraphStatus, snapshot?.projectPromptStatus].filter((status) => status === 'completed').length;
-    return Math.max(0, Math.min(100, Math.round((baseCompleted / 3) * 100)));
+    const baseCompleted = [snapshot?.astStatus, snapshot?.analysisStatus, snapshot?.codeGraphStatus, snapshot?.localAgentStatus, snapshot?.projectPromptStatus].filter((status) => status === 'completed').length;
+    return Math.max(0, Math.min(100, Math.round((baseCompleted / 5) * 100)));
   }
 
-  const total = snapshot.moduleRuns.length + 3;
+  const total = snapshot.moduleRuns.length + 5;
   const completed =
     snapshot.moduleRuns.filter((module) => module.status === 'completed').length +
     (snapshot.astStatus === 'completed' ? 1 : 0) +
+    (snapshot.analysisStatus === 'completed' ? 1 : 0) +
     (snapshot.codeGraphStatus === 'completed' ? 1 : 0) +
+    (snapshot.localAgentStatus === 'completed' ? 1 : 0) +
     (snapshot.projectPromptStatus === 'completed' ? 1 : 0);
   return Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
 }

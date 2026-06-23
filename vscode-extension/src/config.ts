@@ -6,6 +6,8 @@ export interface ExtensionConfig {
   validatorUrl: string;
   compilerUrl: string;
   javaParserUrl: string;
+  jqassistantUrl: string;
+  deterministicGraphUrl: string;
   artifactRoot: string;
   javaBasePackage: string;
   reviewProvider: 'codex' | 'claude';
@@ -30,6 +32,8 @@ export function getConfig(): ExtensionConfig {
     validatorUrl: fileConfig.validatorUrl ?? configuration.get<string>('mcp.validatorUrl', 'http://localhost:3002/mcp'),
     compilerUrl: fileConfig.compilerUrl ?? configuration.get<string>('mcp.compilerUrl', 'http://localhost:3003/mcp'),
     javaParserUrl: fileConfig.javaParserUrl ?? configuration.get<string>('mcp.javaParserUrl', 'http://localhost:3004/mcp'),
+    jqassistantUrl: fileConfig.jqassistantUrl ?? configuration.get<string>('mcp.jqassistantUrl', 'http://localhost:3005/mcp'),
+    deterministicGraphUrl: fileConfig.deterministicGraphUrl ?? configuration.get<string>('mcp.deterministicGraphUrl', 'http://localhost:3006/mcp'),
     artifactRoot: fileConfig.artifactRoot ?? configuration.get<string>('artifactRoot', '.ai-native'),
     javaBasePackage: fileConfig.javaBasePackage ?? configuration.get<string>('java.basePackage', 'com.example.generated'),
     reviewProvider,

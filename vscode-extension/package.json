@@ -124,6 +124,16 @@
           "default": "http://localhost:3004/mcp",
           "description": "Remote Streamable HTTP endpoint for the java-parser MCP server."
         },
+        "aiNative.mcp.jqassistantUrl": {
+          "type": "string",
+          "default": "http://localhost:3005/mcp",
+          "description": "Remote Streamable HTTP endpoint for the jqassistant MCP server."
+        },
+        "aiNative.mcp.deterministicGraphUrl": {
+          "type": "string",
+          "default": "http://localhost:3006/mcp",
+          "description": "Remote Streamable HTTP endpoint for the deterministic-graph MCP server."
+        },
         "aiNative.artifactRoot": {
           "type": "string",
           "default": ".ai-native",

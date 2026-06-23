@@ -5,6 +5,8 @@
     { "path": "./mcp-servers/semantic-core" },
     { "path": "./mcp-servers/validator" },
     { "path": "./mcp-servers/compiler" },
-    { "path": "./mcp-servers/java-parser" }
+    { "path": "./mcp-servers/java-parser" },
+    { "path": "./mcp-servers/jqassistant" },
+    { "path": "./mcp-servers/deterministic-graph" }
   ]
 }

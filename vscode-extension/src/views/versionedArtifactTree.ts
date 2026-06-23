@@ -61,6 +61,9 @@ export class VersionedArtifactTreeDataProvider implements vscode.TreeDataProvide
         if (!index) {
           return await this.getFallbackItems(root);
         }
+        if (this.kind === 'validation' || this.kind === 'review') {
+          return renderVersionItems(baseNames[0], index, this.kind, this.options);
+        }
         const latest = index.records[index.records.length - 1];
         const files = filterFilesByMode(latest.files, this.kind, this.options.mode ?? 'all');
         const fileEntries = Object.entries(files).sort(([left], [right]) => left.localeCompare(right));
@@ -464,7 +467,7 @@ async function collectLatestMarkdownItems(
       }
       const latest = index.records[index.records.length - 1];
       const files = filterFilesByMode(latest.files, kind, options.mode ?? 'all');
-      const versionLabel = latest.label ?? latest.versionId;
+      const versionLabel = formatVersionLabel(latest);
         return Object.entries(files)
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([relativePath, fullPath]) => {
@@ -507,7 +510,7 @@ function renderVersionItems(
         descriptionParts.push(getDirtySemanticHintSync()!);
       }
       return new VersionedArtifactTreeItem(
-        record.label ?? record.versionId,
+        formatVersionLabel(record),
         descriptionParts.join(' · ') || `${Object.keys(files).length} file(s)`,
         Object.keys(files).length > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
         undefined,
@@ -515,6 +518,17 @@ function renderVersionItems(
         { baseName, versionId: record.versionId, files },
       );
     });
+}
+
+function formatVersionLabel(record: VersionedArtifactIndex['records'][number]): string {
+  const label = (record.label ?? '').trim();
+  if (!label) {
+    return record.versionId;
+  }
+  if (/^(validation|review|graph|semantic|database schema|import validation)$/i.test(label)) {
+    return `${label} · ${record.createdAt}`;
+  }
+  return `${label} · ${record.createdAt}`;
 }
 
 function filterFilesByMode(files: Record<string, string>, kind: ArtifactVersionKind, mode: ArtifactTreeMode): Record<string, string> {

@@ -298,6 +298,12 @@ export class ConfigurationPanel {
         <label for="javaParserUrl">java-parser URL</label>
         <input id="javaParserUrl" type="text" value="${escapeAttr(config.javaParserUrl)}" />
 
+        <label for="jqassistantUrl">jqassistant URL</label>
+        <input id="jqassistantUrl" type="text" value="${escapeAttr(config.jqassistantUrl)}" />
+
+        <label for="deterministicGraphUrl">deterministic-graph URL</label>
+        <input id="deterministicGraphUrl" type="text" value="${escapeAttr((config as typeof config & { deterministicGraphUrl?: string }).deterministicGraphUrl ?? '')}" />
+
         <label for="artifactRoot">artifact root</label>
         <input id="artifactRoot" type="text" value="${escapeAttr(config.artifactRoot)}" />
 
@@ -381,6 +387,8 @@ export class ConfigurationPanel {
           validatorUrl: document.getElementById('validatorUrl').value,
           compilerUrl: document.getElementById('compilerUrl').value,
           javaParserUrl: document.getElementById('javaParserUrl').value,
+          jqassistantUrl: document.getElementById('jqassistantUrl').value,
+          deterministicGraphUrl: document.getElementById('deterministicGraphUrl').value,
           artifactRoot: document.getElementById('artifactRoot').value,
           javaBasePackage: document.getElementById('javaBasePackage').value,
           localAgents
@@ -445,6 +453,8 @@ export class ConfigurationPanel {
       validatorUrl: String(values.validatorUrl ?? this.currentValues.validatorUrl),
       compilerUrl: String(values.compilerUrl ?? this.currentValues.compilerUrl),
       javaParserUrl: String(values.javaParserUrl ?? this.currentValues.javaParserUrl),
+      jqassistantUrl: String(values.jqassistantUrl ?? this.currentValues.jqassistantUrl),
+      deterministicGraphUrl: String(values.deterministicGraphUrl ?? (this.currentValues as typeof this.currentValues & { deterministicGraphUrl?: string }).deterministicGraphUrl ?? ''),
       artifactRoot: String(values.artifactRoot ?? this.currentValues.artifactRoot),
       javaBasePackage: String(values.javaBasePackage ?? this.currentValues.javaBasePackage),
       reviewProvider,
@@ -653,6 +663,7 @@ function normalizeConfidence(value: unknown, fallback: number): number {
   if (value > 1) return 1;
   return Number(value.toFixed(2));
 }
+
 
 function resolveOllamaInstallCommand(): string | undefined {
   switch (process.platform) {

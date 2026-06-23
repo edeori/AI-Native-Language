@@ -14,3 +14,4 @@ export * from './validation-policy.js';
 export * from './feedback.js';
 export * from './java-ast.js';
 export * from './enrichment.js';
+export * from './jqassistant.js';

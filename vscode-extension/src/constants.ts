@@ -33,4 +33,6 @@ export const serverNames = {
   validator: 'validator',
   compiler: 'compiler',
   javaParser: 'java-parser',
+  jqassistant: 'jqassistant',
+  deterministicGraph: 'deterministic-graph',
 } as const;

@@ -1123,6 +1123,7 @@ async function importSourceProject(
         startedAt: new Date().toISOString(),
         astStatus: 'running',
         astStartedAt: new Date().toISOString(),
+        analysisStatus: 'pending',
         codeGraphStatus: 'pending',
         localAgentStatus: 'pending',
         projectPromptStatus: 'pending',
@@ -1183,13 +1184,16 @@ async function importSourceProject(
         state.astFinishedAt = new Date().toISOString();
         state.astArtifactPath = javaAstProject ? astPath : undefined;
         state.astFileCount = Number(javaAstProject?.fileCount ?? javaAstCatalog?.length ?? 0);
+        state.analysisStatus = javaAstProject ? 'running' : 'pending';
+        state.analysisStartedAt = javaAstProject ? new Date().toISOString() : undefined;
+        state.analysisPhase = javaAstProject ? 'Deterministic analysis and snapshot are starting from the AST catalog.' : undefined;
         state.codeGraphStatus = 'running';
         state.codeGraphStartedAt = new Date().toISOString();
         state.codeGraphProgressPath = codeGraphProgressPath;
         state.codeGraphProgressUpdatedAt = new Date().toISOString();
         state.codeGraphHeartbeatCount = 0;
         state.phase = javaAstProject
-          ? 'AST catalog written; building code knowledge graph from AST'
+          ? 'AST catalog written; deterministic analysis and graph bundle are starting'
           : 'Java AST parsing failed or returned no catalog';
         state.events?.push(
           {
@@ -1202,7 +1206,9 @@ async function importSourceProject(
           {
             at: new Date().toISOString(),
             kind: 'phase',
-            message: javaAstProject ? 'Building code knowledge graph from AST.' : 'AST parsing failed; code graph will remain pending.',
+            message: javaAstProject
+              ? 'Starting deterministic analysis and graph bundle construction.'
+              : 'AST parsing failed; deterministic graph stages will remain pending.',
           },
         );
         state.events = state.events?.slice(-20);
@@ -1214,7 +1220,8 @@ async function importSourceProject(
         projectRoot: sourceRoot,
         outputDir,
         status: 'running',
-        phase: 'AST catalog written; building code knowledge graph from AST',
+        phase: 'AST catalog written; deterministic graph bundle is starting',
+        analysisStatus: 'running',
         startedAt: reconRunState.codeGraphStartedAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         astArtifactPath: astPath,
@@ -1227,7 +1234,7 @@ async function importSourceProject(
           {
             at: new Date().toISOString(),
             phase: 'started',
-            message: 'AST catalog written; code graph build starting.',
+            message: 'AST catalog written; deterministic graph bundle starting.',
           },
         ],
       });
@@ -1257,7 +1264,7 @@ async function importSourceProject(
             codeGraphArtifactPath: reconRunState.codeGraphArtifactPath,
             progress: {
               phase: reconRunState.codeGraphPhase ? 'heartbeat' : 'building',
-              message: reconRunState.codeGraphPhase ?? 'Building code knowledge graph from AST.',
+              message: reconRunState.codeGraphPhase ?? 'Building deterministic graph bundle.',
             },
             heartbeatAt,
             heartbeatCount: codeGraphHeartbeatCount,
@@ -1265,7 +1272,7 @@ async function importSourceProject(
               {
                 at: heartbeatAt,
                 phase: 'heartbeat',
-                message: `Code graph build still running (${codeGraphHeartbeatCount}).`,
+                message: `Deterministic graph bundle still running (${codeGraphHeartbeatCount}).`,
               },
             ],
           });
@@ -1276,7 +1283,7 @@ async function importSourceProject(
             state.events.push({
               at: heartbeatAt,
               kind: 'phase',
-              message: `Code graph heartbeat ${codeGraphHeartbeatCount}: build still running.`,
+              message: `Graph heartbeat ${codeGraphHeartbeatCount}: deterministic graph bundle still running.`,
             });
             state.events = state.events.slice(-20);
           });
@@ -1293,12 +1300,26 @@ async function importSourceProject(
 
       let result: Awaited<ReturnType<typeof importSourceProjectState>> | undefined;
       try {
+        let jqassistantArtifact: unknown;
+        try {
+          report('Running jqassistant MCP scan...');
+          const jqassistantResponse = await registry.callTool('jqassistant', 'jqassistant_scan_project', {
+            projectName,
+            projectRoot: sourceRoot,
+            outputDir,
+          });
+          jqassistantArtifact = jqassistantResponse.json;
+        } catch (error) {
+          outputChannel.appendLine(`[source-to-semantic] jqassistant MCP scan skipped: ${error instanceof Error ? error.message : String(error)}`);
+        }
+
         result = await importSourceProjectState({
           projectRoot: sourceRoot,
           projectName,
           outputDir,
           resumeFromStage: normalizeResumeStage(resumeFromStage),
           javaAstCatalog,
+          jqassistantArtifact: jqassistantArtifact as never,
           onAnalysisProgress: async (event) => {
             const analysisAt = new Date().toISOString();
             outputChannel.appendLine(
@@ -1332,6 +1353,9 @@ async function importSourceProject(
             });
             await updateReconRunState((state) => {
               state.codeGraphProgressUpdatedAt = analysisAt;
+              state.analysisStatus = 'running';
+              state.analysisStartedAt ??= analysisAt;
+              state.analysisPhase = `${event.phase}: ${event.message}`;
               state.phase = event.currentFile ? `${event.message} (${path.basename(event.currentFile)})` : event.message;
               state.events ??= [];
               state.events.push({
@@ -1372,6 +1396,18 @@ async function importSourceProject(
             await updateReconRunState((state) => {
               state.codeGraphProgressUpdatedAt = lifecycleAt;
               state.phase = event.message;
+              if (event.phase === 'analysis' || event.phase === 'snapshot') {
+                state.analysisStatus = event.message.includes('complete') ? 'completed' : 'running';
+                state.analysisStartedAt ??= lifecycleAt;
+                state.analysisPhase = event.message;
+                if (event.message.includes('complete') || event.phase === 'snapshot' && /complete/i.test(event.message)) {
+                  state.analysisFinishedAt = lifecycleAt;
+                }
+              }
+              if (event.phase === 'graph') {
+                state.codeGraphStatus = event.message.includes('complete') ? 'completed' : 'running';
+                state.codeGraphStartedAt ??= lifecycleAt;
+              }
               if (event.phase === 'enrichment') {
                 state.localAgentStatus = event.message.includes('completed') ? 'completed' : 'running';
                 state.localAgentStartedAt ??= lifecycleAt;
@@ -1402,7 +1438,7 @@ async function importSourceProject(
               projectRoot: sourceRoot,
               outputDir,
               status: event.phase === 'complete' ? 'completed' : 'running',
-              phase: `Building code knowledge graph from AST: ${event.message}`,
+              phase: `Building deterministic graph bundle: ${event.message}`,
               startedAt: reconRunState.codeGraphStartedAt ?? new Date().toISOString(),
               updatedAt: new Date().toISOString(),
               astArtifactPath: astPath,
@@ -1425,8 +1461,10 @@ async function importSourceProject(
               state.codeGraphProgressUpdatedAt = new Date().toISOString();
               if (event.phase === 'complete') {
                 state.codeGraphFinishedAt = new Date().toISOString();
+                state.analysisStatus = state.analysisStatus === 'running' ? 'completed' : state.analysisStatus;
+                state.analysisFinishedAt ??= new Date().toISOString();
               }
-              state.phase = `Building code knowledge graph from AST: ${event.message}`;
+              state.phase = `Building deterministic graph bundle: ${event.message}`;
               state.events ??= [];
               state.events.push({
                 at: new Date().toISOString(),
@@ -1598,7 +1636,10 @@ async function importSourceProject(
         state.codeGraphStartedAt ??= new Date().toISOString();
         state.codeGraphFinishedAt = new Date().toISOString();
         state.codeGraphArtifactPath = result.codeKnowledgeGraphPath;
-        state.phase = 'AST catalog and code graph prepared; recon prompt received from MCP';
+        state.analysisStatus = 'completed';
+        state.analysisFinishedAt ??= new Date().toISOString();
+        state.analysisPhase = 'Deterministic analysis, snapshot, and artifact indexing completed.';
+        state.phase = 'Deterministic graph bundle prepared; recon prompt received from MCP';
         state.events?.push(
           {
             at: new Date().toISOString(),
@@ -1624,8 +1665,8 @@ async function importSourceProject(
           at: new Date().toISOString(),
           kind: 'phase',
           message: reconPayload.projectPrompt?.trim()
-            ? 'AST catalog and code graph are ready; recon prompt received from MCP and ready to dispatch agents.'
-            : 'AST catalog and code graph are ready; no project-level prompt returned, module agents will run only.',
+            ? 'Deterministic artifacts are ready; recon prompt received from MCP and ready to dispatch agents.'
+            : 'Deterministic artifacts are ready; no project-level prompt returned, module agents will run only.',
         });
         state.events = state.events?.slice(-20);
       });
@@ -2288,9 +2329,11 @@ function normalizeResumeStage(stage?: string): 'ast' | 'analysis' | 'snapshot' |
   if (normalized.includes('ast')) return 'ast';
   if (normalized.includes('analysis')) return 'analysis';
   if (normalized.includes('snapshot')) return 'snapshot';
-  if (normalized.includes('code graph') || normalized.includes('graph')) return 'graph';
-  if (normalized.includes('project prompt') || normalized.includes('prompt')) return 'prompt';
-  if (normalized.includes('module')) return 'modules';
+  if (normalized.includes('deterministic analysis')) return 'analysis';
+  if (normalized.includes('deterministic graph') || normalized.includes('code graph') || normalized.includes('graph bundle') || normalized.includes('graph')) return 'graph';
+  if (normalized.includes('local enrichment')) return 'graph';
+  if (normalized.includes('recon prompt') || normalized.includes('project prompt') || normalized.includes('prompt')) return 'prompt';
+  if (normalized.includes('module') || normalized.includes('recon prompts and agents')) return 'modules';
   if (normalized.includes('semantic')) return 'semantic';
   return undefined;
 }

@@ -58,3 +58,33 @@ services:
       - "3004:3004"
     volumes:
       - ../.ai-native:/app/.ai-native
+
+  jqassistant:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.mcp
+      args:
+        SERVICE: jqassistant
+    environment:
+      MCP_TRANSPORT_MODE: http
+      MCP_PATH: /mcp
+      PORT: 3005
+    ports:
+      - "3005:3005"
+    volumes:
+      - ../.ai-native:/app/.ai-native
+
+  deterministic-graph:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.mcp
+      args:
+        SERVICE: deterministic-graph
+    environment:
+      MCP_TRANSPORT_MODE: http
+      MCP_PATH: /mcp
+      PORT: 3006
+    ports:
+      - "3006:3006"
+    volumes:
+      - ../.ai-native:/app/.ai-native
