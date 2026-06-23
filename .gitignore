@@ -2,5 +2,26 @@ node_modules
 dist
 out
 *.tsbuildinfo
-.ai-native
 .DS_Store
+
+# .ai-native/ — ignore generated artifacts, keep semantic description, graphs, and recon history
+.ai-native/source.analysis.json
+.ai-native/source.snapshot.json
+.ai-native/source.jqassistant.json
+.ai-native/source.ast.json
+.ai-native/source.ast-index.json
+.ai-native/source.semantic.json
+.ai-native/source.preview.json
+.ai-native/source.recon.json
+.ai-native/source.state.json
+.ai-native/source.analysis.md
+.ai-native/source.codegraph.md
+.ai-native/source.recon.prompt.md
+.ai-native/source.database.json
+.ai-native/source.database.md
+.ai-native/source.semantic.suggested.md
+.ai-native/README.md
+.ai-native/enrichment/
+.ai-native/validation/
+.ai-native/generated/
+.ai-native/config/

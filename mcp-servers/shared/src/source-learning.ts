@@ -2306,7 +2306,7 @@ async function buildDirectorySnapshot(root: string): Promise<{ directories: stri
 }
 
 function shouldSkipDirectory(name: string): boolean {
-  return name === 'target' || name === 'node_modules' || name === '.git' || name === '.idea' || name === '.ai-native' || name === '.codex' || name === 'dist' || name === 'build';
+  return name === 'target' || name === 'node_modules' || name === '.git' || name === '.idea' || name === '.ai-native' || name === '.codex' || name === '.agentor' || name === 'runs' || name === 'dist' || name === 'build';
 }
 
 function shouldSkipFile(path: string): boolean {

@@ -3,8 +3,8 @@
   "tasks": [
     {
       "label": "build:vscode-extension",
-      "type": "npm",
-      "script": "build:vscode-extension",
+      "type": "shell",
+      "command": "source ~/.nvm/nvm.sh && nvm use 20 && npm run build:vscode-extension",
       "group": "build",
       "problemMatcher": []
     }

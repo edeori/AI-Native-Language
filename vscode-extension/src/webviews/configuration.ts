@@ -492,6 +492,7 @@ export class ConfigurationPanel {
       return `${result.server}: failed (${result.error ?? 'unreachable'})`;
     });
     this.render();
+    void this.onChange?.();
     vscode.window.showInformationMessage('MCP connection test completed.');
   }
 

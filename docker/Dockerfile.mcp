@@ -1,8 +1,8 @@
-FROM node:20-alpine AS build
+FROM node:20-bookworm-slim AS build
 
 WORKDIR /app
 
-RUN apk add --no-cache python3 make g++
+RUN apt-get update && apt-get install -y python3 build-essential && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
 COPY mcp-servers ./mcp-servers
@@ -23,7 +23,7 @@ RUN mkdir -p vscode-extension \
   '}' > vscode-extension/package.json
 
 RUN npm ci --ignore-scripts
-RUN npm rebuild tree-sitter tree-sitter-java --build-from-source
+RUN npm rebuild tree-sitter tree-sitter-java --build-from-source --nodedir=/usr/local
 RUN npm run build
 
 FROM node:20-alpine AS runtime

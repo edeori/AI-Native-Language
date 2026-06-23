@@ -28,6 +28,19 @@ import { hashArtifactContent, readLatestVersionedArtifact, writeVersionedArtifac
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const outputChannel = vscode.window.createOutputChannel('AI Native Semantic Workflow');
   context.subscriptions.push(outputChannel);
+  outputChannel.appendLine('[activate] starting...');
+  try {
+    await _activate(context, outputChannel);
+    outputChannel.appendLine('[activate] done');
+  } catch (err) {
+    const msg = err instanceof Error ? err.stack ?? err.message : String(err);
+    outputChannel.appendLine(`[activate] ERROR: ${msg}`);
+    outputChannel.show(true);
+    void vscode.window.showErrorMessage(`AI Native extension failed to activate: ${msg}`);
+  }
+}
+
+async function _activate(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel): Promise<void> {
   initializeMcpConfigStorage(context.globalStorageUri);
   const diagnostics = vscode.languages.createDiagnosticCollection('ai-native-semantic-workflow');
   context.subscriptions.push(diagnostics);
@@ -155,6 +168,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   await refreshViews();
 }
+// end of _activate
 
 export function deactivate(): void {}
 
@@ -1071,6 +1085,47 @@ function buildValidationDelta(context: {
   };
 }
 
+const AI_NATIVE_GITIGNORE_MARKER = '# .ai-native/ — ignore generated artifacts, keep semantic description, graphs, and recon history';
+const AI_NATIVE_GITIGNORE_BLOCK = `
+${AI_NATIVE_GITIGNORE_MARKER}
+.ai-native/source.analysis.json
+.ai-native/source.snapshot.json
+.ai-native/source.jqassistant.json
+.ai-native/source.ast.json
+.ai-native/source.ast-index.json
+.ai-native/source.semantic.json
+.ai-native/source.preview.json
+.ai-native/source.recon.json
+.ai-native/source.state.json
+.ai-native/source.analysis.md
+.ai-native/source.codegraph.md
+.ai-native/source.recon.prompt.md
+.ai-native/source.database.json
+.ai-native/source.database.md
+.ai-native/source.semantic.suggested.md
+.ai-native/README.md
+.ai-native/enrichment/
+.ai-native/validation/
+.ai-native/generated/
+.ai-native/config/
+`;
+
+async function ensureAiNativeGitignore(workspaceRoot: string, outputChannel: vscode.OutputChannel): Promise<void> {
+  const gitignorePath = path.join(workspaceRoot, '.gitignore');
+  let existing = '';
+  try {
+    existing = await fs.readFile(gitignorePath, 'utf8');
+  } catch {
+    // file doesn't exist yet — we'll create it
+  }
+  if (existing.includes(AI_NATIVE_GITIGNORE_MARKER)) {
+    return;
+  }
+  const separator = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+  await fs.writeFile(gitignorePath, existing + separator + AI_NATIVE_GITIGNORE_BLOCK, 'utf8');
+  outputChannel.appendLine(`[source-to-semantic] Added .ai-native gitignore rules to ${gitignorePath}`);
+}
+
 async function importSourceProject(
   context: vscode.ExtensionContext,
   diagnostics: vscode.DiagnosticCollection,
@@ -1091,6 +1146,7 @@ async function importSourceProject(
   const outputDir = path.join(workspaceFolder.uri.fsPath, '.ai-native');
 
   await fs.mkdir(outputDir, { recursive: true });
+  await ensureAiNativeGitignore(sourceRoot, outputChannel);
   outputChannel.show(true);
   outputChannel.appendLine(`[source-to-semantic] ${sourceRoot} -> ${outputDir}`);
 

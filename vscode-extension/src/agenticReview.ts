@@ -532,7 +532,6 @@ async function buildClaudeInvocation(
     command,
     provider: 'claude',
     args: [
-      ...(workspaceRoot ? ['--cd', workspaceRoot] : []),
       '-p',
       '--output-format',
       'json',
@@ -612,10 +611,17 @@ function parseCodexCliReviewOutput(output: string, context: AgenticReviewContext
 }
 
 function parseClaudeCliReviewOutput(output: string, context: AgenticReviewContext, command: string): { summary: string; notes: string[]; issues: AgenticReviewIssue[] } {
-  return parseStructuredReviewOutput(
-    output,
-    `${context.provider} CLI review completed via ${command}.`,
-  );
+  const fallback = `${context.provider} CLI review completed via ${command}.`;
+  // Claude CLI wraps the response in {"type":"result","result":"...AI text..."}
+  // Unwrap it before passing to the structured parser
+  const envelope = safeJsonParse(output.trim());
+  if (envelope && typeof envelope === 'object') {
+    const env = envelope as Record<string, unknown>;
+    if (env.type === 'result' && typeof env.result === 'string') {
+      return parseStructuredReviewOutput(env.result, fallback);
+    }
+  }
+  return parseStructuredReviewOutput(output, fallback);
 }
 
 function normalizeSeverity(value: string | undefined): AgenticReviewIssue['severity'] {
