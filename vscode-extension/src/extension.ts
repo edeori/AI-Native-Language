@@ -180,6 +180,9 @@ async function runValidation(
   document?: vscode.TextDocument,
   refreshViews?: () => Promise<void>,
 ): Promise<void> {
+  let completionSource: vscode.TextDocument | undefined;
+  let completionMessage: string | undefined;
+
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
@@ -339,12 +342,137 @@ async function runValidation(
       }
 
       report('Validation finished.');
-      await vscode.window.showTextDocument(source, { preview: false });
-      await vscode.window.showInformationMessage(
-        `Validation completed: ${payload.summary.gaps} gaps, ${payload.summary.conflicts} conflicts, ${payload.summary.warnings} warnings, ${payload.summary.violations} violations.`,
-      );
-      await refreshViews?.();
+      completionSource = source;
+      completionMessage = `Validation completed: ${payload.summary.gaps} gaps, ${payload.summary.conflicts} conflicts, ${payload.summary.warnings} warnings, ${payload.summary.violations} violations.`;
     },
+  );
+
+  if (completionSource) {
+    await vscode.window.showTextDocument(completionSource, { preview: false });
+  }
+  if (completionMessage) {
+    await vscode.window.showInformationMessage(completionMessage);
+  }
+  await refreshViews?.();
+}
+
+async function writeClassIndex(outputDir: string): Promise<void> {
+  const astIndexPath = path.join(outputDir, 'source.ast-index.json');
+  let raw: string;
+  try {
+    raw = await fs.readFile(astIndexPath, 'utf8');
+  } catch {
+    return; // ast-index not yet generated
+  }
+
+  const astIndex = JSON.parse(raw) as {
+    projectName?: string;
+    types?: Array<{
+      name: string;
+      kind?: string;
+      file: string;
+      applicationHint?: string;
+      layerHint?: string;
+      annotations?: string[];
+      methods?: Array<{ name: string; returnType?: string }>;
+    }>;
+    lookups?: {
+      typeToFile?: Record<string, string>;
+      annotationToTypes?: Record<string, string[]>;
+    };
+  };
+
+  const types = astIndex.types ?? [];
+  const navAnnotations = new Set([
+    'Named', 'WebServlet', 'MessageDriven', 'Stateless', 'Singleton',
+    'RequestScoped', 'ApplicationScoped', 'Schedule', 'Startup',
+    'Repository', 'Service', 'Component', 'Controller', 'RestController',
+  ]);
+
+  // Group by applicationHint / module
+  const byModule = new Map<string, typeof types>();
+  for (const t of types) {
+    const mod = t.applicationHint ?? 'unknown';
+    if (!byModule.has(mod)) byModule.set(mod, []);
+    byModule.get(mod)!.push(t);
+  }
+
+  const lines: string[] = [
+    '# Class Index',
+    '',
+    `Project: ${astIndex.projectName ?? path.basename(outputDir.replace('/.ai-native', ''))}`,
+    `Types: ${types.length}`,
+    '',
+  ];
+
+  for (const [mod, modTypes] of [...byModule.entries()].sort()) {
+    lines.push(`## ${mod}`);
+    lines.push('');
+    for (const t of modTypes) {
+      const keyAnns = (t.annotations ?? []).filter((a) => navAnnotations.has(a));
+      const annStr = keyAnns.length ? ` [@${keyAnns.join(', @')}]` : '';
+      const methodNames = (t.methods ?? [])
+        .map((m) => m.name)
+        .filter((n) => !['Override', 'PostConstruct', 'PreDestroy', 'SuppressWarnings'].includes(n))
+        .slice(0, 8);
+      const methodStr = methodNames.length ? ` — ${methodNames.join(', ')}` : '';
+      lines.push(`- **${t.name}**${annStr} → \`${t.file}\`${methodStr}`);
+    }
+    lines.push('');
+  }
+
+  await fs.writeFile(path.join(outputDir, 'source.class-index.md'), lines.join('\n'), 'utf8');
+}
+
+async function writeGraphSummary(
+  artifactRoot: vscode.Uri,
+  graph: {
+    nodes: Array<{ id: string; type: string; name: string; description?: string }>;
+    edges: Array<{ from: string; to: string; type: string }>;
+    metadata?: Record<string, unknown>;
+  },
+  sourcePath: string,
+): Promise<void> {
+  const typeCounts = new Map<string, number>();
+  for (const n of graph.nodes) {
+    typeCounts.set(n.type, (typeCounts.get(n.type) ?? 0) + 1);
+  }
+  const nodeLines = graph.nodes.map((n) => {
+    const desc = (n.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    return `- **[${n.type}]** ${n.name}${desc ? ` — ${desc}` : ''}`;
+  });
+  const edgeLines = graph.edges.map((e) => `- ${e.from} -[${e.type}]-> ${e.to}`);
+  const meta = graph.metadata as Record<string, unknown> | undefined;
+  const dbSchema = meta?.databaseSchema as { summary?: string; tables?: unknown[] } | undefined;
+
+  const summary = [
+    '# Graph Summary',
+    '',
+    `Generated from: ${sourcePath}`,
+    `Generated at: ${new Date().toISOString()}`,
+    `Nodes: ${graph.nodes.length} | Edges: ${graph.edges.length}`,
+    '',
+    '## Node types',
+    ...[...typeCounts.entries()].map(([t, c]) => `- ${t}: ${c}`),
+    '',
+    '## Nodes',
+    ...nodeLines,
+    '',
+    '## Edges',
+    ...edgeLines,
+    ...(dbSchema
+      ? [
+          '',
+          '## Database schema',
+          dbSchema.summary ?? '',
+          `Tables: ${Array.isArray(dbSchema.tables) ? dbSchema.tables.length : 'unknown'}`,
+        ]
+      : []),
+  ].join('\n') + '\n';
+
+  await vscode.workspace.fs.writeFile(
+    vscode.Uri.joinPath(artifactRoot, 'graph-summary.md'),
+    Buffer.from(summary, 'utf8'),
   );
 }
 
@@ -356,6 +484,8 @@ async function runGraphGeneration(
   document?: vscode.TextDocument,
   refreshViews?: () => Promise<void>,
 ): Promise<void> {
+  let graphCompletionMessage: string | undefined;
+
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
@@ -662,6 +792,9 @@ async function runGraphGeneration(
             },
           });
         }
+        if (artifactRoot) {
+          await writeGraphSummary(artifactRoot, reviewedGraph, source.fileName);
+        }
         report('Opening reviewed graph...');
         GraphPreviewPanel.show(context, reviewedGraph, `${path.basename(source.fileName)} · reviewed`);
         outputChannel.appendLine(
@@ -682,10 +815,14 @@ async function runGraphGeneration(
           outputChannel.appendLine(`  issues: ${agenticReview.issues.length}`);
         }
       }
-      await vscode.window.showInformationMessage('Graph generation completed.');
-      await refreshViews?.();
+      graphCompletionMessage = 'Graph generation completed.';
     },
   );
+
+  if (graphCompletionMessage) {
+    await vscode.window.showInformationMessage(graphCompletionMessage);
+  }
+  await refreshViews?.();
 }
 
 function applyReviewToGraph(
@@ -828,8 +965,29 @@ async function openGraphPreview(
   if (artifactRoot) {
     const canonicalSemanticPath = vscode.Uri.joinPath(artifactRoot, 'source.semantic.md');
     if (await pathExists(canonicalSemanticPath)) {
-      const document = await vscode.workspace.openTextDocument(canonicalSemanticPath);
-      const graph = parseGraphFromText(document.getText());
+      const canonicalSlug = slug(canonicalSemanticPath.fsPath);
+      const reviewedArtifactRecord = await readLatestVersionedArtifact(artifactRoot.fsPath, 'graph', canonicalSlug);
+      const reviewedArtifact = reviewedArtifactRecord?.files['graph.json']
+        ? vscode.Uri.file(reviewedArtifactRecord.files['graph.json'])
+        : vscode.Uri.joinPath(artifactRoot, 'graph', `${canonicalSlug}.graph.json`);
+      if (await pathExists(reviewedArtifact)) {
+        const document = await vscode.workspace.openTextDocument(reviewedArtifact);
+        const reviewedGraph = parseGraphFromText(document.getText());
+        if (reviewedGraph) {
+          GraphPreviewPanel.show(context, reviewedGraph, 'source.semantic.md · reviewed');
+          outputChannel.show(true);
+          outputChannel.appendLine(`[graph-preview] reviewed artifact: ${reviewedArtifact.fsPath}`);
+          return;
+        }
+      }
+
+      const canonicalDocument = await vscode.workspace.openTextDocument(canonicalSemanticPath);
+      const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
+        content: canonicalDocument.getText(),
+        persist: false,
+      });
+      const payload = asObject(response.json);
+      const graph = asGraphObject(payload?.graph);
       if (graph) {
         GraphPreviewPanel.show(context, graph, 'source.semantic.md');
         outputChannel.show(true);
@@ -2096,6 +2254,8 @@ async function importSourceProject(
       if (agenticReview.issues.length > 0) {
         outputChannel.appendLine(`  issues: ${agenticReview.issues.length}`);
       }
+      await writeClassIndex(outputDir);
+      outputChannel.appendLine(`[source-to-semantic] wrote source.class-index.md`);
     },
   );
 

@@ -956,9 +956,9 @@ function renderJqassistantSection(
           `Packages: ${summary?.packageCount ?? 0}`,
           `Type dependencies: ${summary?.typeDependencyCount ?? 0}`,
         ], 'jqassistant summary not available.')}
-        ${renderMetricCard('Applications', apps.length > 0
-          ? apps.map((app) => `${app.name} — ${app.role}${app.multiModule ? ' · multi-module' : ' · single application root'}`)
-          : insights.applications.map((item) => item.replace(/^APPLICATION:\s*/i, '')), 'No applications found.')}
+        ${renderMetricCard('Maven projects', apps.length > 0
+          ? apps.map((app) => `${app.name} — ${app.role}${app.multiModule ? ' · multi-module' : ''}`.trimEnd())
+          : insights.applications.map((item) => item.replace(/^APPLICATION:\s*/i, '')), 'No Maven projects found.')}
         ${renderMetricCard('Internal modules', apps.flatMap((app) => app.internalModules.map((module) => `${app.name} / ${module.name} — ${module.purpose}`)), 'No internal modules found.')}
         ${renderMetricCard('Runtime layers', runtimeLayers.map((item) => `${item.name} — ${item.role}`), 'No runtime layers found.')}
         ${renderMetricCard('Support modules', supportModules.map((item) => `${item.name} — ${item.role}`), 'No support modules found.')}

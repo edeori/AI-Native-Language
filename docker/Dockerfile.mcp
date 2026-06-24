@@ -15,12 +15,7 @@ COPY AI_Native_Semantic_Pilot_Notes.md ./
 COPY AI_Native_Semantic_Workflow.md ./
 COPY AI_Native_Semantic_Programming_Platform.md ./
 
-RUN mkdir -p vscode-extension \
-  && printf '%s\n' '{' \
-  '  "name": "@ai-native/vscode-extension",' \
-  '  "version": "0.1.0",' \
-  '  "private": true' \
-  '}' > vscode-extension/package.json
+COPY vscode-extension/package.json ./vscode-extension/
 
 RUN npm ci --ignore-scripts
 RUN npm rebuild tree-sitter tree-sitter-java --build-from-source --nodedir=/usr/local

@@ -703,7 +703,9 @@ async function findLatestIndex(
   kindRoots: string[],
 ): Promise<VersionedArtifactIndex | undefined> {
   for (const kindRoot of kindRoots) {
-    const index = await readVersionedArtifactIndex(kindRoot, kind, baseName);
+    // kindRoot is .../versions/{kind} — go up two levels to get the artifactRoot
+    const artifactRootForKind = path.dirname(path.dirname(kindRoot));
+    const index = await readVersionedArtifactIndex(artifactRootForKind, kind, baseName);
     if (index) {
       return index;
     }

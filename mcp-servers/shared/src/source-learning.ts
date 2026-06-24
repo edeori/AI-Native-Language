@@ -4595,6 +4595,20 @@ function inferConfigurationPurpose(typeName: string, file: string, text: string)
   return 'application bean configuration';
 }
 
+function inferSingleModuleRole(name: string): string {
+  if (/ear$/i.test(name)) return 'EAR assembly — packages EJB and Web layers into a deployable enterprise archive';
+  if (/ejb$/i.test(name)) return 'EJB module — business logic, domain services, and EJB-based transaction boundaries';
+  if (/web$/i.test(name)) return 'Web module — servlet layer, UI resources, and web-tier entry points';
+  if (/commonutil$/i.test(name)) return 'shared utilities library — reusable helper code and common constants';
+  if (/common$/i.test(name)) return 'shared library — cross-cutting utilities and common domain support';
+  if (/types$/i.test(name)) return 'types module — shared data contracts, DTOs, and domain type definitions';
+  if (/avro$/i.test(name)) return 'Avro schemas — message and event serialization definitions';
+  if (/install$/i.test(name)) return 'installation module — deployment scripts and release packaging artifacts';
+  if (/exttestclient$/i.test(name) || /testclient$/i.test(name)) return 'test utility — standalone developer or integration test helper';
+  if (/client$/i.test(name)) return 'client library — external API stub or service integration client';
+  return 'standalone Maven module';
+}
+
 function collectRepositoryStructureSummary(projectRoot: string, modules: string[]): RepositoryStructureSummary {
   const normalizedModules = modules.map((item) => item.replace(/\\/g, '/'));
   const hasEventBackend = normalizedModules.some((item) => item === 'event-backend');
@@ -4631,7 +4645,7 @@ function collectRepositoryStructureSummary(projectRoot: string, modules: string[
       name: rootName,
       role: childModules.length > 0
         ? 'multi-module application with child Maven modules under a shared application root'
-        : 'single-module application rooted at one Maven project directory',
+        : inferSingleModuleRole(rootName),
     };
   });
 
