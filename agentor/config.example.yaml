@@ -1,0 +1,39 @@
+workspace_root: /path/to/your/repository-root   # e.g. /mnt/c/REPOSITORY
+
+# Types: spring-boot | angular | vite-ts | legacy-ejb | gradle-java | gradle-lambda | asa-config | kubera-manifest | terraform | ansible-cda | e2e-test | misc
+# test_command: default command to run tests; omitted for config-only repos
+
+repos:
+
+  # ── Spring Boot Backend ────────────────────────────────────────────────────
+
+  my-backend:
+    path: my-backend-repo-folder   # relative to workspace_root
+    type: spring-boot
+    test_command: ./mvnw test
+
+  # ── Frontend ───────────────────────────────────────────────────────────────
+
+  my-frontend:
+    path: my-frontend-repo-folder
+    type: vite-ts
+    test_command: npm test -- --run
+
+  # ── Angular ───────────────────────────────────────────────────────────────
+
+  my-angular-app:
+    path: my-angular-repo-folder
+    type: angular
+    test_command: npm run test -- --watch=false
+
+  # ── Config-only (no test_command) ─────────────────────────────────────────
+
+  my-k8s-config:
+    path: my-k8s-config-folder
+    type: asa-config
+
+  # ── Terraform ─────────────────────────────────────────────────────────────
+
+  my-infra:
+    path: my-infra-folder
+    type: terraform

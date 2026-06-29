@@ -1,5 +1,6 @@
 # Claude Code — machine-specific, not shared
-.claude/
+.claude/*
+!.claude/skills/
 .mcp.json
 
 node_modules

@@ -1,0 +1,10 @@
+# Site-specific config — copy config.example.yaml → config.yaml and fill in your paths
+config.yaml
+
+# Runtime directories — generated per task, contain code changes and prompts
+contracts/*
+!contracts/.gitkeep
+runs/*
+!runs/.gitkeep
+memory/*
+!memory/.gitkeep
