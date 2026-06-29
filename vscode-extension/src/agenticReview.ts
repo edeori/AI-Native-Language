@@ -191,13 +191,13 @@ export async function runAgenticReviewBundle(
  * Same CLI path as runAgenticPrompt but skips structured review parsing — returns plain text.
  * Used by Source Import cloud AI to feed the same slice prompts as local ollama agents.
  */
-export async function runCloudRawPrompt(context: AgenticReviewContext, prompt: string): Promise<string> {
+export async function runCloudRawPrompt(context: AgenticReviewContext, prompt: string, onChunk?: (raw: string) => void): Promise<string> {
   if (context.mode === 'cli') {
     const cwd = context.workspaceRoot ?? path.dirname(context.sourcePath);
     const cli = await resolveProviderCli(context.provider, context.model, prompt, cwd);
     if (!cli) return '';
     try {
-      const output = await executeCli(cli.command, cli.args, cli.stdin ?? '', cwd);
+      const output = await executeCli(cli.command, cli.args, cli.stdin ?? '', cwd, onChunk);
       const normalized = normalizeCliOutput(output.stdout, output.stderr);
       return extractRawAiText(normalized, context.provider);
     } finally {
@@ -213,10 +213,14 @@ export async function runCloudRawPrompt(context: AgenticReviewContext, prompt: s
 
 function extractRawAiText(normalized: string, provider: AgenticReviewContext['provider']): string {
   if (provider === 'claude') {
-    const envelope = safeJsonParse(normalized.trim());
-    if (envelope && typeof envelope === 'object') {
-      const env = envelope as Record<string, unknown>;
-      if (env.type === 'result' && typeof env.result === 'string') return env.result;
+    // stream-json format: NDJSON — find the result line (scan in reverse, it's the last)
+    const lines = normalized.split(/\r?\n/);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const parsed = safeJsonParse(lines[i].trim());
+      if (parsed && typeof parsed === 'object') {
+        const env = parsed as Record<string, unknown>;
+        if (env.type === 'result' && typeof env.result === 'string') return env.result;
+      }
     }
     return normalized;
   }
@@ -587,8 +591,9 @@ async function buildClaudeInvocation(
     provider: 'claude',
     args: [
       '-p',
+      '--dangerously-skip-permissions',
       '--output-format',
-      'json',
+      'stream-json',
       '--model',
       model || 'sonnet',
     ],
@@ -599,7 +604,7 @@ async function buildClaudeInvocation(
   };
 }
 
-function executeCli(command: string, args: string[], prompt: string, cwd?: string): Promise<{ stdout: string; stderr: string }> {
+function executeCli(command: string, args: string[], prompt: string, cwd?: string, onChunk?: (raw: string) => void): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
@@ -618,6 +623,7 @@ function executeCli(command: string, args: string[], prompt: string, cwd?: strin
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
       stdout += chunk;
+      onChunk?.(chunk as string);
     });
     child.stderr.on('data', (chunk) => {
       stderr += chunk;

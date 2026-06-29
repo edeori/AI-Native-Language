@@ -91,6 +91,30 @@
       {
         "command": "aiNative.runDocCodeAlignment",
         "title": "AI Native: Run Doc-Code Alignment"
+      },
+      {
+        "command": "aiNative.runImplementation",
+        "title": "AI Native: Run Implementation"
+      },
+      {
+        "command": "aiNative.openImplementationReport",
+        "title": "AI Native: Open Implementation Report"
+      },
+      {
+        "command": "aiNative.openDevelopmentView",
+        "title": "AI Native: Open Development Panel"
+      },
+      {
+        "command": "aiNative.queueImplementation",
+        "title": "AI Native: Queue Implementation Task"
+      },
+      {
+        "command": "aiNative.runQueue",
+        "title": "AI Native: Run Implementation Queue"
+      },
+      {
+        "command": "aiNative.deleteTask",
+        "title": "AI Native: Delete Queued Task"
       }
     ],
     "configuration": {
@@ -141,6 +165,13 @@
     "viewsContainers": {
       "activitybar": [
         {
+          "id": "aiNativeDev",
+          "title": "AI Native Development",
+          "icon": "media/ai-native.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
           "id": "aiNativeSemantic",
           "title": "AI Agent",
           "icon": "media/ai-native.svg"
@@ -148,6 +179,13 @@
       ]
     },
     "views": {
+      "aiNativeDev": [
+        {
+          "type": "webview",
+          "id": "aiNativeDevelopmentView",
+          "name": "Development"
+        }
+      ],
       "aiNativeSemantic": [
         {
           "type": "webview",

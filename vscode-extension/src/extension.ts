@@ -3,11 +3,15 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { commandIds } from './constants.js';
 import { getConfig } from './config.js';
+import { addTask, deleteTask, loadTasks, updateTaskStatus } from './development/taskStore.js';
+import { generateTaskId } from './development/taskId.js';
+import { runImplementationTask } from './development/implementationRunner.js';
 import { McpRegistry } from './mcpRegistry.js';
 import { VersionedArtifactTreeDataProvider } from './views/versionedArtifactTree.js';
 import { ValidationPanelTreeDataProvider } from './views/validationPanelTree.js';
 import { McpTreeDataProvider } from './views/mcpTree.js';
 import { ActionsWebviewProvider } from './webviews/actionsView.js';
+import { DevelopmentWebviewProvider } from './webviews/developmentView.js';
 import { FlowWebviewProvider } from './webviews/flowView.js';
 import { DocumentImportWebviewProvider } from './webviews/documentImportView.js';
 import { ConfigurationPanel } from './webviews/configuration.js';
@@ -46,6 +50,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 async function _activate(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel): Promise<void> {
+  if (!context.globalState.get('aiNative.devPanelHintShown')) {
+    void context.globalState.update('aiNative.devPanelHintShown', true);
+    void vscode.window.showInformationMessage(
+      'AI Native: Development panel is available in the Activity Bar (left sidebar). Right-click the icon → "Move to Secondary Side Bar" to place it next to Chat.',
+      'Open panel',
+    ).then((choice) => {
+      if (choice === 'Open panel') {
+        void vscode.commands.executeCommand('workbench.view.extension.aiNativeDev');
+      }
+    });
+  }
   initializeMcpConfigStorage(context.globalStorageUri);
   const diagnostics = vscode.languages.createDiagnosticCollection('ai-native-semantic-workflow');
   context.subscriptions.push(diagnostics);
@@ -63,6 +78,7 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
   const databaseSchemaProvider = new VersionedArtifactTreeDataProvider('databaseSchema', 'Database Schema', 'Versioned database schema outputs.');
   const mcpProvider = new McpTreeDataProvider(registry);
   const actionsProvider = new ActionsWebviewProvider(context);
+  const developmentProvider = new DevelopmentWebviewProvider(context);
   const flowProvider = new FlowWebviewProvider(context);
   const docImportProvider = new DocumentImportWebviewProvider(context, registry, outputChannel);
   const reconRunsProvider = new ReconRunsWebviewProvider(context);
@@ -73,6 +89,9 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
   const databaseSchemaView = vscode.window.createTreeView('aiNativeDatabaseSchema', { treeDataProvider: databaseSchemaProvider });
   const mcpView = vscode.window.createTreeView('aiNativeMcpHub', { treeDataProvider: mcpProvider });
   const actionsView = vscode.window.registerWebviewViewProvider('aiNativeActions', actionsProvider, {
+    webviewOptions: { retainContextWhenHidden: true },
+  });
+  const developmentView = vscode.window.registerWebviewViewProvider('aiNativeDevelopmentView', developmentProvider, {
     webviewOptions: { retainContextWhenHidden: true },
   });
   const flowView = vscode.window.registerWebviewViewProvider('aiNativeFlow', flowProvider, {
@@ -91,10 +110,33 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
     databaseSchemaView,
     mcpView,
     actionsView,
+    developmentView,
     flowView,
     docImportView,
     reconRunsView,
   );
+
+  const refreshDevelopmentContext = async (): Promise<void> => {
+    const artifactRoot = await resolveArtifactRoot();
+    if (!artifactRoot) {
+      developmentProvider.updateState({ hasContext: false, contextSources: { hasSemantic: false, hasCodegraph: false, hasDocEntities: false }, tasks: [] });
+      return;
+    }
+    const check = async (rel: string): Promise<boolean> => {
+      try { await fs.access(path.join(artifactRoot.fsPath, rel)); return true; } catch { return false; }
+    };
+    const [hasSemantic, hasCodegraph, hasDocEntities, tasks] = await Promise.all([
+      check('source.semantic.md'),
+      check('source.codegraph.json'),
+      check('doc-entities.json'),
+      loadTasks(artifactRoot.fsPath),
+    ]);
+    developmentProvider.updateState({
+      hasContext: hasSemantic || hasDocEntities,
+      contextSources: { hasSemantic, hasCodegraph, hasDocEntities },
+      tasks,
+    });
+  };
 
   const refreshViews = async (): Promise<void> => {
     validationProvider.refresh();
@@ -104,6 +146,7 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
     mcpProvider.refresh();
     reconRunsProvider.refresh();
     await registry.pingAll();
+    void refreshDevelopmentContext();
   };
 
   const openDashboard = async (): Promise<void> => {
@@ -157,6 +200,141 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
     }),
     vscode.commands.registerCommand(commandIds.runDocCodeAlignment, async () => {
       await runDocCodeAlignment(context, registry, outputChannel, refreshViews);
+    }),
+    vscode.commands.registerCommand(commandIds.openDevelopmentView, async () => {
+      try {
+        await vscode.commands.executeCommand('workbench.view.extension.aiNativeDev');
+      } catch {
+        // best-effort
+      }
+    }),
+    vscode.commands.registerCommand(commandIds.runImplementation, async (payload?: { direction?: string }) => {
+      const direction = payload?.direction?.trim();
+      if (!direction) { void vscode.window.showWarningMessage('No direction provided.'); return; }
+      const artifactRoot = await resolveArtifactRoot();
+      if (!artifactRoot) { void vscode.window.showWarningMessage('Open a workspace first.'); return; }
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!workspaceRoot) { void vscode.window.showWarningMessage('No workspace folder open.'); return; }
+      const tasks = await loadTasks(artifactRoot.fsPath);
+      const taskId = generateTaskId(workspaceRoot, tasks);
+      const task = { taskId, direction, status: 'queued' as const, createdAt: new Date().toISOString() };
+      await addTask(artifactRoot.fsPath, task);
+      await refreshDevelopmentContext();
+
+      if (tasks.some(t => t.status === 'running')) {
+        void vscode.window.showInformationMessage(`A task is already running — ${taskId} added to queue.`);
+        return;
+      }
+
+      let streamBuf = '';
+      void runImplementationTask(task, artifactRoot.fsPath, workspaceRoot, outputChannel, async () => {
+        await refreshDevelopmentContext();
+      }, (text) => {
+        if (text) {
+          streamBuf += (streamBuf ? '\n' : '') + text;
+          if (streamBuf.length > 4000) streamBuf = streamBuf.slice(-4000);
+          developmentProvider.updateState({ streamOutput: streamBuf });
+        }
+      }).then(({ docDrift, driftNotes }) => {
+        developmentProvider.updateState({ streamOutput: '' });
+        if (docDrift) {
+          void publishDriftDiagnostics(diagnostics, artifactRoot, driftNotes);
+          void vscode.window.showWarningMessage(
+            `⚠ Task ${taskId} done — Claude flagged a possible semantic drift. Check semantic documentation.`,
+            'Validate semantic',
+          ).then(choice => {
+            if (choice === 'Validate semantic') {
+              void vscode.commands.executeCommand(commandIds.validateActiveSemanticMarkdown);
+            }
+          });
+        }
+      }).catch(err => {
+        developmentProvider.updateState({ streamOutput: '' });
+        void vscode.window.showErrorMessage(`Implementation failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }),
+    vscode.commands.registerCommand(commandIds.queueImplementation, async (payload?: { direction?: string }) => {
+      const direction = payload?.direction?.trim();
+      if (!direction) { void vscode.window.showWarningMessage('No direction provided.'); return; }
+      const artifactRoot = await resolveArtifactRoot();
+      if (!artifactRoot) { void vscode.window.showWarningMessage('Open a workspace first.'); return; }
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+      const tasks = await loadTasks(artifactRoot.fsPath);
+      const taskId = generateTaskId(workspaceRoot, tasks);
+      await addTask(artifactRoot.fsPath, { taskId, direction, status: 'queued', createdAt: new Date().toISOString() });
+      await refreshDevelopmentContext();
+      void vscode.window.showInformationMessage(`Task queued: ${taskId}`);
+    }),
+    vscode.commands.registerCommand(commandIds.runQueue, async () => {
+      const artifactRoot = await resolveArtifactRoot();
+      if (!artifactRoot) { void vscode.window.showWarningMessage('Open a workspace first.'); return; }
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!workspaceRoot) { void vscode.window.showWarningMessage('No workspace folder open.'); return; }
+      const tasks = await loadTasks(artifactRoot.fsPath);
+      if (tasks.some(t => t.status === 'running' || t.status === 'pending')) {
+        void vscode.window.showWarningMessage('A task is already running. Wait for it to finish before starting the queue.');
+        return;
+      }
+      const queued = tasks.filter(t => t.status === 'queued').sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      if (queued.length === 0) { void vscode.window.showInformationMessage('No queued tasks.'); return; }
+      // Set all queued → pending, first → running
+      for (const t of queued) {
+        await updateTaskStatus(artifactRoot.fsPath, t.taskId, 'pending');
+      }
+      await refreshDevelopmentContext();
+      // Run tasks sequentially
+      void (async () => {
+        for (const t of queued) {
+          const fresh = (await loadTasks(artifactRoot.fsPath)).find(x => x.taskId === t.taskId);
+          if (!fresh) continue;
+          let qStreamBuf = '';
+          await runImplementationTask(fresh, artifactRoot.fsPath, workspaceRoot, outputChannel, async () => {
+            await refreshDevelopmentContext();
+          }, (text) => {
+            if (text) {
+              qStreamBuf += (qStreamBuf ? '\n' : '') + text;
+              if (qStreamBuf.length > 4000) qStreamBuf = qStreamBuf.slice(-4000);
+              developmentProvider.updateState({ streamOutput: qStreamBuf });
+            }
+          }).then(({ docDrift, driftNotes }) => {
+            developmentProvider.updateState({ streamOutput: '' });
+            if (docDrift) {
+              void publishDriftDiagnostics(diagnostics, artifactRoot, driftNotes);
+              outputChannel.appendLine(`[queue] ⚠ semantic drift flagged by Claude — task ${t.taskId}`);
+            }
+          }).catch(err => {
+            developmentProvider.updateState({ streamOutput: '' });
+            outputChannel.appendLine(`[queue] task ${t.taskId} failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }
+        void vscode.window.showInformationMessage(`Queue finished — ${queued.length} task(s) completed.`);
+      })();
+    }),
+    vscode.commands.registerCommand(commandIds.deleteTask, async (payload?: { taskId?: string }) => {
+      const taskId = payload?.taskId;
+      if (!taskId) return;
+      const artifactRoot = await resolveArtifactRoot();
+      if (!artifactRoot) { void vscode.window.showWarningMessage('Open a workspace first.'); return; }
+      const tasks = await loadTasks(artifactRoot.fsPath);
+      const target = tasks.find(t => t.taskId === taskId);
+      if (target?.status === 'running' || target?.status === 'pending') {
+        void vscode.window.showWarningMessage(`Cannot delete task ${taskId} — it is currently ${target.status}.`);
+        return;
+      }
+      await deleteTask(artifactRoot.fsPath, taskId);
+      await refreshDevelopmentContext();
+    }),
+    vscode.commands.registerCommand(commandIds.openImplementationReport, async (payload?: { taskId?: string }) => {
+      const taskId = payload?.taskId;
+      if (!taskId) return;
+      const artifactRoot = await resolveArtifactRoot();
+      if (!artifactRoot) return;
+      const reportUri = vscode.Uri.file(path.join(artifactRoot.fsPath, 'development', 'runs', taskId, 'report.md'));
+      try {
+        await vscode.commands.executeCommand('markdown.showPreview', reportUri);
+      } catch {
+        await vscode.window.showTextDocument(reportUri, { preview: true });
+      }
     }),
     vscode.commands.registerCommand(commandIds.openArtifactsFolder, async () => {
       const root = await resolveArtifactRoot();
@@ -347,7 +525,7 @@ async function runValidation(
 
           await submitFeedbackDelta({
             registry,
-            workspaceRoot: artifactRoot.fsPath,
+            workspaceRoot: path.dirname(artifactRoot.fsPath),
             server: 'validator',
             kind: 'validation',
           sourcePath: source.fileName,
@@ -794,7 +972,7 @@ async function runGraphGeneration(
 
           await submitFeedbackDelta({
             registry,
-            workspaceRoot: artifactRoot.fsPath,
+            workspaceRoot: path.dirname(artifactRoot.fsPath),
             server: 'semanticCore',
             kind: 'graph',
             sourcePath: source.fileName,
@@ -3599,5 +3777,32 @@ async function runDocCodeAlignment(
     const msg = err instanceof Error ? err.message : String(err);
     outputChannel.appendLine(`[alignment] error: ${msg}`);
     vscode.window.showErrorMessage(`Alignment check failed: ${msg}`);
+  }
+}
+
+// ── Semantic drift diagnostics ───────────────────────────────────
+// Attaches Claude's drift notes as a Warning on line 1 of source.semantic.md.
+// Claude decides what constitutes a semantic-level change — no file-name heuristics.
+
+async function publishDriftDiagnostics(
+  diagnostics: vscode.DiagnosticCollection,
+  artifactRoot: vscode.Uri,
+  driftNotes: string,
+): Promise<void> {
+  if (!driftNotes.trim()) return;
+  try {
+    const semanticUri = vscode.Uri.joinPath(artifactRoot, 'source.semantic.md');
+    await vscode.workspace.openTextDocument(semanticUri); // ensure file exists
+    const range = new vscode.Range(0, 0, 0, 0);
+    const diag = new vscode.Diagnostic(
+      range,
+      `Semantic drift (Claude): ${driftNotes.replace(/\n/g, ' · ').slice(0, 300)}`,
+      vscode.DiagnosticSeverity.Warning,
+    );
+    diag.source = 'AI Native Development';
+    const existing = [...(diagnostics.get(semanticUri) ?? [])];
+    diagnostics.set(semanticUri, [...existing, diag]);
+  } catch {
+    // best-effort
   }
 }

@@ -13,13 +13,19 @@ export const commandIds = {
   runAiEnrichment: 'aiNative.runAiEnrichment',
   openMarkdownArtifactPreview: 'aiNative.openMarkdownArtifactPreview',
   openGraphPreview: 'aiNative.openGraphPreview',
-openArtifactsFolder: 'aiNative.openArtifactsFolder',
+  openArtifactsFolder: 'aiNative.openArtifactsFolder',
   showMcpStatus: 'aiNative.showMcpStatus',
   importSourceProject: 'aiNative.importSourceProject',
   importDocuments: 'aiNative.importDocuments',
   showEndpoints: 'aiNative.showEndpoints',
   runFlowExtraction: 'aiNative.runFlowExtraction',
   runDocCodeAlignment: 'aiNative.runDocCodeAlignment',
+  runImplementation: 'aiNative.runImplementation',
+  openImplementationReport: 'aiNative.openImplementationReport',
+  openDevelopmentView: 'aiNative.openDevelopmentView',
+  queueImplementation: 'aiNative.queueImplementation',
+  runQueue: 'aiNative.runQueue',
+  deleteTask: 'aiNative.deleteTask',
 } as const;
 
 export const viewIds = {

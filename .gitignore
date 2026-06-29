@@ -30,3 +30,4 @@ out
 .ai-native/validation/
 .ai-native/generated/
 .ai-native/config/
+.ai-native/development/
