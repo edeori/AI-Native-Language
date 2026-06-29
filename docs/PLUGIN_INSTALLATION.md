@@ -102,14 +102,16 @@ code --install-extension ai-native-semantic-workflow-0.1.0.vsix --force
 
 The extension package installs the UI and client logic, but most useful features depend on MCP services being reachable.
 
-Default MCP endpoints:
+Default MCP endpoints (Docker compose environment, `10.9.0.2` network):
 
-- `http://localhost:3001/mcp` for `semantic-core`
-- `http://localhost:3002/mcp` for `validator`
-- `http://localhost:3003/mcp` for `compiler`
-- `http://localhost:3004/mcp` for `java-parser`
-- `http://localhost:3005/mcp` for `jqassistant`
-- `http://localhost:3006/mcp` for `deterministic-graph`
+- `http://10.9.0.2:3001/mcp` for `semantic-core`
+- `http://10.9.0.2:3002/mcp` for `validator`
+- `http://10.9.0.2:3003/mcp` for `compiler`
+- `http://10.9.0.2:3004/mcp` for `java-parser`
+- `http://10.9.0.2:3005/mcp` for `jqassistant`
+- `http://10.9.0.2:3007/mcp` for `document-import`
+
+For local development without Docker, replace `10.9.0.2` with `localhost`.
 
 If these services are not running, the extension can still load, but the workflow actions depending on them will fail.
 
@@ -123,7 +125,7 @@ npm run dev:http:validator
 npm run dev:http:compiler
 npm run dev:http:java-parser
 npm run dev:http:jqassistant
-npm run dev:http:deterministic-graph
+npm run dev:http:document-import
 ```
 
 ## Configure the extension after install
@@ -135,7 +137,7 @@ After installation, open the extension settings and verify:
 - compiler URL
 - java-parser URL
 - jqassistant URL
-- deterministic-graph URL
+- document-import URL
 - artifact root
 - Java base package
 

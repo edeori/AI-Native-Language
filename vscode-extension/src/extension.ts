@@ -5,10 +5,14 @@ import { commandIds } from './constants.js';
 import { getConfig } from './config.js';
 import { McpRegistry } from './mcpRegistry.js';
 import { VersionedArtifactTreeDataProvider } from './views/versionedArtifactTree.js';
+import { ValidationPanelTreeDataProvider } from './views/validationPanelTree.js';
 import { McpTreeDataProvider } from './views/mcpTree.js';
 import { ActionsWebviewProvider } from './webviews/actionsView.js';
+import { FlowWebviewProvider } from './webviews/flowView.js';
+import { DocumentImportWebviewProvider } from './webviews/documentImportView.js';
 import { ConfigurationPanel } from './webviews/configuration.js';
 import { GraphPreviewPanel } from './webviews/graphPreview.js';
+import { EndpointSummaryPanel } from './webviews/endpointSummaryPanel.js';
 import { ReconRunsWebviewProvider, type ReconRunModuleSnapshot, type ReconRunSnapshot } from './webviews/reconRunsView.js';
 import { resolveArtifactRoot } from './workspaceArtifacts.js';
 import { initializeMcpConfigStorage } from './mcpConfigStore.js';
@@ -20,9 +24,10 @@ import {
   runLocalAgentRole,
   writeReviewDossier,
   type EnrichmentOutput,
+  type JqassistantArtifact,
   type JavaAstFile,
 } from '@ai-native/semantic-shared';
-import { runAgenticPrompt, runAgenticReviewBundle, type AgenticDiagramClassification, type AgenticReviewResult, type ReviewPromptBundle } from './agenticReview.js';
+import { runAgenticPrompt, runAgenticReviewBundle, runCloudRawPrompt, type AgenticDiagramClassification, type AgenticReviewContext, type AgenticReviewResult, type ReviewPromptBundle } from './agenticReview.js';
 import { hashArtifactContent, readLatestVersionedArtifact, writeVersionedArtifact } from './versionedArtifacts.js';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -52,12 +57,14 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
     },
   });
 
-  const validationProvider = new VersionedArtifactTreeDataProvider('validation', 'Validation', 'Versioned validation runs.');
+  const validationProvider = new ValidationPanelTreeDataProvider();
   const reviewProvider = new VersionedArtifactTreeDataProvider('review', 'Review', 'Versioned AI review outputs.');
   const semanticProvider = new VersionedArtifactTreeDataProvider('semantic', 'Semantic', 'Versioned semantic source states.');
   const databaseSchemaProvider = new VersionedArtifactTreeDataProvider('databaseSchema', 'Database Schema', 'Versioned database schema outputs.');
   const mcpProvider = new McpTreeDataProvider(registry);
   const actionsProvider = new ActionsWebviewProvider(context);
+  const flowProvider = new FlowWebviewProvider(context);
+  const docImportProvider = new DocumentImportWebviewProvider(context, registry, outputChannel);
   const reconRunsProvider = new ReconRunsWebviewProvider(context);
 
   const validationView = vscode.window.createTreeView('aiNativeValidation', { treeDataProvider: validationProvider });
@@ -66,6 +73,12 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
   const databaseSchemaView = vscode.window.createTreeView('aiNativeDatabaseSchema', { treeDataProvider: databaseSchemaProvider });
   const mcpView = vscode.window.createTreeView('aiNativeMcpHub', { treeDataProvider: mcpProvider });
   const actionsView = vscode.window.registerWebviewViewProvider('aiNativeActions', actionsProvider, {
+    webviewOptions: { retainContextWhenHidden: true },
+  });
+  const flowView = vscode.window.registerWebviewViewProvider('aiNativeFlow', flowProvider, {
+    webviewOptions: { retainContextWhenHidden: true },
+  });
+  const docImportView = vscode.window.registerWebviewViewProvider('aiNativeDocImport', docImportProvider, {
     webviewOptions: { retainContextWhenHidden: true },
   });
   const reconRunsView = vscode.window.registerWebviewViewProvider('aiNativeRecon', reconRunsProvider, {
@@ -78,6 +91,8 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
     databaseSchemaView,
     mcpView,
     actionsView,
+    flowView,
+    docImportView,
     reconRunsView,
   );
 
@@ -103,7 +118,10 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
   context.subscriptions.push(
     vscode.commands.registerCommand(commandIds.openDashboard, openDashboard),
     vscode.commands.registerCommand(commandIds.openConfiguration, async () => {
-      ConfigurationPanel.show(context, registry, refreshViews);
+      ConfigurationPanel.show(context, registry, async () => {
+        await refreshViews();
+        flowProvider.refreshHtml();
+      });
     }),
     vscode.commands.registerCommand(commandIds.openReconRuns, async () => {
       try {
@@ -115,14 +133,8 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
     vscode.commands.registerCommand(commandIds.createSemanticSourceTemplate, async () => {
       await createSemanticSourceTemplate();
     }),
-    vscode.commands.registerCommand(commandIds.importSourceProject, async () => {
-      await importSourceProject(context, diagnostics, registry, outputChannel, refreshViews, reconRunsProvider);
-    }),
-    vscode.commands.registerCommand(commandIds.resumeRecon, async (stage?: string) => {
-      if (stage) {
-        outputChannel.appendLine(`[source-to-semantic] resume recon requested from stage: ${stage}`);
-      }
-      await importSourceProject(context, diagnostics, registry, outputChannel, refreshViews, reconRunsProvider, stage);
+    vscode.commands.registerCommand(commandIds.importSourceProject, async (options?: { ollamaEnabled?: boolean; jqassistantEnabled?: boolean; sourceCloudEnabled?: boolean; enabledSteps?: string[] }) => {
+      await importSourceProject(context, diagnostics, registry, outputChannel, refreshViews, reconRunsProvider, undefined, options?.ollamaEnabled ?? true, options?.jqassistantEnabled ?? true, options?.enabledSteps, options?.sourceCloudEnabled ?? false);
     }),
     vscode.commands.registerCommand(commandIds.openTutorial, async () => {
       await openExampleSlice();
@@ -133,6 +145,18 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       outputChannel.show(true);
       outputChannel.appendLine(JSON.stringify(status, null, 2));
       await refreshViews();
+    }),
+    vscode.commands.registerCommand(commandIds.importDocuments, async () => {
+      await vscode.commands.executeCommand('aiNativeDocImport.focus');
+    }),
+    vscode.commands.registerCommand(commandIds.showEndpoints, async () => {
+      await EndpointSummaryPanel.show(context);
+    }),
+    vscode.commands.registerCommand(commandIds.runFlowExtraction, async (opts?: { flowAiEnabled?: boolean }) => {
+      await runFlowExtraction(context, registry, outputChannel, refreshViews, flowProvider, opts?.flowAiEnabled ?? false);
+    }),
+    vscode.commands.registerCommand(commandIds.runDocCodeAlignment, async () => {
+      await runDocCodeAlignment(context, registry, outputChannel, refreshViews);
     }),
     vscode.commands.registerCommand(commandIds.openArtifactsFolder, async () => {
       const root = await resolveArtifactRoot();
@@ -146,17 +170,20 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
     vscode.commands.registerCommand(commandIds.validateActiveSemanticMarkdown, async () => {
       await runValidation(context, diagnostics, registry, outputChannel, undefined, refreshViews);
     }),
-    vscode.commands.registerCommand(commandIds.generateCanonicalGraph, async () => {
-      await runGraphGeneration(context, diagnostics, registry, outputChannel, undefined, refreshViews);
+    vscode.commands.registerCommand(commandIds.generateCanonicalGraph, async (options?: { aiReviewEnabled?: boolean }) => {
+      await runGraphGeneration(context, diagnostics, registry, outputChannel, undefined, refreshViews, options?.aiReviewEnabled ?? true);
+    }),
+    vscode.commands.registerCommand(commandIds.runJqassistantScan, async () => {
+      await runJqassistantScan(context, registry, outputChannel, refreshViews);
+    }),
+    vscode.commands.registerCommand(commandIds.runAiEnrichment, async (opts?: { ollamaEnabled?: boolean; cloudEnabled?: boolean }) => {
+      await runAiEnrichment(reconRunsProvider, outputChannel, refreshViews, opts?.ollamaEnabled ?? false, opts?.cloudEnabled ?? true, registry);
     }),
     vscode.commands.registerCommand(commandIds.openMarkdownArtifactPreview, async (resource?: vscode.Uri | string) => {
       await openMarkdownArtifactPreview(resource, outputChannel);
     }),
     vscode.commands.registerCommand(commandIds.openGraphPreview, async (resource?: vscode.Uri | string) => {
       await openGraphPreview(context, registry, outputChannel, resource);
-    }),
-    vscode.commands.registerCommand(commandIds.generateSpringBootSkeleton, async () => {
-      await runSpringGeneration(context, registry, outputChannel);
     }),
   );
 
@@ -483,6 +510,7 @@ async function runGraphGeneration(
   outputChannel: vscode.OutputChannel,
   document?: vscode.TextDocument,
   refreshViews?: () => Promise<void>,
+  aiReviewEnabled = true,
 ): Promise<void> {
   let graphCompletionMessage: string | undefined;
 
@@ -541,6 +569,9 @@ async function runGraphGeneration(
         outputChannel.appendLine(line);
       }
       if (graph) {
+        if (!aiReviewEnabled) {
+          GraphPreviewPanel.show(context, graph, path.basename(source.fileName));
+        } else {
         const config = getConfig();
         report(`Running AI review with ${config.reviewProvider}...`);
         const reviewPromptBundle = await loadReviewPromptBundle(registry, {
@@ -814,6 +845,7 @@ async function runGraphGeneration(
         if (agenticReview.issues.length > 0) {
           outputChannel.appendLine(`  issues: ${agenticReview.issues.length}`);
         }
+        } // end else (aiReviewEnabled)
       }
       graphCompletionMessage = 'Graph generation completed.';
     },
@@ -868,39 +900,6 @@ function applyReviewToGraph(
       },
     } as typeof graph.metadata & { reviewedAt: string; review: unknown },
   } as typeof graph;
-}
-
-async function runSpringGeneration(
-  context: vscode.ExtensionContext,
-  registry: McpRegistry,
-  outputChannel: vscode.OutputChannel,
-  document?: vscode.TextDocument,
-): Promise<void> {
-  const source = await resolveSemanticSourceDocument(document);
-  if (!source) {
-    vscode.window.showWarningMessage('Open a Semantic Markdown file first.');
-    return;
-  }
-
-  const config = getConfig();
-  const artifactRoot = await resolveArtifactRoot();
-  const outputDir = artifactRoot ? vscode.Uri.joinPath(artifactRoot, 'generated').fsPath : undefined;
-  if (artifactRoot) {
-    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(artifactRoot, 'generated'));
-  }
-
-  const response = await registry.callTool('compiler', 'generate_spring_boot_skeleton', {
-    content: source.getText(),
-    outputDir,
-    basePackage: config.javaBasePackage,
-    artifactName: slug(source.fileName).replace(/\.semantic$/, ''),
-    persist: true,
-  });
-
-  const payload = asObject(response.json);
-  outputChannel.appendLine(JSON.stringify({ tool: 'generate_spring_boot_skeleton', payload }, null, 2));
-  await vscode.commands.executeCommand(commandIds.openDashboard);
-  await vscode.window.showInformationMessage('Spring Boot skeleton generation completed.');
 }
 
 async function openGraphPreview(
@@ -1292,6 +1291,10 @@ async function importSourceProject(
   refreshViews: () => Promise<void>,
   reconRunsProvider: ReconRunsWebviewProvider,
   resumeFromStage?: string,
+  ollamaEnabled = true,
+  jqassistantEnabled = true,
+  enabledSteps?: string[],
+  sourceCloudEnabled = false,
 ): Promise<void> {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
@@ -1335,11 +1338,15 @@ async function importSourceProject(
         status: 'running',
         phase: 'Parsing workspace Java files with MCP java-parser',
         startedAt: new Date().toISOString(),
+        enabledSteps: enabledSteps ?? ['jqassistant', 'activate'],
+        jqassistantStatus: jqassistantEnabled ? 'pending' : 'off',
         astStatus: 'running',
         astStartedAt: new Date().toISOString(),
         analysisStatus: 'pending',
         codeGraphStatus: 'pending',
-        localAgentStatus: 'pending',
+        aiEnrichmentEnabled: true,
+        aiEnrichmentStatus: ollamaEnabled ? 'pending' : 'off',
+        localAgentStatus: ollamaEnabled ? 'pending' : 'off',
         projectPromptStatus: 'pending',
         moduleRuns: [],
         events: [
@@ -1515,17 +1522,49 @@ async function importSourceProject(
       let result: Awaited<ReturnType<typeof importSourceProjectState>> | undefined;
       try {
         let jqassistantArtifact: unknown;
-        try {
-          report('Running jqassistant MCP scan...');
-          const jqassistantResponse = await registry.callTool('jqassistant', 'jqassistant_scan_project', {
-            projectName,
-            projectRoot: sourceRoot,
-            outputDir,
-          });
-          jqassistantArtifact = jqassistantResponse.json;
-        } catch (error) {
-          outputChannel.appendLine(`[source-to-semantic] jqassistant MCP scan skipped: ${error instanceof Error ? error.message : String(error)}`);
+        if (jqassistantEnabled) {
+          await updateReconRunState((s) => { s.jqassistantStatus = 'running'; s.phase = 'Running jQAssistant bytecode scan'; });
+          try {
+            jqassistantArtifact = await runJqassistantScanInternal(registry, outputChannel, sourceRoot, projectName, outputDir);
+            await updateReconRunState((s) => { s.jqassistantStatus = 'completed'; });
+          } catch (err) {
+            await updateReconRunState((s) => { s.jqassistantStatus = 'failed'; });
+            outputChannel.appendLine(`[jqassistant] scan failed: ${err}`);
+          }
+        } else {
+          const existingJqassistant = await readJsonIfExists(path.join(outputDir, 'source.jqassistant.json'));
+          if (existingJqassistant) {
+            outputChannel.appendLine('[source-to-semantic] jQAssistant disabled — reusing existing source.jqassistant.json.');
+            jqassistantArtifact = existingJqassistant;
+          }
+          await updateReconRunState((s) => { s.jqassistantStatus = 'off'; });
         }
+
+        const cloudAgentRunner = sourceCloudEnabled
+          ? async (agentId: string, prompt: string): Promise<string> => {
+              const config = getConfig();
+              const reviewDir = path.join(outputDir, 'review');
+              await fs.mkdir(reviewDir, { recursive: true });
+              const promptSlug = agentId.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+              const reviewContext: AgenticReviewContext = {
+                provider: config.reviewProvider,
+                mode: config.reviewMode,
+                model: config.reviewModel,
+                endpoint: config.reviewEndpoint,
+                commandId: config.reviewCommandId ?? '',
+                commandArgsJson: config.reviewCommandArgsJson ?? '{}',
+                promptFileName: `${promptSlug}.prompt.md`,
+                workspaceRoot: sourceRoot,
+                sourcePath: outputDir,
+                artifactName: agentId,
+                artifactDir: reviewDir,
+                semanticSource: '',
+              };
+              const raw = await runCloudRawPrompt(reviewContext, prompt);
+              outputChannel.appendLine(`[source-cloud] ${agentId} · ${raw.length} chars`);
+              return raw;
+            }
+          : undefined;
 
         result = await importSourceProjectState({
           projectRoot: sourceRoot,
@@ -1534,6 +1573,9 @@ async function importSourceProject(
           resumeFromStage: normalizeResumeStage(resumeFromStage),
           javaAstCatalog,
           jqassistantArtifact: jqassistantArtifact as never,
+          enableOllamaEnrichment: ollamaEnabled,
+          enableCloudEnrichment: sourceCloudEnabled,
+          cloudAgentRunner,
           onAnalysisProgress: async (event) => {
             const analysisAt = new Date().toISOString();
             outputChannel.appendLine(
@@ -1626,6 +1668,7 @@ async function importSourceProject(
                 state.localAgentStatus = event.message.includes('completed') ? 'completed' : 'running';
                 state.localAgentStartedAt ??= lifecycleAt;
                 state.localAgentPhase = event.message;
+                state.aiEnrichmentStatus = 'running';
                 if (event.message.includes('completed')) {
                   state.localAgentFinishedAt = lifecycleAt;
                 }
@@ -1633,6 +1676,9 @@ async function importSourceProject(
                 if (state.localAgentStatus === 'running') {
                   state.localAgentStatus = 'completed';
                   state.localAgentFinishedAt = lifecycleAt;
+                }
+                if (state.aiEnrichmentStatus === 'running') {
+                  state.aiEnrichmentStatus = 'completed';
                 }
               }
               state.events ??= [];
@@ -1905,6 +1951,7 @@ async function importSourceProject(
           issues: validationPayload.issues,
         },
       };
+      const reconAiEnabled = sourceCloudEnabled || getConfig().reconAiEnabled;
 
       const appendReconEvent = async (
         kind: 'phase' | 'project' | 'module' | 'artifact' | 'error',
@@ -2032,60 +2079,81 @@ async function importSourceProject(
         }
       };
 
-      const projectReconPromise = reconPayload.projectPrompt?.trim()
+      const projectReconPromise = reconAiEnabled && reconPayload.projectPrompt?.trim()
         ? runReconstructionPrompt(result.semanticPath, 'project', reconPayload.projectPrompt, reconProjectArtifactsDir).catch((error) => {
             outputChannel.appendLine(`[source-to-semantic-recon] project failed: ${String(error)}`);
             return undefined;
           })
         : Promise.resolve(undefined);
-      const moduleReconPromises = (reconPayload.modulePrompts ?? [])
-        .filter((modulePrompt) => Boolean(modulePrompt.prompt?.trim()))
-        .map((modulePrompt) => {
-          const moduleRoot = modulePrompt.moduleRoot ?? '.';
-          const moduleArtifactName = moduleRoot === '.' ? projectName : moduleRoot;
-          const moduleArtifactDir = path.join(reconModuleArtifactsDir, slug(moduleArtifactName));
-          return runReconstructionPrompt(
-            path.join(sourceRoot, moduleRoot),
-            moduleArtifactName,
-            modulePrompt.prompt ?? '',
-            moduleArtifactDir,
-            moduleRoot,
-          ).catch(async (error) => {
-            await updateReconRunState((state) => {
-              const module = state.moduleRuns.find((entry) => entry.moduleRoot === moduleRoot);
-              if (module) {
-                module.status = 'failed';
-                module.finishedAt = new Date().toISOString();
-                module.error = String(error);
-              }
-              state.phase = `Recon agent failed for ${moduleArtifactName}`;
-            });
-            return undefined;
-        });
-      });
+      const moduleReconPromises = reconAiEnabled
+        ? (reconPayload.modulePrompts ?? [])
+            .filter((modulePrompt) => Boolean(modulePrompt.prompt?.trim()))
+            .map((modulePrompt) => {
+              const moduleRoot = modulePrompt.moduleRoot ?? '.';
+              const moduleArtifactName = moduleRoot === '.' ? projectName : moduleRoot;
+              const moduleArtifactDir = path.join(reconModuleArtifactsDir, slug(moduleArtifactName));
+              return runReconstructionPrompt(
+                path.join(sourceRoot, moduleRoot),
+                moduleArtifactName,
+                modulePrompt.prompt ?? '',
+                moduleArtifactDir,
+                moduleRoot,
+              ).catch(async (error) => {
+                await updateReconRunState((state) => {
+                  const module = state.moduleRuns.find((entry) => entry.moduleRoot === moduleRoot);
+                  if (module) {
+                    module.status = 'failed';
+                    module.finishedAt = new Date().toISOString();
+                    module.error = String(error);
+                  }
+                  state.phase = `Recon agent failed for ${moduleArtifactName}`;
+                });
+                return undefined;
+              });
+            })
+        : [];
 
-      const reviewPromptBundle = await loadReviewPromptBundle(registry, {
-        sourcePath: result.semanticPath,
-        projectRoot: result.projectRoot,
-        semanticSource: semanticText,
-        graph: result.graph,
-        enrichment: result.enrichment,
-        validation: {
-          status: deriveValidationStatus(validationPayload.summary),
-          summary: validationPayload.summary,
-          issues: validationPayload.issues,
-        },
-        expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
-      });
-
-      const [agenticReview, projectReconResult, moduleReconResults] = await Promise.all([
-        runAgenticReviewBundle({
-          ...reconBaseContext,
+      let agenticReview: AgenticReviewResult;
+      let projectReconResult: AgenticReviewResult | undefined;
+      let moduleReconResults: PromiseSettledResult<AgenticReviewResult | undefined>[];
+      if (reconAiEnabled) {
+        const reviewPromptBundle = await loadReviewPromptBundle(registry, {
           sourcePath: result.semanticPath,
-        }, reviewPromptBundle),
-        projectReconPromise,
-        Promise.allSettled(moduleReconPromises),
-      ]);
+          projectRoot: result.projectRoot,
+          semanticSource: semanticText,
+          graph: result.graph,
+          enrichment: result.enrichment,
+          validation: {
+            status: deriveValidationStatus(validationPayload.summary),
+            summary: validationPayload.summary,
+            issues: validationPayload.issues,
+          },
+          expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
+        });
+        [agenticReview, projectReconResult, moduleReconResults] = await Promise.all([
+          runAgenticReviewBundle(
+            {
+              ...reconBaseContext,
+              sourcePath: result.semanticPath,
+            },
+            reviewPromptBundle,
+          ),
+          projectReconPromise,
+          Promise.allSettled(moduleReconPromises),
+        ]);
+      } else {
+        agenticReview = {
+          provider: 'deterministic',
+          mode: 'deterministic',
+          model: 'none',
+          bridgeAction: 'disabled',
+          summary: 'AI reconnaissance is disabled. Deterministic artifacts were generated only.',
+          notes: [],
+          issues: [],
+        };
+        projectReconResult = undefined;
+        moduleReconResults = [];
+      }
 
       const settledModuleResults = moduleReconResults
         .map((entry) => (entry.status === 'fulfilled' ? entry.value : undefined))
@@ -2392,9 +2460,9 @@ async function loadReviewPromptBundle(
     sourcePath: string;
     projectRoot?: string;
     semanticSource: string;
-    graph: unknown;
+    graph?: unknown;
     enrichment?: EnrichmentOutput;
-    validation: {
+    validation?: {
       status: string;
       summary: { gaps: number; conflicts: number; warnings: number; violations: number };
       issues: Array<{
@@ -2405,7 +2473,7 @@ async function loadReviewPromptBundle(
         sourceLine?: number;
       }>;
     };
-    expectationDocuments: Array<{ path: string; content: string }>;
+    expectationDocuments?: Array<{ path: string; content: string }>;
   },
 ): Promise<ReviewPromptBundle> {
   const graphObject = context.graph && typeof context.graph === 'object' ? context.graph as { metadata?: { preview?: Record<string, unknown> } } : undefined;
@@ -2415,8 +2483,10 @@ async function loadReviewPromptBundle(
   const flowMap = context.projectRoot
     ? await readJsonIfExists(path.join(path.dirname(context.sourcePath), 'source.flow-map.json'))
     : undefined;
+  const emptyValidation = { status: 'ok', summary: { gaps: 0, conflicts: 0, warnings: 0, violations: 0 }, issues: [] };
+  const validation = context.validation ?? emptyValidation;
   const localAgentOutputs = context.projectRoot
-    ? await runValidationTriageIfConfigured(context.projectRoot, context.graph, context.validation, componentMap, flowMap)
+    ? await runValidationTriageIfConfigured(context.projectRoot, context.graph, validation, componentMap, flowMap)
     : [];
   const reviewDossier = buildReviewDossier({
     sourcePath: context.sourcePath,
@@ -2426,7 +2496,7 @@ async function loadReviewPromptBundle(
     flowMap,
     enrichment: context.enrichment,
     localAgentOutputs,
-    validation: context.validation,
+    validation,
   });
   if (context.projectRoot) {
     await writeReviewDossier(context.projectRoot, reviewDossier);
@@ -2436,6 +2506,7 @@ async function loadReviewPromptBundle(
     semanticSource: context.semanticSource,
     graph: context.graph,
     reviewDossier,
+    flowMap,
     validation: context.validation,
     expectationDocuments: context.expectationDocuments,
   });
@@ -2460,6 +2531,302 @@ async function readJsonIfExists(filePath: string): Promise<unknown | undefined> 
   } catch {
     return undefined;
   }
+}
+
+async function runAiEnrichment(
+  reconRunsProvider: ReconRunsWebviewProvider,
+  outputChannel: vscode.OutputChannel,
+  refreshViews: () => Promise<void>,
+  ollamaEnabled = false,
+  cloudEnabled = true,
+  registry?: McpRegistry,
+): Promise<void> {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showWarningMessage('Open the project workspace first, then run cloud AI enrichment.');
+    return;
+  }
+
+  const sourceRoot = workspaceFolder.uri.fsPath;
+  const projectName = slug(path.basename(sourceRoot));
+  const outputDir = path.join(sourceRoot, '.ai-native');
+  const jqassistantArtifact = await readJsonIfExists(path.join(outputDir, 'source.jqassistant.json'));
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'Running cloud AI enrichment',
+      cancellable: false,
+    },
+    async () => {
+      outputChannel.show(true);
+      outputChannel.appendLine('[source-to-semantic] Running AI enrichment against cached artifacts...');
+      const currentState = reconRunsProvider.getSnapshot();
+      if (currentState) {
+        currentState.aiEnrichmentEnabled = true;
+        currentState.aiEnrichmentStatus = 'running';
+        reconRunsProvider.setSnapshot(currentState);
+      }
+      const semanticPath = path.join(outputDir, 'source.semantic.md');
+      if (cloudEnabled && registry) {
+        const semanticText = await fs.readFile(semanticPath, 'utf8');
+        const validationPolicy = await resolveValidationPolicyText(registry);
+        const config = getConfig();
+        const reviewPromptBundle = await loadReviewPromptBundle(registry, {
+          sourcePath: semanticPath,
+          projectRoot: sourceRoot,
+          semanticSource: semanticText,
+          expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
+        });
+        await runAgenticReviewBundle(
+          {
+            provider: config.reviewProvider,
+            mode: config.reviewMode,
+            model: config.reviewModel,
+            endpoint: config.reviewEndpoint,
+            commandId: config.reviewCommandId,
+            commandArgsJson: config.reviewCommandArgsJson,
+            promptFileName: config.reviewPromptFileName,
+            workspaceRoot: sourceRoot,
+            sourcePath: semanticPath,
+            semanticSource: semanticText,
+            artifactName: `${projectName}.enrichment`,
+          },
+          reviewPromptBundle,
+        );
+        outputChannel.appendLine('[source-to-semantic] Cloud AI enrichment completed.');
+      } else if (ollamaEnabled) {
+        await importSourceProjectState({
+          projectRoot: sourceRoot,
+          projectName,
+          outputDir,
+          resumeFromStage: 'semantic',
+          enableOllamaEnrichment: true,
+          enableCloudEnrichment: false,
+          jqassistantArtifact: jqassistantArtifact as JqassistantArtifact | undefined,
+        });
+        outputChannel.appendLine('[source-to-semantic] Local AI enrichment completed.');
+      }
+      if (currentState) {
+        currentState.aiEnrichmentStatus = 'completed';
+        reconRunsProvider.setSnapshot(currentState);
+      }
+      await refreshViews();
+      vscode.window.showInformationMessage('AI enrichment completed.');
+    },
+  );
+}
+
+async function runJqassistantScan(
+  context: vscode.ExtensionContext,
+  registry: McpRegistry,
+  outputChannel: vscode.OutputChannel,
+  refreshViews: () => Promise<void>,
+): Promise<void> {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showWarningMessage('Open the project workspace first, then run the jqassistant scan.');
+    return;
+  }
+
+  const projectRoot = workspaceFolder.uri.fsPath;
+  const outputDir = path.join(projectRoot, '.ai-native');
+  const projectName = slug(path.basename(projectRoot));
+  await fs.mkdir(outputDir, { recursive: true });
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'Running jqassistant scan',
+      cancellable: false,
+    },
+    async () => {
+      outputChannel.show(true);
+      const jqassistantArtifact = await runJqassistantScanInternal(registry, outputChannel, projectRoot, projectName, outputDir);
+      if (!jqassistantArtifact) {
+        vscode.window.showWarningMessage('jqassistant scan did not produce an artifact.');
+        return;
+      }
+      outputChannel.appendLine(`[jqassistant] status=${(jqassistantArtifact as { status?: string }).status ?? 'unknown'}`);
+      outputChannel.appendLine(`[jqassistant] summary applications=${(jqassistantArtifact as { summary?: { applicationCount?: number } }).summary?.applicationCount ?? 0}`);
+      await refreshViews();
+      vscode.window.showInformationMessage('jqassistant scan completed.');
+    },
+  );
+}
+
+async function runJqassistantScanInternal(
+  registry: McpRegistry,
+  outputChannel: vscode.OutputChannel,
+  projectRoot: string,
+  projectName: string,
+  outputDir: string,
+): Promise<unknown | undefined> {
+  try {
+    outputChannel.appendLine('[source-to-semantic] Running jqassistant MCP scan...');
+
+    // Collect source files (pom.xml + .java)
+    const sourceUris = await vscode.workspace.findFiles(
+      new vscode.RelativePattern(projectRoot, '**/{pom.xml,*.java}'),
+      new vscode.RelativePattern(projectRoot, '**/node_modules/**'),
+    );
+    const sourceFiles = (await Promise.all(
+      sourceUris.map(async (uri) => {
+        try {
+          const content = await fs.readFile(uri.fsPath, 'utf8');
+          return { path: path.relative(projectRoot, uri.fsPath).split(path.sep).join('/'), content, encoding: 'utf8' as const };
+        } catch {
+          return undefined;
+        }
+      }),
+    )).filter((f): f is { path: string; content: string; encoding: 'utf8' } => f !== undefined);
+
+    // Find target/classes directories and package them as JARs.
+    // jQAssistant's Java plugin processes JAR archives, not loose .class files.
+    let classesDirectories = await findClassesDirectories(projectRoot);
+
+    // If no compiled classes found, try to build first
+    if (classesDirectories.length === 0) {
+      outputChannel.appendLine('[jqassistant] No compiled classes found, attempting local build...');
+      const built = await tryLocalBuild(projectRoot, outputChannel);
+      if (built) {
+        classesDirectories = await findClassesDirectories(projectRoot);
+      }
+    }
+
+    const jarFiles = await buildModuleJars(classesDirectories, projectRoot, outputChannel);
+    const files = [...sourceFiles, ...jarFiles];
+    outputChannel.appendLine(`[jqassistant] uploading ${sourceFiles.length} source files + ${jarFiles.length} module JAR(s)`);
+
+    const scanStart = Date.now();
+    const progressTimer = setInterval(() => {
+      const elapsed = Math.round((Date.now() - scanStart) / 1000);
+      outputChannel.appendLine(`[jqassistant] scan in progress... ${elapsed}s elapsed`);
+    }, 10000);
+    try {
+      const jqassistantResponse = await registry.callTool('jqassistant', 'jqassistant_scan_files', {
+        projectName,
+        files,
+      });
+      if (jqassistantResponse.json) {
+        await fs.writeFile(
+          path.join(outputDir, 'source.jqassistant.json'),
+          JSON.stringify(jqassistantResponse.json, null, 2) + '\n',
+          'utf8',
+        );
+      }
+      return jqassistantResponse.json;
+    } finally {
+      clearInterval(progressTimer);
+    }
+  } catch (error) {
+    outputChannel.appendLine(`[source-to-semantic] jqassistant MCP scan skipped: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+}
+
+async function findClassesDirectories(projectRoot: string): Promise<string[]> {
+  const results: string[] = [];
+  const SKIP_DIRS = new Set(['.git', 'node_modules', '.ai-native']);
+
+  async function walk(dir: string): Promise<void> {
+    let names: string[];
+    try { names = await fs.readdir(dir, { encoding: 'utf8' }); } catch { return; }
+    for (const name of names) {
+      if (SKIP_DIRS.has(name)) continue;
+      const full = path.join(dir, name);
+      let stat: import('node:fs').Stats;
+      try { stat = await fs.stat(full); } catch { continue; }
+      if (!stat.isDirectory()) continue;
+      if (name === 'target') {
+        const classesDir = path.join(full, 'classes');
+        try {
+          const classesStat = await fs.stat(classesDir);
+          if (classesStat.isDirectory()) results.push(classesDir);
+        } catch { /* no classes dir */ }
+      } else {
+        await walk(full);
+      }
+    }
+  }
+
+  await walk(projectRoot);
+  return results;
+}
+
+async function buildModuleJars(
+  classesDirectories: string[],
+  projectRoot: string,
+  outputChannel: vscode.OutputChannel,
+): Promise<Array<{ path: string; content: string; encoding: 'base64' }>> {
+  const { execFile } = await import('node:child_process');
+  const { tmpdir } = await import('node:os');
+  const results: Array<{ path: string; content: string; encoding: 'base64' }> = [];
+
+  for (const classesDir of classesDirectories) {
+    // Derive module name from path: .../moduleName/target/classes
+    const moduleName = path.basename(path.dirname(path.dirname(classesDir)));
+    const jarName = `${moduleName}.jar`;
+    const jarPath = path.join(tmpdir(), `jqa-${moduleName}-${Date.now()}.jar`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        execFile('jar', ['cf', jarPath, '-C', classesDir, '.'], { timeout: 60000 }, (err) => {
+          if (err) reject(err); else resolve();
+        });
+      });
+      const buffer = await fs.readFile(jarPath);
+      results.push({ path: jarName, content: buffer.toString('base64'), encoding: 'base64' });
+      outputChannel.appendLine(`[jqassistant] packaged ${jarName} (${Math.round(buffer.length / 1024)}KB)`);
+    } catch (err) {
+      outputChannel.appendLine(`[jqassistant] skipping ${moduleName}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      await fs.unlink(jarPath).catch(() => {});
+    }
+  }
+
+  return results;
+}
+
+async function tryLocalBuild(projectRoot: string, outputChannel: vscode.OutputChannel): Promise<boolean> {
+  const { execFile } = await import('node:child_process');
+  const hasMvnw = await fs.access(path.join(projectRoot, 'mvnw')).then(() => true).catch(() => false);
+  const hasPom = await fs.access(path.join(projectRoot, 'pom.xml')).then(() => true).catch(() => false);
+  const hasGradlew = await fs.access(path.join(projectRoot, 'gradlew')).then(() => true).catch(() => false);
+  const hasBuildGradle = await fs.access(path.join(projectRoot, 'build.gradle')).then(() => true).catch(() => false)
+    || await fs.access(path.join(projectRoot, 'build.gradle.kts')).then(() => true).catch(() => false);
+
+  let cmd: string;
+  let args: string[];
+  if (hasMvnw) {
+    cmd = path.join(projectRoot, 'mvnw');
+    args = ['compile', '-q', '-T', '1C'];
+  } else if (hasPom) {
+    cmd = 'mvn';
+    args = ['compile', '-q', '-T', '1C'];
+  } else if (hasGradlew) {
+    cmd = path.join(projectRoot, 'gradlew');
+    args = ['compileJava', '-q'];
+  } else if (hasBuildGradle) {
+    cmd = 'gradle';
+    args = ['compileJava', '-q'];
+  } else {
+    outputChannel.appendLine('[jqassistant] No build file found (pom.xml / build.gradle), skipping compile step.');
+    return false;
+  }
+
+  outputChannel.appendLine(`[jqassistant] Running: ${cmd} ${args.join(' ')}`);
+  return await new Promise((resolve) => {
+    execFile(cmd, args, { cwd: projectRoot, timeout: 300000, maxBuffer: 4 * 1024 * 1024 }, (error, _stdout, stderr) => {
+      if (error) {
+        outputChannel.appendLine(`[jqassistant] Build failed: ${error.message}`);
+        if (stderr?.trim()) outputChannel.appendLine(`[jqassistant] stderr: ${stderr.trim().slice(0, 500)}`);
+        resolve(false);
+      } else {
+        outputChannel.appendLine('[jqassistant] Build succeeded.');
+        resolve(true);
+      }
+    });
+  });
 }
 
 async function runValidationTriageIfConfigured(
@@ -3019,4 +3386,218 @@ async function persistCodeGraphProgressArtifact(progressPath: string, payload: u
 
 function createReconRunId(projectName: string): string {
   return `${new Date().toISOString().replace(/[:.]/g, '-')}.${slug(projectName)}`;
+}
+
+async function runFlowExtraction(
+  context: vscode.ExtensionContext,
+  registry: McpRegistry,
+  outputChannel: vscode.OutputChannel,
+  refresh: () => Promise<void>,
+  flowProvider?: FlowWebviewProvider,
+  aiEnabled = false,
+): Promise<void> {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showWarningMessage('Open a workspace first.');
+    return;
+  }
+
+  const artifactRoot = await resolveArtifactRoot();
+  if (!artifactRoot) {
+    vscode.window.showWarningMessage('No artifact root found.');
+    return;
+  }
+
+  const semanticPath = vscode.Uri.joinPath(artifactRoot, 'source.semantic.md');
+  let semanticMd: string | undefined;
+  try {
+    const bytes = await vscode.workspace.fs.readFile(semanticPath);
+    semanticMd = Buffer.from(bytes).toString('utf8');
+  } catch {
+    vscode.window.showWarningMessage('No source.semantic.md found. Run Source Import first.');
+    return;
+  }
+
+  outputChannel.show(true);
+  outputChannel.appendLine('[flow-extraction] starting…');
+
+  // Gather optional inputs — best-effort, proceed even if missing
+  let docEntities: unknown;
+  try {
+    const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(artifactRoot, 'doc-entities.json'));
+    docEntities = JSON.parse(Buffer.from(bytes).toString('utf8'));
+  } catch { /* no doc-entities yet */ }
+
+  let graphJson: unknown;
+  try {
+    const graphFolder = vscode.Uri.joinPath(artifactRoot, 'graph');
+    const entries = await vscode.workspace.fs.readDirectory(graphFolder);
+    const graphFile = entries
+      .filter(([name, type]) => type === vscode.FileType.File && name.endsWith('.graph.json'))
+      .map(([name]) => name)
+      .sort()
+      .pop();
+    if (graphFile) {
+      const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(graphFolder, graphFile));
+      graphJson = JSON.parse(Buffer.from(bytes).toString('utf8'));
+    }
+  } catch { /* no graph yet */ }
+
+  try {
+    const result = await registry.callTool('documentImport', 'extract_application_flows', {
+      semanticMd,
+      ...(docEntities ? { docEntities } : {}),
+      ...(graphJson ? { graphJson } : {}),
+    });
+
+    const payload = result.json as Record<string, unknown> | undefined;
+    if (!payload?.ok) throw new Error(String(payload?.error ?? 'Flow extraction failed'));
+
+    const updatedSemanticMd = String(payload.updatedSemanticMd ?? semanticMd);
+    await vscode.workspace.fs.writeFile(semanticPath, Buffer.from(updatedSemanticMd, 'utf8'));
+    outputChannel.appendLine(`[flow-extraction] updated source.semantic.md — flows: ${payload.flowCount ?? '?'}`);
+
+    // Merge extracted flows/processes back into doc-entities.json
+    const docEntitiesUri = vscode.Uri.joinPath(artifactRoot, 'doc-entities.json');
+    try {
+      const existing = JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(docEntitiesUri)).toString('utf8')) as Record<string, string[]>;
+      const extractedFlows = (payload.extractedFlows as string[] | undefined) ?? [];
+      const extractedProcesses = (payload.extractedProcesses as string[] | undefined) ?? [];
+      const merged = {
+        ...existing,
+        flows: [...new Set([...(existing.flows ?? []), ...extractedFlows])],
+        processes: [...new Set([...(existing.processes ?? []), ...extractedProcesses])],
+      };
+      await vscode.workspace.fs.writeFile(docEntitiesUri, Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf8'));
+      outputChannel.appendLine(`[flow-extraction] updated doc-entities.json`);
+    } catch { /* doc-entities.json may not exist yet — not fatal */ }
+
+    // AI Synthesis — cloud AI enhances the flow sections after deterministic merge
+    if (aiEnabled) {
+      const sourceRoot = workspaceFolder.uri.fsPath;
+      const flowSemanticPath = semanticPath.fsPath;
+      outputChannel.appendLine('[flow-extraction] running cloud AI synthesis for flows/processes...');
+      const flowSemanticText = Buffer.from(await vscode.workspace.fs.readFile(semanticPath)).toString('utf8');
+      const validationPolicy = await resolveValidationPolicyText(registry);
+      const config = getConfig();
+      const reviewPromptBundle = await loadReviewPromptBundle(registry, {
+        sourcePath: flowSemanticPath,
+        projectRoot: sourceRoot,
+        semanticSource: flowSemanticText,
+        expectationDocuments: [{ path: 'mcp-validation-policy.md', content: validationPolicy }],
+      });
+      await runAgenticReviewBundle(
+        {
+          provider: config.reviewProvider,
+          mode: config.reviewMode,
+          model: config.reviewModel,
+          endpoint: config.reviewEndpoint,
+          commandId: config.reviewCommandId,
+          commandArgsJson: config.reviewCommandArgsJson,
+          promptFileName: config.reviewPromptFileName,
+          workspaceRoot: sourceRoot,
+          sourcePath: flowSemanticPath,
+          semanticSource: flowSemanticText,
+          artifactName: `${slug(path.basename(sourceRoot))}.flow-synthesis`,
+        },
+        reviewPromptBundle,
+      );
+      outputChannel.appendLine('[flow-extraction] cloud AI synthesis completed');
+    }
+
+    await refresh();
+
+    // Post result back to the flow panel card so it shows inline feedback
+    flowProvider?.postFlowExtractionResult(
+      Number(payload.flowCount ?? 0),
+      Number(payload.processCount ?? 0),
+      (payload.sources as { fromDocs: number; fromGraph: number; fromExisting: number } | undefined) ?? { fromDocs: 0, fromGraph: 0, fromExisting: 0 },
+    );
+
+    const choice = await vscode.window.showInformationMessage(
+      `Flow extraction complete — ${payload.flowCount ?? 0} flow(s), ${payload.processCount ?? 0} process(es).`,
+      'Open semantic.md',
+    );
+    if (choice === 'Open semantic.md') {
+      const doc = await vscode.workspace.openTextDocument(semanticPath);
+      await vscode.window.showTextDocument(doc);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    outputChannel.appendLine(`[flow-extraction] error: ${msg}`);
+    vscode.window.showErrorMessage(`Flow extraction failed: ${msg}`);
+  }
+}
+
+async function runDocCodeAlignment(
+  context: vscode.ExtensionContext,
+  registry: McpRegistry,
+  outputChannel: vscode.OutputChannel,
+  refresh: () => Promise<void>,
+): Promise<void> {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showWarningMessage('Open a workspace first.');
+    return;
+  }
+
+  const artifactRoot = await resolveArtifactRoot();
+  if (!artifactRoot) {
+    vscode.window.showWarningMessage('No artifact root found.');
+    return;
+  }
+
+  const docEntitiesPath = path.join(artifactRoot.fsPath, 'doc-entities.json');
+  let docEntitiesExist = false;
+  try {
+    await fs.access(docEntitiesPath);
+    docEntitiesExist = true;
+  } catch {
+    // not found
+  }
+
+  if (!docEntitiesExist) {
+    const choice = await vscode.window.showWarningMessage(
+      'No doc-entities.json found. Import documents first via Document Import to enable alignment checking.',
+      'Open Document Import',
+    );
+    if (choice === 'Open Document Import') {
+      await vscode.commands.executeCommand('aiNativeDocImport.focus');
+    }
+    return;
+  }
+
+  outputChannel.show(true);
+  outputChannel.appendLine('[alignment] starting doc-code alignment check…');
+
+  try {
+    const result = await registry.callTool('documentImport', 'validate_doc_code_alignment', {
+      docEntitiesPath,
+      artifactRoot: artifactRoot.fsPath,
+    });
+
+    const payload = result.json as Record<string, unknown> | undefined;
+    if (!payload?.ok) {
+      throw new Error(String(payload?.error ?? 'Alignment check failed'));
+    }
+
+    const reportMd = String(payload.reportMd ?? '');
+    const alignmentFolder = vscode.Uri.joinPath(artifactRoot, 'alignment');
+    await vscode.workspace.fs.createDirectory(alignmentFolder);
+    const reportPath = vscode.Uri.joinPath(alignmentFolder, `${new Date().toISOString().replace(/[:.]/g, '-')}.alignment.md`);
+    await vscode.workspace.fs.writeFile(reportPath, Buffer.from(reportMd, 'utf8'));
+    outputChannel.appendLine(`[alignment] report written: ${reportPath.fsPath}`);
+
+    await refresh();
+
+    const choice = await vscode.window.showInformationMessage('Doc-Code Alignment check complete.', 'Open Report');
+    if (choice === 'Open Report') {
+      const doc = await vscode.workspace.openTextDocument(reportPath);
+      await vscode.window.showTextDocument(doc);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    outputChannel.appendLine(`[alignment] error: ${msg}`);
+    vscode.window.showErrorMessage(`Alignment check failed: ${msg}`);
+  }
 }

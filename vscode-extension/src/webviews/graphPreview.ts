@@ -230,6 +230,15 @@ interface FlowMapArtifactLite {
         notes?: string[];
       }>;
     };
+    flowTrace?: {
+      count?: number;
+      traces?: Array<{
+        traceId: string;
+        entrypointId: string;
+        steps?: Array<{ role: string; nodeName: string }>;
+        warnings?: string[];
+      }>;
+    };
     flowValidation?: {
       count?: number;
       issues?: Array<{
@@ -328,7 +337,7 @@ export class GraphPreviewPanel {
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"
+      content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; command: command:"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Native Graph Preview</title>
@@ -790,8 +799,11 @@ export class GraphPreviewPanel {
   </head>
   <body>
     <div class="header">
-      <div class="title">${escapeHtml(this.title || 'Graph Preview')}</div>
-      <div class="subtitle">Developer view built from deterministic artifacts: AST, jqassistant structure, execution flows, and ER schema.</div>
+      <div class="title-row" style="display:flex;align-items:center;gap:12px;">
+        <div class="title" style="flex:1">${escapeHtml(this.title || 'Graph Preview')}</div>
+        <a href="command:aiNative.showEndpoints" title="Show Endpoint Summary" style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:5px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);text-decoration:none;border:1px solid var(--vscode-panel-border);">⚡ Endpoints</a>
+      </div>
+      <div class="subtitle">Developer view built from deterministic artifacts: AST, jqassistant structure, flow map, and ER schema.</div>
       <div class="meta">
         <div>Schema: <code>${escapeHtml(this.graph.schemaVersion ?? 'n/a')}</code></div>
         <div>Summary: <code>${escapeHtml(summary)}</code></div>
@@ -832,13 +844,6 @@ export class GraphPreviewPanel {
     <div class="panel">
       <div class="panel-title">External dependencies</div>
       <div class="insight-list">${renderList(insights.externalDependencies)}</div>
-    </div>
-
-    <div class="flow-panel">
-      <div class="panel-title">Execution flows</div>
-      <div class="flow-grid">
-        ${renderFlowScenarios(insights.flowScenarios)}
-      </div>
     </div>
 
     <div class="panel">
@@ -992,11 +997,13 @@ function renderFlowMapSection(
       <div class="component-grid">
         ${renderMetricCard('Flow-map summary', [
           `Entrypoints: ${flowMap?.stages?.entrypointDiscovery?.count ?? entrypoints.length}`,
-          `Flows: ${flows.length}`,
+          `Deterministic traces: ${flowMap?.stages?.flowTrace?.count ?? 0}`,
+          `Interpreted flows: ${flows.length}`,
           `Validation issues: ${flowMap?.stages?.flowValidation?.count ?? issues.length}`,
           ...(flowMap?.support ? [
             `AST endpoints: ${flowMap.support.astEndpoints ?? 0}`,
             `jqassistant packages: ${flowMap.support.jqassistantPackages ?? 0}`,
+            `jqassistant type deps: ${flowMap.support.jqassistantTypeDependencies ?? 0}`,
             `Support graph nodes: ${flowMap.support.supportGraphNodes ?? 0}`,
           ] : []),
         ], 'Flow-map summary not available.')}

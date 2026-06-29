@@ -70,18 +70,17 @@ Semantic State Programming focuses on:
 
 # Core Semantic Primitives
 
-Possible primitives:
+Canonical primitives:
 - State
 - Transition
 - Invariant
-- Intent
 - Entity
 - Capability
 - Effect
 - Event
 - Resource
 - Interface
-- Proof
+- Relation
 
 ---
 
@@ -171,12 +170,15 @@ distributed adapter
 
 # Visual Tooling
 
-Potential tooling:
-- graph explorer
+Implemented:
+- graph explorer (GraphPreviewPanel — interactive graph webview)
+- endpoint summary (EndpointSummaryPanel — REST/SOAP/GraphQL/Events/gRPC)
+- semantic diff (versioned artifacts with sourceHash tracking)
+
+Future:
 - semantic debugger
 - invariant inspector
 - execution visualizer
-- semantic diff viewer
 
 ---
 
@@ -208,54 +210,12 @@ Platform Adapters
 
 ---
 
-# MVP Strategy
+# Current Technology Stack
 
-Start with:
-
-descriptive language
-    ↓
-semantic graph
-    ↓
-state transitions
-    ↓
-invariant engine
-    ↓
-simple runtime
-
----
-
-# Recommended MVP Phases
-
-## Phase 1
-Documentation and manifesto.
-
-## Phase 2
-Parser and semantic graph.
-
-## Phase 3
-Semantic runtime.
-
-## Phase 4
-AI semantic compiler layer.
-
-## Phase 5
-Demo applications.
-
----
-
-# Suggested Technologies
-
-Early stage:
-- TypeScript
-- Node.js
-- graph structures
-- JSON-based IR
-
-Later:
-- Rust
-- custom VM
-- WASM
-- distributed runtime
+- TypeScript / Node.js
+- MCP servers over Streamable HTTP (Docker bridge network)
+- JSON-based canonical IR (`source.codegraph.json`)
+- VSCode extension (WebviewViewProvider panels)
 
 ---
 

@@ -8,7 +8,6 @@ import {
   readAgentorModelsConfig,
   writeAgentorModelsConfig,
   type AgentorModelsConfig,
-  type CloudAgentKind,
   type LocalAgentConfig,
   type LocalAgentConfigKey,
 } from '@ai-native/semantic-shared';
@@ -27,6 +26,31 @@ const LOCAL_AGENT_LABELS: Record<LocalAgentConfigKey, string> = {
   componentPackaging: 'component-packaging-agent',
   validationTriage: 'validation-triage-agent',
   semanticPolishing: 'semantic-polishing-agent',
+};
+
+const LOCAL_AGENT_READABLE: Record<LocalAgentConfigKey, string> = {
+  moduleClassifier: 'Module Classifier',
+  generalEnrichment: 'General Enrichment',
+  astComponentClassifier: 'AST Component Classifier',
+  flowCandidate: 'Flow Candidate',
+  repositoryPurpose: 'Repository Purpose',
+  sqlMigrationSemantics: 'SQL Migration Semantics',
+  componentPackaging: 'Component Packaging',
+  validationTriage: 'Validation Triage',
+  semanticPolishing: 'Semantic Polishing',
+};
+
+// Which flow panel step triggers this agent, and at what sub-phase
+const AGENT_STEP: Record<LocalAgentConfigKey, { step: string; phase: string; desc: string }> = {
+  astComponentClassifier: { step: 'Source Import', phase: 'AST', desc: 'Classifies Java classes by architectural role (controller, service, repository…)' },
+  repositoryPurpose:      { step: 'Source Import', phase: 'Graph', desc: 'Identifies the business domain and purpose of each repository/module' },
+  sqlMigrationSemantics:  { step: 'Source Import', phase: 'Graph', desc: 'Interprets SQL migration files into semantic data model descriptions' },
+  flowCandidate:          { step: 'Source Import', phase: 'Flow', desc: 'Identifies candidate application flows and entry-point chains from call graphs' },
+  componentPackaging:     { step: 'Source Import', phase: 'Flow', desc: 'Maps components to deployment units and packaging boundaries' },
+  moduleClassifier:       { step: 'Source Import', phase: 'Enrichment', desc: 'Classifies Maven/Gradle modules into architectural layers' },
+  generalEnrichment:      { step: 'Source Import', phase: 'Enrichment', desc: 'General-purpose semantic enrichment of components and relationships' },
+  validationTriage:       { step: 'Source Import', phase: 'Enrichment', desc: 'Triages and prioritises semantic validation issues found during enrichment' },
+  semanticPolishing:      { step: 'Source Import', phase: 'Semantic', desc: 'Final pass: polishes and consolidates the generated source.semantic.md draft' },
 };
 
 const ROLE_MODEL_PRESETS: Record<LocalAgentConfigKey, Record<AgentorModelsConfig['capability'], string>> = {
@@ -184,65 +208,69 @@ export class ConfigurationPanel {
 
     const agentCards = agentDefinitions.map((definition) => {
       const role = enrichment.localAgents[definition.key];
-      const roleStatus = this.lastLocalAgentProbe[definition.key]?.join('\n') ?? 'Test not run yet.';
+      const roleStatus = this.lastLocalAgentProbe[definition.key]?.join('\n') ?? '';
       const modelInstalled = role.provider === 'ollama' ? this.installedOllamaModels.has(role.model) : undefined;
+      const modelStatusText = modelInstalled === undefined ? '' : modelInstalled ? '✓ installed' : '✗ not installed';
+      const agentStep = AGENT_STEP[definition.key];
       return /* html */ `
-        <div class="card">
-          <h3>${escapeHtml(LOCAL_AGENT_LABELS[definition.key])}</h3>
-          <p class="muted">Stored under <code>.ai-native/enrichment/${escapeHtml(definition.outputDir)}/</code></p>
-          <p class="muted">${modelInstalled === undefined ? 'Provider is not Ollama.' : modelInstalled ? 'Selected model is installed.' : 'Selected model is not installed.'}</p>
-          <label class="checkbox-row">
-            <input id="${definition.key}_enabled" type="checkbox" ${role.enabled ? 'checked' : ''} />
-            <span>enabled</span>
-          </label>
+        <div class="card agent-card">
+          <div style="display:flex;align-items:center;gap:5px;margin-bottom:6px;flex-wrap:wrap;">
+            <span class="section-tag" style="margin:0">${escapeHtml(agentStep.step)}</span>
+            <span style="font-size:10px;color:var(--vscode-descriptionForeground);">phase: ${escapeHtml(agentStep.phase)}</span>
+          </div>
+          <div class="agent-header">
+            <span class="agent-name">${escapeHtml(LOCAL_AGENT_READABLE[definition.key])}</span>
+            <span class="agent-key muted">${escapeHtml(LOCAL_AGENT_LABELS[definition.key])}</span>
+          </div>
+          <p style="font-size:11px;color:var(--vscode-descriptionForeground);margin:4px 0 8px;">${escapeHtml(agentStep.desc)}</p>
 
-          <label for="${definition.key}_provider">provider</label>
-          <select id="${definition.key}_provider">
+          <label for="${definition.key}_provider">Provider</label>
+          <select id="${definition.key}_provider" class="role-provider" data-role="${definition.key}">
             <option value="none" ${role.provider === 'none' ? 'selected' : ''}>none</option>
             <option value="ollama" ${role.provider === 'ollama' ? 'selected' : ''}>ollama</option>
-            <option value="cloud" ${role.provider === 'cloud' ? 'selected' : ''}>cloud</option>
           </select>
 
-          <label for="${definition.key}_cloudAgent">cloud agent</label>
-          <select id="${definition.key}_cloudAgent">
-            <option value="codex" ${role.cloudAgent === 'codex' ? 'selected' : ''}>codex</option>
-            <option value="claude" ${role.cloudAgent === 'claude' ? 'selected' : ''}>claude</option>
-          </select>
+          <div class="ollama-fields" data-role="${definition.key}">
+            <label for="${definition.key}_model">Model ${modelStatusText ? `<span class="model-status ${modelInstalled ? 'ok' : 'warn'}">${escapeHtml(modelStatusText)}</span>` : ''}</label>
+            <select id="${definition.key}_model">
+              ${modelCatalog.map((item) => `<option value="${escapeAttr(item.name)}" ${item.name === role.model ? 'selected' : ''}>${escapeHtml(item.name)} (${escapeHtml(item.capabilities.join(' / '))})</option>`).join('')}
+            </select>
 
-          <label for="${definition.key}_capability">capability</label>
-          <select id="${definition.key}_capability" data-role="${definition.key}" class="role-capability">
-            <option value="low" ${role.capability === 'low' ? 'selected' : ''}>low</option>
-            <option value="normal" ${role.capability === 'normal' ? 'selected' : ''}>normal</option>
-            <option value="high" ${role.capability === 'high' ? 'selected' : ''}>high</option>
-          </select>
+            <label for="${definition.key}_endpoint">Ollama endpoint</label>
+            <input id="${definition.key}_endpoint" type="text" value="${escapeAttr(role.endpoint)}" />
 
-          <label for="${definition.key}_model">model</label>
-          <select id="${definition.key}_model">
-            ${modelCatalog.map((item) => `<option value="${escapeAttr(item.name)}" ${item.name === role.model ? 'selected' : ''}>${escapeHtml(item.name)} (${escapeHtml(item.capabilities.join(' / '))})</option>`).join('')}
-          </select>
-
-          <label for="${definition.key}_endpoint">Ollama endpoint</label>
-          <input id="${definition.key}_endpoint" type="text" value="${escapeAttr(role.endpoint)}" />
-
-          <label for="${definition.key}_timeoutMs">timeout (ms)</label>
-          <input id="${definition.key}_timeoutMs" type="number" value="${escapeAttr(String(role.timeoutMs))}" />
-
-          <label for="${definition.key}_maxInputSize">max input size</label>
-          <input id="${definition.key}_maxInputSize" type="number" value="${escapeAttr(String(role.maxInputSize))}" />
-
-          <label for="${definition.key}_minConfidence">minimum confidence threshold</label>
-          <input id="${definition.key}_minConfidence" type="number" step="0.01" min="0" max="1" value="${escapeAttr(String(role.minConfidence))}" />
-
-          <label class="checkbox-row">
-            <input id="${definition.key}_autoMerge" type="checkbox" ${role.autoMerge ? 'checked' : ''} />
-            <span>auto merge</span>
-          </label>
-
-          <div class="actions card-actions">
-            <button class="test-local-agent" data-role="${definition.key}">Test connection</button>
-            <button class="install-agent-model" data-role="${definition.key}">Install selected model</button>
+            <div class="row-2">
+              <div>
+                <label for="${definition.key}_timeoutMs">Timeout (ms)</label>
+                <input id="${definition.key}_timeoutMs" type="number" value="${escapeAttr(String(role.timeoutMs))}" />
+              </div>
+              <div>
+                <label for="${definition.key}_maxInputSize">Max input size</label>
+                <input id="${definition.key}_maxInputSize" type="number" value="${escapeAttr(String(role.maxInputSize))}" />
+              </div>
+            </div>
           </div>
-          <pre>${escapeHtml(roleStatus)}</pre>
+
+          <div class="row-2">
+            <div>
+              <label for="${definition.key}_capability">Capability</label>
+              <select id="${definition.key}_capability" data-role="${definition.key}" class="role-capability">
+                <option value="low" ${role.capability === 'low' ? 'selected' : ''}>low</option>
+                <option value="normal" ${role.capability === 'normal' ? 'selected' : ''}>normal</option>
+                <option value="high" ${role.capability === 'high' ? 'selected' : ''}>high</option>
+              </select>
+            </div>
+            <div>
+              <label for="${definition.key}_minConfidence">Min confidence</label>
+              <input id="${definition.key}_minConfidence" type="number" step="0.01" min="0" max="1" value="${escapeAttr(String(role.minConfidence))}" />
+            </div>
+          </div>
+
+          <div class="card-actions">
+            <button class="btn-secondary test-local-agent" data-role="${definition.key}">Test</button>
+            <button class="btn-secondary install-agent-model ollama-action" data-role="${definition.key}">Install model</button>
+          </div>
+          ${roleStatus ? `<pre class="status-log">${escapeHtml(roleStatus)}</pre>` : ''}
         </div>
       `;
     }).join('');
@@ -255,90 +283,148 @@ export class ConfigurationPanel {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Agent Configuration</title>
     <style>
-      body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 24px; }
-      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
-      .agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; align-items: start; }
-      .card { border: 1px solid var(--vscode-panel-border); border-radius: 10px; padding: 16px; background: var(--vscode-editor-background); }
-      h2 { margin-top: 28px; }
-      h3 { margin-top: 0; }
-      label { display: block; margin-top: 12px; font-weight: 600; }
-      input[type="text"], input[type="number"], select { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 8px; }
-      .checkbox-row { display: flex; align-items: center; gap: 8px; }
+      * { box-sizing: border-box; }
+      body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 20px 24px 40px; max-width: 1200px; }
+      h2 { margin: 28px 0 4px; font-size: 14px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; color: var(--vscode-descriptionForeground); }
+      h2:first-child { margin-top: 0; }
+      .section-desc { font-size: 12px; color: var(--vscode-descriptionForeground); margin: 0 0 12px; }
+      .section-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 3px; background: #e8ab5d22; color: #e8ab5d; border: 1px solid #e8ab5d55; margin-left: 8px; vertical-align: middle; letter-spacing: 0.2px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+      .agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+      .card { border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 14px 16px; background: var(--vscode-editor-background); }
+      label { display: block; margin-top: 10px; font-size: 12px; font-weight: 600; }
+      input[type="text"], input[type="number"], select { width: 100%; margin-top: 4px; padding: 6px 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 4px; font-family: var(--vscode-font-family); font-size: 12px; }
+      .checkbox-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
       .checkbox-row input { width: auto; margin-top: 0; }
-      .actions { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
-      .card-actions { margin-bottom: 12px; }
-      button { padding: 8px 12px; }
-      code, pre { background: var(--vscode-textBlockQuote-background); padding: 8px; border-radius: 6px; overflow-x: auto; }
-      .muted { color: var(--vscode-descriptionForeground); }
+      button { padding: 6px 12px; border: 1px solid var(--vscode-button-border, transparent); border-radius: 5px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); font-size: 12px; font-weight: 600; cursor: pointer; }
+      button:hover { background: var(--vscode-button-hoverBackground); }
+      .btn-secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border-color: var(--vscode-button-secondaryBorder, var(--vscode-panel-border)); }
+      .btn-secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+      .btn-save { min-width: 80px; }
+      code { background: var(--vscode-textBlockQuote-background); padding: 2px 5px; border-radius: 3px; font-size: 11px; }
+      pre.status-log { background: var(--vscode-textBlockQuote-background); padding: 8px 10px; border-radius: 5px; overflow-x: auto; font-size: 11px; margin: 10px 0 0; white-space: pre-wrap; word-break: break-all; }
+      .muted { color: var(--vscode-descriptionForeground); font-size: 12px; }
+      .hidden { display: none; }
+      .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .section-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+      .card-actions { display: flex; gap: 6px; margin-top: 12px; }
+      .agent-card { padding: 12px 14px; }
+      .agent-header { margin-bottom: 4px; }
+      .agent-name { font-size: 13px; font-weight: 700; display: block; }
+      .agent-key { font-size: 10px; font-family: monospace; display: block; margin-top: 1px; }
+      .model-status { font-size: 10px; font-weight: 400; margin-left: 6px; }
+      .model-status.ok { color: #5cb85c; }
+      .model-status.warn { color: #e8ab5d; }
+      .header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+      .header-row h1 { margin: 0; font-size: 16px; }
+      .preset-row { display: flex; align-items: flex-end; gap: 8px; }
+      .preset-row select { width: auto; min-width: 90px; }
+      .preset-hint { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 6px; }
     </style>
   </head>
   <body>
-    <h2>Settings</h2>
-    <p class="muted">Main plugin settings and MCP service endpoints.</p>
-    <div class="grid">
+
+    <!-- Header -->
+    <div class="header-row">
+      <h1>Settings</h1>
+      <button class="btn-save" id="save">Save</button>
+    </div>
+
+    <!-- Cloud AI Provider -->
+    <h2>AI Review Provider
+      <span class="section-tag">Semantic Enrichment</span>
+      <span class="section-tag">Flow Extraction</span>
+      <span class="section-tag">Generate Graph → AI Review</span>
+    </h2>
+    <p class="section-desc">Claude or Codex CLI — shared by Semantic Enrichment, Flow Extraction, and the AI Review sub-step in Generate Graph. Provider CLI must be available on this machine.</p>
+    <div class="grid" style="margin-bottom:8px;">
       <div class="card">
-        <label for="reviewProvider">AI agent</label>
+        <label for="reviewProvider">Provider</label>
         <select id="reviewProvider">
           <option value="codex" ${config.reviewProvider !== 'claude' ? 'selected' : ''}>codex</option>
           <option value="claude" ${config.reviewProvider === 'claude' ? 'selected' : ''}>claude</option>
         </select>
-        <p class="muted">The plugin auto-selects the review path for this agent.</p>
-        <p class="muted"><strong>Agent CLI:</strong> ${escapeHtml(agentStatus)}</p>
+        <p class="muted" style="margin-top:8px;">CLI: ${escapeHtml(agentStatus)}</p>
+        <div class="card-actions">
+          <button class="btn-secondary" id="testAgent">Test AI Review</button>
+        </div>
+        ${this.lastAgentProbe.length ? `<pre class="status-log">${escapeHtml(this.lastAgentProbe.join('\n'))}</pre>` : ''}
+      </div>
+    </div>
+
+    <!-- MCP Services -->
+    <h2>MCP Services</h2>
+    <p class="section-desc">HTTP endpoints for the running MCP servers. Edit only if you changed the default ports.</p>
+    <div class="card" style="margin-bottom:8px;">
+      <div class="grid" style="gap:10px;">
+        <div>
+          <label for="semanticCoreUrl">semantic-core</label>
+          <input id="semanticCoreUrl" type="text" value="${escapeAttr(config.semanticCoreUrl)}" />
+        </div>
+        <div>
+          <label for="validatorUrl">validator</label>
+          <input id="validatorUrl" type="text" value="${escapeAttr(config.validatorUrl)}" />
+        </div>
+        <div>
+          <label for="compilerUrl">compiler</label>
+          <input id="compilerUrl" type="text" value="${escapeAttr(config.compilerUrl)}" />
+        </div>
+        <div>
+          <label for="javaParserUrl">java-parser</label>
+          <input id="javaParserUrl" type="text" value="${escapeAttr(config.javaParserUrl)}" />
+        </div>
+        <div>
+          <label for="jqassistantUrl">jqassistant</label>
+          <input id="jqassistantUrl" type="text" value="${escapeAttr(config.jqassistantUrl)}" />
+        </div>
+        <div>
+          <label for="documentImportUrl">document-import</label>
+          <input id="documentImportUrl" type="text" value="${escapeAttr(config.documentImportUrl)}" />
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="btn-secondary" id="testMcp">Test MCP servers</button>
+      </div>
+      ${this.lastMcpStatus.length ? `<pre class="status-log">${escapeHtml(this.lastMcpStatus.join('\n'))}</pre>` : ''}
+    </div>
+
+    <!-- General -->
+    <h2>General</h2>
+    <div class="grid" style="margin-bottom:8px;">
+      <div class="card">
+        <label for="artifactRoot">Artifact root</label>
+        <input id="artifactRoot" type="text" value="${escapeAttr(config.artifactRoot)}" />
       </div>
       <div class="card">
-        <label for="semanticCoreUrl">semantic-core URL</label>
-        <input id="semanticCoreUrl" type="text" value="${escapeAttr(config.semanticCoreUrl)}" />
-
-        <label for="validatorUrl">validator URL</label>
-        <input id="validatorUrl" type="text" value="${escapeAttr(config.validatorUrl)}" />
-
-        <label for="compilerUrl">compiler URL</label>
-        <input id="compilerUrl" type="text" value="${escapeAttr(config.compilerUrl)}" />
-
-        <label for="javaParserUrl">java-parser URL</label>
-        <input id="javaParserUrl" type="text" value="${escapeAttr(config.javaParserUrl)}" />
-
-        <label for="jqassistantUrl">jqassistant URL</label>
-        <input id="jqassistantUrl" type="text" value="${escapeAttr(config.jqassistantUrl)}" />
-
-        <label for="deterministicGraphUrl">deterministic-graph URL</label>
-        <input id="deterministicGraphUrl" type="text" value="${escapeAttr((config as typeof config & { deterministicGraphUrl?: string }).deterministicGraphUrl ?? '')}" />
-
-        <label for="artifactRoot">artifact root</label>
-        <input id="artifactRoot" type="text" value="${escapeAttr(config.artifactRoot)}" />
-
         <label for="javaBasePackage">Java base package</label>
         <input id="javaBasePackage" type="text" value="${escapeAttr(config.javaBasePackage)}" />
       </div>
     </div>
 
-    <h2>AI Native Language &gt; Local AI Agents</h2>
-    <p class="muted">Each role routes to its own local AI provider/model. The deterministic graph still remains authoritative.</p>
-    <p class="muted">Saved to <code>.ai-native/config/models.yaml</code> in the current workspace.</p>
-    <div class="card">
-      <label for="bulkPreset">Bulk preset</label>
-      <select id="bulkPreset">
-        <option value="low">low</option>
-        <option value="normal" selected>normal</option>
-        <option value="high">high</option>
-      </select>
-      <div class="actions">
-        <button id="applyBulkPreset">Apply preset to all roles</button>
+    <!-- Local AI Agents -->
+    <h2>Local AI Agents
+      <span class="section-tag">Source Import → Local AI Agents</span>
+    </h2>
+    <p class="section-desc">Ollama-based enrichment used by the Local AI Agents sub-option in Source Import. Each role uses its own model — config saved to <code>.ai-native/config/models.yaml</code>.</p>
+    <div class="section-actions">
+      <div class="preset-row">
+        <select id="bulkPreset">
+          <option value="low">low</option>
+          <option value="normal" selected>normal</option>
+          <option value="high">high</option>
+        </select>
+        <button class="btn-secondary" id="applyBulkPreset">Apply preset to all</button>
       </div>
-      <ul>
-        ${BULK_PRESET_HELPERS.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}
-      </ul>
-    </div>
-    <div class="actions">
-      <button id="save">Save</button>
-      <button id="testMcp">Test MCP servers</button>
-      <button id="testAgent">Test AI agent</button>
-      <button id="installMissingModels">Install missing selected models</button>
-      <button id="installOllama">Install Ollama</button>
+
+      <button class="btn-secondary" id="installMissingModels">Install missing models</button>
+      <button class="btn-secondary" id="installOllama">Install Ollama</button>
     </div>
     <div class="agent-grid">${agentCards}</div>
-    <pre>${escapeHtml(this.lastMcpStatus.join('\n') || 'MCP test not run yet.')}</pre>
-    <pre>${escapeHtml(this.lastAgentProbe.join('\n') || 'AI agent test not run yet.')}</pre>
+
+    <div style="margin-top:24px;display:flex;justify-content:flex-end;">
+      <button class="btn-save" id="save2">Save</button>
+    </div>
+
     <script nonce="${nonce}">
       const vscode = acquireVsCodeApi();
       const localAgentDefinitions = ${JSON.stringify(agentDefinitions.map((definition) => definition.key))};
@@ -347,15 +433,13 @@ export class ConfigurationPanel {
 
       function getRoleValues(role) {
         return {
-          enabled: document.getElementById(role + '_enabled').checked,
+          enabled: true,
           provider: document.getElementById(role + '_provider').value,
-          cloudAgent: document.getElementById(role + '_cloudAgent').value,
           capability: document.getElementById(role + '_capability').value,
           model: document.getElementById(role + '_model').value,
           endpoint: document.getElementById(role + '_endpoint').value,
           timeoutMs: Number(document.getElementById(role + '_timeoutMs').value || 0),
           maxInputSize: Number(document.getElementById(role + '_maxInputSize').value || 0),
-          autoMerge: document.getElementById(role + '_autoMerge').checked,
           minConfidence: Number(document.getElementById(role + '_minConfidence').value || 0)
         };
       }
@@ -365,14 +449,12 @@ export class ConfigurationPanel {
           const defaults = roleDefaults[role];
           const model = roleModelPresets[role]?.[preset] || defaults.model;
           document.getElementById(role + '_provider').value = defaults.provider;
-          document.getElementById(role + '_cloudAgent').value = defaults.cloudAgent;
           document.getElementById(role + '_capability').value = preset;
           document.getElementById(role + '_model').value = model;
           document.getElementById(role + '_endpoint').value = defaults.endpoint;
           document.getElementById(role + '_timeoutMs').value = String(defaults.timeoutMs);
           document.getElementById(role + '_maxInputSize').value = String(defaults.maxInputSize);
           document.getElementById(role + '_minConfidence').value = String(defaults.minConfidence);
-          document.getElementById(role + '_autoMerge').checked = !!defaults.autoMerge;
         }
       }
 
@@ -388,27 +470,37 @@ export class ConfigurationPanel {
           compilerUrl: document.getElementById('compilerUrl').value,
           javaParserUrl: document.getElementById('javaParserUrl').value,
           jqassistantUrl: document.getElementById('jqassistantUrl').value,
-          deterministicGraphUrl: document.getElementById('deterministicGraphUrl').value,
+          documentImportUrl: document.getElementById('documentImportUrl').value,
           artifactRoot: document.getElementById('artifactRoot').value,
           javaBasePackage: document.getElementById('javaBasePackage').value,
           localAgents
         };
       }
 
+      function updateProviderVisibility(role) {
+        const provider = document.getElementById(role + '_provider').value;
+        const ollamaFields = document.querySelector('.ollama-fields[data-role="' + role + '"]');
+        const installBtn = document.querySelector('.install-agent-model.ollama-action[data-role="' + role + '"]');
+        const isOllama = provider === 'ollama';
+        ollamaFields.classList.toggle('hidden', !isOllama);
+        installBtn.classList.toggle('hidden', !isOllama);
+      }
+
       for (const role of localAgentDefinitions) {
+        updateProviderVisibility(role);
+        document.getElementById(role + '_provider').addEventListener('change', () => updateProviderVisibility(role));
+
         const capabilityElement = document.getElementById(role + '_capability');
         const modelElement = document.getElementById(role + '_model');
         capabilityElement.addEventListener('change', () => {
           const recommended = roleModelPresets[role]?.[capabilityElement.value];
-          if (recommended) {
-            modelElement.value = recommended;
-          }
+          if (recommended) modelElement.value = recommended;
         });
       }
 
-      document.getElementById('save').addEventListener('click', () => {
-        vscode.postMessage({ command: 'save', values: collectAllValues() });
-      });
+      function doSave() { vscode.postMessage({ command: 'save', values: collectAllValues() }); }
+      document.getElementById('save').addEventListener('click', doSave);
+      document.getElementById('save2').addEventListener('click', doSave);
       document.getElementById('applyBulkPreset').addEventListener('click', () => {
         applyBulkPreset(document.getElementById('bulkPreset').value);
       });
@@ -422,22 +514,14 @@ export class ConfigurationPanel {
       for (const button of document.querySelectorAll('.test-local-agent')) {
         button.addEventListener('click', () => {
           const role = button.getAttribute('data-role');
-          vscode.postMessage({
-            command: 'test-local-agent',
-            role,
-            values: getRoleValues(role)
-          });
+          vscode.postMessage({ command: 'test-local-agent', role, values: getRoleValues(role) });
         });
       }
 
       for (const button of document.querySelectorAll('.install-agent-model')) {
         button.addEventListener('click', () => {
           const role = button.getAttribute('data-role');
-          vscode.postMessage({
-            command: 'install-agent-model',
-            role,
-            values: getRoleValues(role)
-          });
+          vscode.postMessage({ command: 'install-agent-model', role, values: getRoleValues(role) });
         });
       }
     </script>
@@ -454,7 +538,7 @@ export class ConfigurationPanel {
       compilerUrl: String(values.compilerUrl ?? this.currentValues.compilerUrl),
       javaParserUrl: String(values.javaParserUrl ?? this.currentValues.javaParserUrl),
       jqassistantUrl: String(values.jqassistantUrl ?? this.currentValues.jqassistantUrl),
-      deterministicGraphUrl: String(values.deterministicGraphUrl ?? (this.currentValues as typeof this.currentValues & { deterministicGraphUrl?: string }).deterministicGraphUrl ?? ''),
+      documentImportUrl: String(values.documentImportUrl ?? this.currentValues.documentImportUrl),
       artifactRoot: String(values.artifactRoot ?? this.currentValues.artifactRoot),
       javaBasePackage: String(values.javaBasePackage ?? this.currentValues.javaBasePackage),
       reviewProvider,
@@ -492,7 +576,7 @@ export class ConfigurationPanel {
       return `${result.server}: failed (${result.error ?? 'unreachable'})`;
     });
     this.render();
-    void this.onChange?.();
+    await this.onChange?.();
     vscode.window.showInformationMessage('MCP connection test completed.');
   }
 
@@ -612,11 +696,7 @@ export class ConfigurationPanel {
 }
 
 function normalizeProvider(value: string): AgentorModelsConfig['provider'] {
-  return value === 'ollama' || value === 'cloud' ? value : 'none';
-}
-
-function normalizeCloudAgent(value: string): CloudAgentKind {
-  return value === 'claude' ? 'claude' : 'codex';
+  return value === 'ollama' ? value : 'none';
 }
 
 function normalizeCapability(value: string): AgentorModelsConfig['capability'] {
@@ -627,13 +707,11 @@ function normalizeSingleRoleInput(values: Record<string, unknown>, fallback: Loc
   return {
     enabled: typeof values.enabled === 'boolean' ? values.enabled : fallback.enabled,
     provider: normalizeProvider(String(values.provider ?? fallback.provider)),
-    cloudAgent: normalizeCloudAgent(String(values.cloudAgent ?? fallback.cloudAgent)),
     capability: normalizeCapability(String(values.capability ?? fallback.capability)),
     model: String(values.model ?? fallback.model).trim() || fallback.model,
     endpoint: String(values.endpoint ?? fallback.endpoint).trim() || fallback.endpoint,
     timeoutMs: positiveInteger(values.timeoutMs, fallback.timeoutMs),
     maxInputSize: positiveInteger(values.maxInputSize, fallback.maxInputSize),
-    autoMerge: typeof values.autoMerge === 'boolean' ? values.autoMerge : fallback.autoMerge,
     minConfidence: normalizeConfidence(values.minConfidence, fallback.minConfidence),
   };
 }

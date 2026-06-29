@@ -18,7 +18,7 @@ This directory will contain local orchestration templates for the semantic workf
   - `compiler`
   - `java-parser`
   - `jqassistant`
-  - `deterministic-graph`
+  - `document-import`
 
 ## Remote runtime model
 

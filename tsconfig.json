@@ -7,6 +7,6 @@
     { "path": "./mcp-servers/compiler" },
     { "path": "./mcp-servers/java-parser" },
     { "path": "./mcp-servers/jqassistant" },
-    { "path": "./mcp-servers/deterministic-graph" }
+    { "path": "./mcp-servers/document-import" }
   ]
 }

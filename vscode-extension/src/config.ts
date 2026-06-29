@@ -7,7 +7,7 @@ export interface ExtensionConfig {
   compilerUrl: string;
   javaParserUrl: string;
   jqassistantUrl: string;
-  deterministicGraphUrl: string;
+  documentImportUrl: string;
   artifactRoot: string;
   javaBasePackage: string;
   reviewProvider: 'codex' | 'claude';
@@ -17,6 +17,7 @@ export interface ExtensionConfig {
   reviewCommandId: string;
   reviewCommandArgsJson: string;
   reviewPromptFileName: string;
+  reconAiEnabled: boolean;
 }
 
 export function getConfig(): ExtensionConfig {
@@ -33,7 +34,7 @@ export function getConfig(): ExtensionConfig {
     compilerUrl: fileConfig.compilerUrl ?? configuration.get<string>('mcp.compilerUrl', 'http://localhost:3003/mcp'),
     javaParserUrl: fileConfig.javaParserUrl ?? configuration.get<string>('mcp.javaParserUrl', 'http://localhost:3004/mcp'),
     jqassistantUrl: fileConfig.jqassistantUrl ?? configuration.get<string>('mcp.jqassistantUrl', 'http://localhost:3005/mcp'),
-    deterministicGraphUrl: fileConfig.deterministicGraphUrl ?? configuration.get<string>('mcp.deterministicGraphUrl', 'http://localhost:3006/mcp'),
+    documentImportUrl: fileConfig.documentImportUrl ?? configuration.get<string>('mcp.documentImportUrl', 'http://localhost:3007/mcp'),
     artifactRoot: fileConfig.artifactRoot ?? configuration.get<string>('artifactRoot', '.ai-native'),
     javaBasePackage: fileConfig.javaBasePackage ?? configuration.get<string>('java.basePackage', 'com.example.generated'),
     reviewProvider,
@@ -43,6 +44,7 @@ export function getConfig(): ExtensionConfig {
     reviewCommandId: fileConfig.reviewCommandId ?? configuration.get<string>('review.commandId', ''),
     reviewCommandArgsJson: fileConfig.reviewCommandArgsJson ?? configuration.get<string>('review.commandArgsJson', '{"prompt":"${prompt}"}'),
     reviewPromptFileName: fileConfig.reviewPromptFileName ?? configuration.get<string>('review.promptFileName', '.github/prompts/ai-native-review.prompt.md'),
+    reconAiEnabled: fileConfig.reconAiEnabled ?? configuration.get<boolean>('review.reconAiEnabled', false),
   };
 }
 

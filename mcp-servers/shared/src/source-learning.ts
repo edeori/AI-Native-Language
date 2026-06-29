@@ -21,6 +21,17 @@ export interface SourceLearningImportOptions {
   projectName: string;
   outputDir: string;
   force?: boolean;
+  /** @deprecated use enableOllamaEnrichment / enableCloudEnrichment */
+  enableLocalAi?: boolean;
+  /** Run Ollama-backed local agents during import (default: true). */
+  enableOllamaEnrichment?: boolean;
+  /** Run cloud-backed local agents (Claude/Codex) during import (default: false — use the separate cloud enrichment command). */
+  enableCloudEnrichment?: boolean;
+  /**
+   * When enableCloudEnrichment is true, this callback is called for each agent slice instead of ollama.
+   * Receives the full prompt text, returns the raw AI response text (JSON string expected).
+   */
+  cloudAgentRunner?: (agentId: string, prompt: string) => Promise<string>;
   resumeFromStage?: 'ast' | 'analysis' | 'snapshot' | 'graph' | 'prompt' | 'modules' | 'semantic';
   javaAstCatalog?: JavaAstFile[];
   jqassistantArtifact?: JqassistantArtifact;
@@ -218,6 +229,8 @@ export interface FlowMapEntrypoint {
     | 'startup-runner'
     | 'webhook-endpoint'
     | 'callback-endpoint'
+    | 'graphql-endpoint'
+    | 'redis-listener'
     | 'event-handler';
   name: string;
   trigger: string;
@@ -680,6 +693,12 @@ export interface JqassistantSupportArtifact {
         parentArtifactId: string;
         moduleName: string;
       }>;
+      externalDependencies?: Array<{
+        groupId: string;
+        artifactId: string;
+        version?: string;
+        scope?: string;
+      }>;
     };
     packageGraph: {
       packages: string[];
@@ -695,12 +714,23 @@ export interface JqassistantSupportArtifact {
         packageName?: string;
         simpleName: string;
         kind?: string;
+        annotations?: string[];
+        interfaces?: string[];
+        superClass?: string;
       }>;
       dependencies: Array<{
         fromType: string;
         toType: string;
         fromPackage?: string;
         toPackage?: string;
+      }>;
+    };
+    callGraph?: {
+      edges: Array<{
+        callerType: string;
+        callerMethod: string;
+        calleeType: string;
+        calleeMethod: string;
       }>;
     };
   };
@@ -796,6 +826,12 @@ export interface LayerGraphsArtifact {
 
 export async function importSourceProjectState(options: SourceLearningImportOptions): Promise<SourceLearningResult> {
   const outputDir = options.outputDir;
+  // Resolve which AI providers may run during this import.
+  // enableLocalAi is the legacy flag: true enables ollama, false disables everything.
+  const enableOllama = options.enableOllamaEnrichment
+    ?? (options.enableLocalAi !== undefined ? options.enableLocalAi : true);
+  const enableCloud = (options.enableCloudEnrichment ?? false) && !!options.cloudAgentRunner;
+  const cloudRunner = options.cloudAgentRunner;
   await mkdir(outputDir, { recursive: true });
 
   await options.onLifecycleProgress?.({ phase: 'analysis', message: 'Starting project analysis' });
@@ -815,13 +851,17 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
   if (options.javaAstCatalog?.length) {
     analysis.javaAstCatalog = options.javaAstCatalog;
   }
-  await safeRunLocalAgentHook(
-    options.projectRoot,
-    'astComponentClassifier',
-    undefined,
-    buildAstComponentClassifierSlices(analysis),
-    options.onLifecycleProgress,
-  );
+  if (enableOllama || enableCloud) {
+    const runner = enableCloud ? (p: string) => cloudRunner!('astComponentClassifier', p) : undefined;
+    await safeRunLocalAgentHook(
+      options.projectRoot,
+      'astComponentClassifier',
+      undefined,
+      buildAstComponentClassifierSlices(analysis),
+      options.onLifecycleProgress,
+      runner,
+    );
+  }
   await options.onLifecycleProgress?.({ phase: 'analysis', message: 'Project analysis complete' });
 
   await options.onLifecycleProgress?.({ phase: 'snapshot', message: 'Building directory snapshot' });
@@ -857,20 +897,26 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     : await buildCodeKnowledgeGraph(analysis, snapshot, options.onCodeGraphProgress);
   await options.onLifecycleProgress?.({ phase: 'graph', message: 'Code knowledge graph complete' });
 
-  await safeRunLocalAgentHook(
-    options.projectRoot,
-    'repositoryPurpose',
-    buildRepositoryPurposePrompt(analysis),
-    undefined,
-    options.onLifecycleProgress,
-  );
-  await safeRunLocalAgentHook(
-    options.projectRoot,
-    'sqlMigrationSemantics',
-    undefined,
-    buildSqlMigrationSemanticsSlices(analysis),
-    options.onLifecycleProgress,
-  );
+  if (enableOllama || enableCloud) {
+    await Promise.all([
+      safeRunLocalAgentHook(
+        options.projectRoot,
+        'repositoryPurpose',
+        undefined,
+        buildRepositoryPurposeSlices(analysis),
+        options.onLifecycleProgress,
+        enableCloud ? (p: string) => cloudRunner!('repositoryPurpose', p) : undefined,
+      ),
+      safeRunLocalAgentHook(
+        options.projectRoot,
+        'sqlMigrationSemantics',
+        undefined,
+        buildSqlMigrationSemanticsSlices(analysis),
+        options.onLifecycleProgress,
+        enableCloud ? (p: string) => cloudRunner!('sqlMigrationSemantics', p) : undefined,
+      ),
+    ]);
+  }
   const analysisMdPath = join(outputDir, 'source.analysis.md');
   const astPath = join(outputDir, 'source.ast.json');
   const astIndexPath = join(outputDir, 'source.ast-index.json');
@@ -922,34 +968,66 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
   const previewMetadata = deterministicArtifacts.preview;
   const componentMap = deterministicArtifacts.componentMap;
   const deterministicFlowMap = deterministicArtifacts.flowMap;
-  const flowCandidateOutput = await safeRunLocalAgentHook(
-    options.projectRoot,
-    'flowCandidate',
-    undefined,
-    buildFlowCandidateSlices(analysis, codeKnowledgeGraph, deterministicFlowMap),
-    options.onLifecycleProgress,
-  );
+  const flowCandidateOutput = (enableOllama || enableCloud)
+    ? await safeRunLocalAgentHook(
+        options.projectRoot,
+        'flowCandidate',
+        undefined,
+        buildFlowCandidateSlices(analysis, codeKnowledgeGraph, deterministicFlowMap, jqassistantSupportArtifact),
+        options.onLifecycleProgress,
+        enableCloud ? (p: string) => cloudRunner!('flowCandidate', p) : undefined,
+      )
+    : undefined;
   const flowMap = buildFlowMapArtifact(analysis, codeKnowledgeGraph, astIndexArtifact, jqassistantSupportArtifact, supportGraphArtifact, flowCandidateOutput);
 
-  await safeRunLocalAgentHook(
-    options.projectRoot,
-    'componentPackaging',
-    undefined,
-    buildComponentPackagingSlices(analysis, previewMetadata, componentMap, flowMap),
-    options.onLifecycleProgress,
-  );
+  if (enableOllama || enableCloud) {
+    await safeRunLocalAgentHook(
+      options.projectRoot,
+      'componentPackaging',
+      undefined,
+      buildComponentPackagingSlices(analysis, previewMetadata, componentMap, flowMap),
+      options.onLifecycleProgress,
+      enableCloud ? (p: string) => cloudRunner!('componentPackaging', p) : undefined,
+    );
+  }
 
-  await options.onLifecycleProgress?.({ phase: 'enrichment', message: 'Running local enrichment layer' });
-  const enrichmentResult = await runLocalEnrichment({
-    projectName: analysis.projectName,
-    projectRoot: analysis.projectRoot,
-    analysis,
-    snapshot,
-    codeGraph: codeKnowledgeGraph,
-    preview: previewMetadata,
-    componentMap,
-    flowMap,
-  });
+  let enrichmentResult: Awaited<ReturnType<typeof runLocalEnrichment>>;
+  if (enableOllama) {
+    await options.onLifecycleProgress?.({ phase: 'enrichment', message: 'Running local enrichment layer' });
+    enrichmentResult = await runLocalEnrichment({
+      projectName: analysis.projectName,
+      projectRoot: analysis.projectRoot,
+      analysis,
+      snapshot,
+      codeGraph: codeKnowledgeGraph,
+      preview: previewMetadata,
+      componentMap,
+      flowMap,
+    });
+  } else {
+    const skippedAt = new Date().toISOString();
+    enrichmentResult = {
+      output: {
+        schemaVersion: '1.0',
+        generatedAt: skippedAt,
+        provider: 'none',
+        capability: 'normal',
+        model: 'none',
+        projectName: analysis.projectName,
+        projectRoot: analysis.projectRoot,
+        tasks: [],
+        validationIssues: [],
+      } as EnrichmentOutput,
+      paths: {
+        rootDir: join(outputDir, '.ai-native', 'enrichment'),
+        configDir: join(outputDir, '.ai-native', 'enrichment'),
+        configPath: join(outputDir, '.ai-native', 'enrichment', 'config.json'),
+        outputPath: join(outputDir, '.ai-native', 'enrichment', 'latest.json'),
+        schemaPath: join(outputDir, '.ai-native', 'enrichment', 'enrichment-output.schema.json'),
+        reviewDossierPath: join(outputDir, '.ai-native', 'enrichment', 'review-dossier.json'),
+      },
+    };
+  }
   const aiGraphArtifact = buildAiGraphArtifact(
     analysis,
     astIndexArtifact,
@@ -957,7 +1035,7 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     supportGraphArtifact,
     graphVerificationArtifact,
     flowMap,
-    enrichmentResult.output,
+    enrichmentResult?.output,
   );
   const layerGraphsArtifact = buildLayerGraphsArtifact(supportGraphArtifact);
   await writeFile(aiGraphPath, JSON.stringify(aiGraphArtifact, null, 2) + '\n');
@@ -976,13 +1054,16 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     graphVerificationArtifact,
   );
   await writeFile(suggestedSemanticPath, suggestedSemantic);
-  await safeRunLocalAgentHook(
-    options.projectRoot,
-    'semanticPolishing',
-    buildSemanticPolishingPrompt(analysis.projectName, suggestedSemantic, previewMetadata, componentMap, flowMap, supportGraphArtifact, astIndexArtifact, jqassistantSupportArtifact, graphVerificationArtifact),
-    undefined,
-    options.onLifecycleProgress,
-  );
+  if (enableOllama || enableCloud) {
+    await safeRunLocalAgentHook(
+      options.projectRoot,
+      'semanticPolishing',
+      undefined,
+      buildSemanticPolishingSlices(analysis.projectName, suggestedSemantic, astIndexArtifact),
+      options.onLifecycleProgress,
+      enableCloud ? (p: string) => cloudRunner!('semanticPolishing', p) : undefined,
+    );
+  }
 
   let createdSemantic = false;
   let semanticSourceText: string;
@@ -1038,7 +1119,7 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     analysis,
     snapshot,
     codeKnowledgeGraph,
-    enrichment: enrichmentResult.output,
+    enrichment: enrichmentResult?.output,
     jqassistant: jqassistantResult.artifact,
     reconnaissance: {
       moduleDossiers: analysis.moduleDossiers,
@@ -6115,7 +6196,7 @@ function buildAiGraphArtifact(
   supportGraph: SupportGraphArtifact,
   verification: GraphVerificationArtifact,
   flowMap: Record<string, unknown>,
-  enrichment: EnrichmentOutput,
+  enrichment?: EnrichmentOutput,
 ): AiGraphArtifact {
   const nodes: AiGraphArtifact['nodes'] = [];
   for (const application of analysis.applicationLayouts) {
@@ -6170,7 +6251,7 @@ function buildAiGraphArtifact(
       evidence: check.evidence.slice(0, 6),
     });
   }
-  for (const task of enrichment.tasks.slice(0, 20)) {
+  for (const task of enrichment?.tasks.slice(0, 20) ?? []) {
     for (const candidate of task.candidates.slice(0, 6)) {
       nodes.push({
         id: `enrichment:${task.task}:${candidate.targetId}`,
@@ -6221,27 +6302,42 @@ function buildApplicationLayerGroups(
 ): Record<string, string[]> {
   const backendLike = /backend/i.test(applicationName);
   const notificationLike = /notification/i.test(applicationName);
+
+  // jQAssistant annotation-based type lists
+  const jqaTypes = analysis.jqassistant?.graphs?.typeGraph.types ?? [];
+  const jqaByKind = (kind: string) => jqaTypes.filter((t) => t.kind === kind).map((t) => t.simpleName);
+
   return {
-    api: filterApplicationScopedItems(analysis.apiSurface.families.map((family) => `${family.family} (${family.endpointCount} endpoints)`), applicationName),
+    api: filterApplicationScopedItems([
+      ...analysis.apiSurface.families.map((family) => `${family.family} (${family.endpointCount} endpoints)`),
+      ...jqaByKind('controller'),
+    ], applicationName),
     app: filterApplicationScopedItems([
       ...(analysis.appRuntime.applicationEntryPoint ? [analysis.appRuntime.applicationEntryPoint] : []),
       ...analysis.appRuntime.runtimeFeatures,
+      ...jqaByKind('configuration'),
     ], applicationName),
     common: backendLike
       ? [
           ...analysis.commonSummary.crossCuttingComponents.map((item) => `${item.name} — ${item.role}`),
           ...analysis.commonSummary.eventTypes.map((item) => `${item.name} — ${item.purpose}`),
+          ...jqaByKind('component'),
         ]
       : [],
     persistence: filterApplicationScopedItems([
       ...analysis.persistenceSummary.repositories.map((item) => `${item.name} — ${item.purpose}`),
       ...analysis.persistenceSummary.entityNames,
+      ...jqaByKind('repository'),
+      ...jqaByKind('domain'),
     ], applicationName),
     service: filterApplicationScopedItems([
       ...analysis.serviceSummary.executionServices.map((item) => `${item.name} — ${item.purpose}`),
       ...analysis.serviceSummary.clientImplementations.map((item) => `${item.name} — ${item.purpose}`),
       ...analysis.serviceSummary.scheduledJobs.map((item) => `${item.name} — ${item.purpose}`),
       ...analysis.serviceSummary.asyncListeners.map((item) => `${item.name} — ${item.purpose}`),
+      ...jqaByKind('service'),
+      ...jqaByKind('listener'),
+      ...jqaByKind('job'),
     ], applicationName),
     web: filterApplicationScopedItems([
       ...collectValidationBoundaryNames(analysis),
@@ -6257,6 +6353,7 @@ function buildApplicationLayerGroups(
       ? filterApplicationScopedItems([
           ...analysis.serviceSummary.asyncListeners.map((item) => `${item.name} — ${item.purpose}`),
           ...analysis.appRuntime.externalDependencies,
+          ...jqaByKind('listener'),
         ], applicationName)
       : [],
   };
@@ -6300,6 +6397,49 @@ function buildTypeDependencyIndex(
   return index;
 }
 
+function buildCallGraphIndex(
+  jqassistantSupport: JqassistantSupportArtifact,
+): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const edge of jqassistantSupport.graphs?.callGraph?.edges ?? []) {
+    const callerSimple = simpleNameOfType(edge.callerType);
+    const calleeSimple = simpleNameOfType(edge.calleeType);
+    if (!callerSimple || !calleeSimple || callerSimple === calleeSimple) continue;
+    const bucket = index.get(callerSimple) ?? new Set<string>();
+    bucket.add(calleeSimple);
+    index.set(callerSimple, bucket);
+  }
+  return index;
+}
+
+function buildAnnotationTypeKindMap(
+  jqassistantSupport: JqassistantSupportArtifact,
+): Map<string, string> {
+  const kindMap = new Map<string, string>();
+  for (const type of jqassistantSupport.graphs?.typeGraph.types ?? []) {
+    if (!type.annotations?.length || !type.kind) continue;
+    const simpleName = simpleNameOfType(type.fqn);
+    if (simpleName) kindMap.set(simpleName, type.kind);
+  }
+  return kindMap;
+}
+
+function buildInterfaceImplMap(
+  jqassistantSupport: JqassistantSupportArtifact,
+): Map<string, string[]> {
+  const implMap = new Map<string, string[]>();
+  for (const type of jqassistantSupport.graphs?.typeGraph.types ?? []) {
+    for (const iface of type.interfaces ?? []) {
+      const ifaceSimple = simpleNameOfType(iface);
+      if (!ifaceSimple) continue;
+      const impls = implMap.get(ifaceSimple) ?? [];
+      impls.push(simpleNameOfType(type.fqn) ?? type.fqn);
+      implMap.set(ifaceSimple, impls);
+    }
+  }
+  return implMap;
+}
+
 function buildSupportLayerIndex(
   supportGraph: SupportGraphArtifact,
 ): Map<string, string[]> {
@@ -6317,8 +6457,17 @@ function inferRepositoryCandidatesFromService(
   astIndex: AstIndexArtifact,
   typeDependencyIndex: Map<string, Set<string>>,
   supportLayerIndex: Map<string, string[]>,
+  callGraphIndex?: Map<string, Set<string>>,
 ): string[] {
   const repositories = analysis.persistenceSummary.repositories.map((item) => item.name);
+
+  // Highest confidence: actual call graph edges from service to repository
+  if (callGraphIndex) {
+    const directCallees = [...(callGraphIndex.get(serviceName) ?? new Set<string>())];
+    const byCallGraph = repositories.filter((repository) => directCallees.some((callee) => callee === repository || repository.includes(callee) || callee.includes(repository.replace(/Repository$/, ''))));
+    if (byCallGraph.length) return unique(byCallGraph);
+  }
+
   const directDeps = [...(typeDependencyIndex.get(serviceName) ?? new Set<string>())];
   const byDependency = repositories.filter((repository) => directDeps.some((dependency) => repository.includes(dependency) || dependency.includes(repository.replace(/Repository$/, ''))));
   if (byDependency.length) return unique(byDependency);
@@ -6583,7 +6732,7 @@ function buildFlowMapArtifact(
   supportGraph: SupportGraphArtifact,
   flowCandidateOutput?: LocalAgentOutput,
 ): Record<string, unknown> {
-  const entrypoints = discoverFlowEntrypoints(analysis, astIndex);
+  const entrypoints = discoverFlowEntrypoints(analysis, astIndex, jqassistantSupport);
   const traces = buildDeterministicFlowTraces(analysis, codeGraph, astIndex, jqassistantSupport, supportGraph, entrypoints);
   const clusters = clusterFlowTraces(entrypoints, traces);
   const semanticFlows = interpretFlowSemantics(analysis, entrypoints, traces, clusters, flowCandidateOutput);
@@ -6653,7 +6802,11 @@ function buildFlowMapArtifact(
   };
 }
 
-function discoverFlowEntrypoints(analysis: SourceProjectAnalysis, astIndex: AstIndexArtifact): FlowMapEntrypoint[] {
+function discoverFlowEntrypoints(
+  analysis: SourceProjectAnalysis,
+  astIndex: AstIndexArtifact,
+  jqassistantSupport?: JqassistantSupportArtifact,
+): FlowMapEntrypoint[] {
   const results: FlowMapEntrypoint[] = [];
   for (const endpoint of analysis.endpointCatalog) {
     const astMatch = astIndex.endpoints.find((item) => item.method === endpoint.method && item.path === endpoint.path);
@@ -6764,6 +6917,75 @@ function discoverFlowEntrypoints(analysis: SourceProjectAnalysis, astIndex: AstI
     }
   }
 
+  // Supplement with jQAssistant annotation-derived entrypoints for types missed by AST scanner
+  if (jqassistantSupport?.graphs?.typeGraph.types.length) {
+    const coveredTargets = new Set(results.map((e) => e.target));
+    const coveredListeners = new Set(analysis.serviceSummary.asyncListeners.map((l) => l.name));
+    const coveredJobs = new Set(analysis.serviceSummary.scheduledJobs.map((j) => j.name));
+
+    for (const type of jqassistantSupport.graphs.typeGraph.types) {
+      const name = type.simpleName ?? simpleNameOfType(type.fqn) ?? type.fqn;
+      if (!name) continue;
+      const annotations = type.annotations ?? [];
+      const applicationId = inferApplicationIdFromFile(analysis, type.fqn);
+
+      if (type.kind === 'controller' && !coveredTargets.has(name)) {
+        const isGraphQL = annotations.some((a) => /graphql|queryMapping|mutationMapping/i.test(a));
+        const isSoap = annotations.some((a) => /webservice|endpoint/i.test(a));
+        const kind = isGraphQL ? 'graphql-endpoint' : isSoap ? 'soap-endpoint' : 'rest-endpoint';
+        results.push({
+          entrypointId: `jqa:controller:${name}`,
+          applicationId,
+          kind,
+          name,
+          trigger: name,
+          target: name,
+          sourceRef: type.fqn,
+          nodeHints: [name],
+          notes: [`jqassistant:${annotations.slice(0, 3).join(',')}`],
+          evidence: [{ kind: 'endpoint', ref: type.fqn, detail: `jQAssistant: ${annotations.join(', ')}` }],
+        });
+        coveredTargets.add(name);
+      }
+
+      const isRedisMessageListener = (type.interfaces ?? []).some((i) => /MessageListener/.test(i));
+      if ((type.kind === 'listener' || isRedisMessageListener) && !coveredListeners.has(name) && !coveredTargets.has(name)) {
+        const isKafka = annotations.some((a) => /kafka/i.test(a));
+        const isRabbit = annotations.some((a) => /rabbit/i.test(a));
+        const listenerKind = isRedisMessageListener ? 'redis-listener' : isKafka ? 'kafka-listener' : isRabbit ? 'rabbit-listener' : 'event-handler';
+        results.push({
+          entrypointId: `jqa:listener:${name}`,
+          applicationId,
+          kind: listenerKind,
+          name,
+          trigger: name,
+          target: name,
+          sourceRef: type.fqn,
+          nodeHints: [name],
+          notes: [`jqassistant:${annotations.slice(0, 3).join(',')}`],
+          evidence: [{ kind: 'listener', ref: type.fqn, detail: `jQAssistant: ${annotations.join(', ')}` }],
+        });
+        coveredTargets.add(name);
+      }
+
+      if (type.kind === 'job' && !coveredJobs.has(name) && !coveredTargets.has(name)) {
+        results.push({
+          entrypointId: `jqa:job:${name}`,
+          applicationId,
+          kind: 'spring-scheduled',
+          name,
+          trigger: name,
+          target: name,
+          sourceRef: type.fqn,
+          nodeHints: [name],
+          notes: [`jqassistant:${annotations.slice(0, 3).join(',')}`],
+          evidence: [{ kind: 'schedule', ref: type.fqn, detail: `jQAssistant: ${annotations.join(', ')}` }],
+        });
+        coveredTargets.add(name);
+      }
+    }
+  }
+
   return uniqueBy(results, (entrypoint) => entrypoint.entrypointId);
 }
 
@@ -6777,8 +6999,11 @@ function buildDeterministicFlowTraces(
 ): FlowTraceRecord[] {
   const supportLayerIndex = buildSupportLayerIndex(supportGraph);
   const typeDependencyIndex = buildTypeDependencyIndex(jqassistantSupport);
+  const callGraphIndex = buildCallGraphIndex(jqassistantSupport);
+  const annotationKindMap = buildAnnotationTypeKindMap(jqassistantSupport);
+  const interfaceImplMap = buildInterfaceImplMap(jqassistantSupport);
   return entrypoints.map((entrypoint) => {
-    const candidates = matchServiceCandidatesForEntrypoint(entrypoint, analysis.serviceSummary.executionServices);
+    const candidates = matchServiceCandidatesForEntrypoint(entrypoint, analysis.serviceSummary.executionServices, callGraphIndex, interfaceImplMap);
     const primary = candidates[0];
     const steps: FlowTraceStep[] = [];
     const warnings: string[] = [];
@@ -6798,20 +7023,36 @@ function buildDeterministicFlowTraces(
         detail: `${primary.operation.name}: ${primary.operation.purpose}`,
       });
       for (const collaborator of primary.operation.collaborators.slice(0, 6)) {
-        const role = classifyCollaboratorRole(collaborator, primary.operation.sideEffects);
+        const role = classifyCollaboratorRole(collaborator, primary.operation.sideEffects, annotationKindMap);
         steps.push(buildTraceStep(codeGraph, collaborator, role, `collaborator:${collaborator}`, [{
           kind: 'service-summary',
           ref: primary.service.name,
           detail: `collaborator ${collaborator} used by ${primary.operation.name}`,
         }]));
       }
-      const repositoryCandidates = inferRepositoryCandidatesFromService(primary.service.name, primary.operation.name, analysis, astIndex, typeDependencyIndex, supportLayerIndex);
+      const repositoryCandidates = inferRepositoryCandidatesFromService(primary.service.name, primary.operation.name, analysis, astIndex, typeDependencyIndex, supportLayerIndex, callGraphIndex);
       for (const repositoryName of repositoryCandidates.slice(0, 3)) {
         steps.push(buildTraceStep(codeGraph, repositoryName, 'repository', `repository:${repositoryName}`, [{
           kind: 'inference',
           ref: primary.service.name,
           detail: `repository candidate inferred for ${primary.operation.name}`,
         }]));
+      }
+
+      // Supplement from type dependency index: publisher and external-client deps not in collaborators
+      const existingStepNames = new Set(steps.map((s) => s.nodeName));
+      const serviceDeps = typeDependencyIndex.get(primary.service.name) ?? new Set<string>();
+      for (const dep of serviceDeps) {
+        if (existingStepNames.has(dep)) continue;
+        const depRole = classifyCollaboratorRole(dep, [], annotationKindMap);
+        if (depRole === 'event-publisher' || depRole === 'external-client') {
+          steps.push(buildTraceStep(codeGraph, dep, depRole, `type-dep:${dep}`, [{
+            kind: 'inference',
+            ref: primary.service.name,
+            detail: `${depRole} dependency of ${primary.service.name}`,
+          }]));
+          existingStepNames.add(dep);
+        }
       }
     } else {
       warnings.push('no strongly matched service operation found for deterministic trace');
@@ -7059,6 +7300,7 @@ async function safeRunLocalAgentHook(
     prompt: string;
   }>,
   onLifecycleProgress?: (event: { phase: 'analysis' | 'snapshot' | 'graph' | 'enrichment' | 'artifacts' | 'complete'; message: string }) => void | Promise<void>,
+  cloudRunner?: (prompt: string) => Promise<string>,
 ): Promise<LocalAgentOutput | undefined> {
   if (!prompt?.trim() && !slices?.length) {
     return undefined;
@@ -7069,10 +7311,11 @@ async function safeRunLocalAgentHook(
       role,
       prompt,
       slices,
+      cloudRunner,
       onSliceProgress: async (event) => {
         await onLifecycleProgress?.({
           phase: 'enrichment',
-          message: `Local agents: ${event.role} · ${event.label} · ${event.status}`,
+          message: `${cloudRunner ? 'Cloud' : 'Local'} agents: ${event.role} · ${event.label} · ${event.status}`,
         });
       },
     });
@@ -7089,9 +7332,8 @@ function buildLocalAgentPrompt(agentId: string, instructions: string[], payload:
     'Return JSON only. No markdown fences. No explanations outside JSON.',
     ...instructions,
     'Return an object with one top-level array field that matches the task, such as records, flows, components or triageGroups.',
-    'Every item must include: agentId, model, confidence, evidence, warnings, and targetId or applicationId as applicable.',
-    'Use confidence in the range 0.0 to 1.0.',
-    'Use evidence entries with fields: kind, ref, detail.',
+    'Every item must include: confidence (0.0–1.0), evidence (array of {kind, ref, detail}), warnings (array), and targetId.',
+    'Do NOT include a "model" field — it is injected automatically.',
     '',
     'Deterministic input:',
     JSON.stringify(payload, null, 2),
@@ -7121,12 +7363,15 @@ function buildAstComponentClassifierPrompt(analysis: SourceProjectAnalysis): str
   });
 }
 
-function buildAstComponentClassifierSlices(analysis: SourceProjectAnalysis): Array<{ id: string; label: string; prompt: string }> {
+export function buildAstComponentClassifierSlices(analysis: SourceProjectAnalysis): Array<{ id: string; label: string; prompt: string }> {
   const slices: Array<{ id: string; label: string; prompt: string }> = [];
+  const CHUNK_SIZE = 60;
   for (const scope of collectLocalAgentApplicationScopes(analysis)) {
-    const javaCatalog = analysis.javaCatalog
+    const allItems = analysis.javaCatalog
       .filter((item) => localAgentScopeMatchesFile(scope, item.file, analysis.projectRoot))
-      .slice(0, 160)
+      // Prioritise classes with annotations/endpoints (architecturally interesting first)
+      .sort((a, b) => ((b.annotations?.length ?? 0) + (b.endpoints?.length ?? 0)) - ((a.annotations?.length ?? 0) + (a.endpoints?.length ?? 0)))
+      .slice(0, 240)
       .map((item) => ({
         file: relativePath(item.file, analysis.projectRoot),
         packageName: item.packageName,
@@ -7138,48 +7383,72 @@ function buildAstComponentClassifierSlices(analysis: SourceProjectAnalysis): Arr
         securityHints: item.securityHints,
         integrationHints: item.integrationHints,
       }));
-    if (!javaCatalog.length) {
+    if (!allItems.length) {
       continue;
     }
-    slices.push({
-      id: scope.id,
-      label: scope.label,
-      prompt: buildLocalAgentPrompt('ast-component-classifier-agent', [
-        'Classify packages, classes and types into component roles.',
-        'Candidate roles: service, controller, repository, adapter, policy, validator, mapper, listener, scheduler, configuration, generated, unknown.',
-        'Focus on strong signals only: annotations, imports, method signatures, package names.',
-        'Return { "records": [...] }.',
-      ], {
-        projectName: analysis.projectName,
-        application: scope.application,
-        focusModule: scope.module ? {
-          name: scope.module.name,
-          purpose: scope.module.purpose,
-          pathHints: scope.module.pathHints,
-        } : undefined,
-        javaCatalog,
-      }),
-    });
+    const chunks = allItems.length > CHUNK_SIZE
+      ? Array.from({ length: Math.ceil(allItems.length / CHUNK_SIZE) }, (_, i) => allItems.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE))
+      : [allItems];
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkLabel = chunks.length > 1 ? `${scope.label} (${i + 1}/${chunks.length})` : scope.label;
+      slices.push({
+        id: chunks.length > 1 ? `${scope.id}-chunk-${i + 1}` : scope.id,
+        label: chunkLabel,
+        prompt: buildLocalAgentPrompt('ast-component-classifier-agent', [
+          'Classify each Java class into one component role.',
+          'Candidate roles: service, controller, repository, adapter, policy, validator, mapper, listener, scheduler, configuration, generated, unknown.',
+          'Focus on strong signals only: annotations, imports, method signatures, package names.',
+          'For each class produce one record: targetId = file path, role = assigned role, summary = one sentence why.',
+          'Return { "records": [...] }.',
+        ], {
+          projectName: analysis.projectName,
+          application: scope.application.appRoot,
+          focusModule: scope.module ? {
+            name: scope.module.name,
+            purpose: scope.module.purpose,
+            pathHints: scope.module.pathHints,
+          } : undefined,
+          javaCatalog: chunks[i],
+        }),
+      });
+    }
   }
   return slices;
 }
 
-function buildRepositoryPurposePrompt(analysis: SourceProjectAnalysis): string {
-  return buildLocalAgentPrompt('repository-purpose-agent', [
-    'Summarize repository and DAO responsibilities.',
-    'Infer purpose from repository names, method groups, entity/table names and notable operations.',
-    'Do not invent tables or operations.',
-    'Return { "records": [...] }.',
-  ], {
-    projectName: analysis.projectName,
-    applicationLayouts: analysis.applicationLayouts,
-    persistenceSummary: {
-      moduleRole: analysis.persistenceSummary.moduleRole,
-      repositoryStyles: analysis.persistenceSummary.repositoryStyles,
-      repositories: analysis.persistenceSummary.repositories,
-      mapperSummary: analysis.persistenceSummary.mapperSummary,
-    },
-  });
+export function buildRepositoryPurposeSlices(analysis: SourceProjectAnalysis): Array<{ id: string; label: string; prompt: string }> {
+  const allRepos = analysis.persistenceSummary.repositories ?? [];
+  if (!allRepos.length) return [];
+  const CHUNK_SIZE = 5;
+  const slices: Array<{ id: string; label: string; prompt: string }> = [];
+  for (let i = 0; i < allRepos.length; i += CHUNK_SIZE) {
+    const chunk = allRepos.slice(i, i + CHUNK_SIZE);
+    const sliceIndex = Math.floor(i / CHUNK_SIZE) + 1;
+    const totalChunks = Math.ceil(allRepos.length / CHUNK_SIZE);
+    const label = totalChunks > 1 ? `repositories (${sliceIndex}/${totalChunks})` : 'repositories';
+    const repoNames = chunk.map(r => r.name);
+    slices.push({
+      id: `repositories-chunk-${sliceIndex}`,
+      label,
+      prompt: buildLocalAgentPrompt('repository-purpose-agent', [
+        `You must return exactly ${chunk.length} records — one for each repository listed below.`,
+        `Required targetId values (one record each): ${repoNames.join(', ')}.`,
+        'Each repository already has a deterministic "purpose" field — enrich it with domain insights.',
+        'For each record: targetId = exact repository name, summary = 1-2 sentence enriched description.',
+        'Return { "records": [...] }.',
+      ], {
+        projectName: analysis.projectName,
+        repositories: chunk.map(r => ({
+          name: r.name,
+          style: r.style,
+          purpose: r.purpose,
+          operationGroups: r.operationGroups,
+          notableOperation: r.notableOperation,
+        })),
+      }),
+    });
+  }
+  return slices;
 }
 
 function buildSqlMigrationSemanticsPrompt(analysis: SourceProjectAnalysis): string {
@@ -7202,7 +7471,7 @@ function buildSqlMigrationSemanticsPrompt(analysis: SourceProjectAnalysis): stri
   });
 }
 
-function buildSqlMigrationSemanticsSlices(analysis: SourceProjectAnalysis): Array<{ id: string; label: string; prompt: string }> {
+export function buildSqlMigrationSemanticsSlices(analysis: SourceProjectAnalysis): Array<{ id: string; label: string; prompt: string }> {
   const chunkSize = 8;
   const slices: Array<{ id: string; label: string; prompt: string }> = [];
   for (let index = 0; index < analysis.sqlCatalog.length; index += chunkSize) {
@@ -7211,13 +7480,13 @@ function buildSqlMigrationSemanticsSlices(analysis: SourceProjectAnalysis): Arra
       id: `sql-${Math.floor(index / chunkSize) + 1}`,
       label: `sql batch ${Math.floor(index / chunkSize) + 1}`,
       prompt: buildLocalAgentPrompt('sql-migration-semantics-agent', [
-        'Summarize migrations, views, indexes and schema changes into human-readable semantic notes.',
-        'Classify each migration concern as schema, audit, archive, performance, reporting, integration, security or unknown.',
+        'Produce one record per SQL file in the catalog.',
+        'For each file: targetId = the file path, summary = 1-2 sentence human-readable description of what the migration does.',
+        'Classify the concern as: schema, audit, archive, performance, reporting, integration, security, or unknown.',
         'Do not modify or reinterpret the generated database schema.',
         'Return { "records": [...] }.',
       ], {
         projectName: analysis.projectName,
-        applications: analysis.applicationLayouts,
         sqlCatalog: chunk.map((sqlFile) => ({
           file: relativePath(sqlFile.file, analysis.projectRoot),
           tables: sqlFile.tables.map((table) => ({
@@ -7257,10 +7526,11 @@ function buildFlowCandidatePrompt(analysis: SourceProjectAnalysis, codeGraph: Co
   });
 }
 
-function buildFlowCandidateSlices(
+export function buildFlowCandidateSlices(
   analysis: SourceProjectAnalysis,
   codeGraph: CodeKnowledgeGraph,
   deterministicFlowMap: Record<string, unknown>,
+  jqassistantSupport?: JqassistantSupportArtifact,
 ): Array<{ id: string; label: string; prompt: string }> {
   const stages = deterministicFlowMap.stages && typeof deterministicFlowMap.stages === 'object'
     ? deterministicFlowMap.stages as Record<string, unknown>
@@ -7274,19 +7544,34 @@ function buildFlowCandidateSlices(
   const clusters = Array.isArray((stages.flowBoundaryClustering as Record<string, unknown> | undefined)?.clusters)
     ? ((stages.flowBoundaryClustering as Record<string, unknown>).clusters as Array<Record<string, unknown>>)
     : [];
+  // jQAssistant call graph summary grouped by kind — gives the AI agent actual bytecode evidence
+  const jqaControllers = jqassistantSupport?.graphs?.typeGraph.types.filter((t) => t.kind === 'controller').map((t) => t.simpleName) ?? [];
+  const jqaServices = jqassistantSupport?.graphs?.typeGraph.types.filter((t) => t.kind === 'service').map((t) => t.simpleName) ?? [];
+  const jqaRepositories = jqassistantSupport?.graphs?.typeGraph.types.filter((t) => t.kind === 'repository').map((t) => t.simpleName) ?? [];
+  const jqaListeners = jqassistantSupport?.graphs?.typeGraph.types.filter((t) => t.kind === 'listener' || t.kind === 'job').map((t) => t.simpleName) ?? [];
+  const jqaCallEdges = (jqassistantSupport?.graphs?.callGraph?.edges ?? []).slice(0, 300).map((e) => `${e.callerType.split('.').pop()}.${e.callerMethod} → ${e.calleeType.split('.').pop()}.${e.calleeMethod}`);
+
+  const slimTrace = (t: Record<string, unknown>) => ({
+    traceId: t['traceId'],
+    entrypointId: t['entrypointId'],
+    flowType: t['flowType'],
+    primaryService: t['primaryService'],
+    steps: Array.isArray(t['steps']) ? (t['steps'] as Array<Record<string, unknown>>).map((s) => `${s['role']}:${s['nodeName']}`) : [],
+  });
+
   const slices = [
     {
       id: 'api-flows',
       label: 'API flows',
       payload: {
         projectName: analysis.projectName,
-        entrypoints: entrypoints.filter((item) => String(item.kind ?? '').includes('endpoint')),
-        traces: traces.filter((item) => String(item.flowType ?? '') === 'api'),
-        clusters: clusters.filter((item) => String(item.flowType ?? '') === 'api'),
+        entrypoints: entrypoints.filter((item) => String(item.kind ?? '').includes('endpoint')).slice(0, 15),
+        traces: traces.filter((item) => String(item.flowType ?? '') === 'api').slice(0, 10).map(slimTrace),
+        clusters: clusters.filter((item) => String(item.flowType ?? '') === 'api').slice(0, 8),
         graphSummary: {
           endpointFamilies: codeGraph.summary.endpointFamilies,
-          serviceDetails: codeGraph.summary.serviceDetailItems.slice(0, 80),
         },
+        jqassistant: { controllers: jqaControllers, callEdges: jqaCallEdges.filter((e) => jqaControllers.some((c) => e.startsWith(c + '.'))).slice(0, 20) },
       },
     },
     {
@@ -7294,12 +7579,13 @@ function buildFlowCandidateSlices(
       label: 'Scheduled flows',
       payload: {
         projectName: analysis.projectName,
-        entrypoints: entrypoints.filter((item) => /scheduled|scheduler|quartz|batch/.test(String(item.kind ?? ''))),
-        traces: traces.filter((item) => /scheduled|batch/.test(String(item.flowType ?? ''))),
-        clusters: clusters.filter((item) => /scheduled|batch/.test(String(item.flowType ?? ''))),
+        entrypoints: entrypoints.filter((item) => /scheduled|scheduler|quartz|batch/.test(String(item.kind ?? ''))).slice(0, 20),
+        traces: traces.filter((item) => /scheduled|batch/.test(String(item.flowType ?? ''))).slice(0, 15).map(slimTrace),
+        clusters: clusters.filter((item) => /scheduled|batch/.test(String(item.flowType ?? ''))).slice(0, 10),
         graphSummary: {
-          flowTraces: codeGraph.summary.flowTraces.filter((item) => /job|archive|refresh/i.test(item)).slice(0, 80),
+          flowTraces: codeGraph.summary.flowTraces.filter((item) => /job|archive|refresh/i.test(item)).slice(0, 30),
         },
+        jqassistant: { services: jqaServices, repositories: jqaRepositories, callEdges: jqaCallEdges.filter((e) => /job|scheduled|task/i.test(e)).slice(0, 30) },
       },
     },
     {
@@ -7307,12 +7593,13 @@ function buildFlowCandidateSlices(
       label: 'Event/listener flows',
       payload: {
         projectName: analysis.projectName,
-        entrypoints: entrypoints.filter((item) => /listener|handler/.test(String(item.kind ?? ''))),
-        traces: traces.filter((item) => /event|integration/.test(String(item.flowType ?? ''))),
-        clusters: clusters.filter((item) => /event|integration/.test(String(item.flowType ?? ''))),
+        entrypoints: entrypoints.filter((item) => /listener|handler/.test(String(item.kind ?? ''))).slice(0, 20),
+        traces: traces.filter((item) => /event|integration/.test(String(item.flowType ?? ''))).slice(0, 15).map(slimTrace),
+        clusters: clusters.filter((item) => /event|integration/.test(String(item.flowType ?? ''))).slice(0, 10),
         graphSummary: {
-          flowTraces: codeGraph.summary.flowTraces.filter((item) => /event|notification|listener/i.test(item)).slice(0, 80),
+          flowTraces: codeGraph.summary.flowTraces.filter((item) => /event|notification|listener/i.test(item)).slice(0, 30),
         },
+        jqassistant: { listeners: jqaListeners, services: jqaServices, repositories: jqaRepositories, callEdges: jqaCallEdges.filter((e) => jqaListeners.some((l) => e.startsWith(l + '.'))).slice(0, 30) },
       },
     },
   ];
@@ -7323,6 +7610,7 @@ function buildFlowCandidateSlices(
       'Interpret deterministic flow stages into candidate business flows.',
       'Do not invent nodes or edges; use the provided entrypoints, traces and clusters only.',
       'Flow types: api, event, scheduled, batch, integration, internal.',
+      'For each flow: targetId = kebab-case flow name (e.g. "user-registration-flow"), flowType, name, summary, entrypoint, steps[].',
       'Return { "flows": [...] }.',
     ], slice.payload),
   }));
@@ -7349,18 +7637,42 @@ function buildComponentPackagingPrompt(
   });
 }
 
-function buildComponentPackagingSlices(
+export function buildComponentPackagingSlices(
   analysis: SourceProjectAnalysis,
   preview: ReturnType<typeof buildGraphPreviewMetadata>,
-  componentMap: Record<string, unknown>,
+  _componentMap: Record<string, unknown>,
   flowMap: Record<string, unknown>,
 ): Array<{ id: string; label: string; prompt: string }> {
+  // Pre-extract slim semantic flows from flowMap (avoids passing 500KB+ raw flowMap per slice)
+  const semanticFlowsRaw = (
+    (flowMap?.stages as Record<string, unknown>)?.flowSemanticInterpreter as Record<string, unknown>
+  )?.flows;
+  const allSemanticFlows = Array.isArray(semanticFlowsRaw)
+    ? (semanticFlowsRaw as Array<Record<string, unknown>>).map((f) => ({
+        name: f.name,
+        flowType: f.flowType,
+        trigger: f.trigger,
+        applicationId: f.applicationId,
+      }))
+    : [];
+
   const slices: Array<{ id: string; label: string; prompt: string }> = [];
   for (const application of preview.applicationsDetailed) {
     const applicationLayout = analysis.applicationLayouts.find((item) => item.appRoot === application.name);
     const cardChunks = chunkArray(application.cards ?? [], applicationLayout && !applicationLayout.multiModule ? 3 : 6);
+
+    // Only flows that belong to this application (or have no applicationId)
+    const appFlows = allSemanticFlows
+      .filter((f) => !f.applicationId || String(f.applicationId) === application.name)
+      .slice(0, 12);
+
     for (let index = 0; index < cardChunks.length; index += 1) {
-      const cards = cardChunks[index] ?? [];
+      const cards = (cardChunks[index] ?? []).map((card) => ({
+        ...card,
+        // Cap items list to 20 per card — enough for the AI to understand node types
+        items: Array.isArray(card.items) ? card.items.slice(0, 20) : card.items,
+        flow: Array.isArray(card.flow) ? card.flow.slice(0, 8) : card.flow,
+      }));
       slices.push({
         id: `${slugify(application.name)}-cards-${index + 1}`,
         label: `${application.name} / cards ${index + 1}`,
@@ -7368,6 +7680,7 @@ function buildComponentPackagingSlices(
           'Group technical nodes into meaningful application components for preview cards.',
           'Preserve deterministic application boundaries and component membership constraints.',
           'Only include nodes or components that exist in the deterministic artifacts.',
+          'For each component: targetId = kebab-case component name, name, cardType, nodes[] (existing node ids), description (1 sentence).',
           'Return { "components": [...] }.',
         ], {
           projectName: analysis.projectName,
@@ -7376,8 +7689,7 @@ function buildComponentPackagingSlices(
             cards,
           },
           applicationLayout,
-          componentMap,
-          flowMap,
+          flows: appFlows,
         }),
       });
     }
@@ -7385,34 +7697,48 @@ function buildComponentPackagingSlices(
   return slices;
 }
 
-function buildSemanticPolishingPrompt(
+export function buildSemanticPolishingSlices(
   projectName: string,
   semanticMarkdown: string,
-  preview: ReturnType<typeof buildGraphPreviewMetadata>,
-  componentMap: Record<string, unknown>,
-  flowMap: Record<string, unknown>,
-  supportGraph: SupportGraphArtifact,
   astIndex: AstIndexArtifact,
-  jqassistantSupport: JqassistantSupportArtifact,
-  verification: GraphVerificationArtifact,
-): string {
-  return buildLocalAgentPrompt('semantic-polishing-agent', [
-    'Improve readability of the semantic markdown without introducing new facts.',
-    'Use support-graph, jqassistant-graph, ast-index, flow-map, and verification artifacts as the primary evidence source.',
-    'Preserve section structure and prefer minimal markdown patches over rewrites.',
-    'Return { "records": [...] } where each record contains targetFile, patchType, summary and patch.',
-  ], {
-    projectName,
-    sourcePriority: ['support-graph', 'jqassistant-graph', 'ast-index', 'flow-map', 'component-map', 'preview'],
-    semanticMarkdown,
-    preview,
-    componentMap,
-    flowMap,
-    supportGraph,
-    astIndexSummary: astIndex.summary,
-    jqassistantSummary: jqassistantSupport.summary,
-    verification,
-  });
+): Array<{ id: string; label: string; prompt: string }> {
+  // Split by ## sections; keep the first line (title) as context in each slice
+  const titleMatch = semanticMarkdown.match(/^#\s+.+/m);
+  const title = titleMatch ? titleMatch[0] : `# ${projectName}`;
+  const sectionRegex = /^(#{1,2}\s+.+)$/gm;
+  const sections: Array<{ heading: string; content: string }> = [];
+  let lastIndex = 0;
+  let lastHeading = title;
+  let match: RegExpExecArray | null;
+  const body = semanticMarkdown.slice(titleMatch ? titleMatch[0].length : 0);
+  const matches: Array<{ index: number; heading: string }> = [];
+  const re = /^(##\s+.+)$/gm;
+  while ((match = re.exec(body)) !== null) {
+    matches.push({ index: match.index, heading: match[1] });
+  }
+  for (let i = 0; i < matches.length; i++) {
+    const start = matches[i].index;
+    const end = i + 1 < matches.length ? matches[i + 1].index : body.length;
+    sections.push({ heading: matches[i].heading, content: body.slice(start, end).trim() });
+  }
+  if (!sections.length) {
+    sections.push({ heading: title, content: semanticMarkdown });
+  }
+  return sections.map((section, index) => ({
+    id: `section-${index + 1}`,
+    label: section.heading.replace(/^#+\s*/, ''),
+    prompt: buildLocalAgentPrompt('semantic-polishing-agent', [
+      'Improve readability of this semantic markdown section without introducing new facts.',
+      'Preserve structure and prefer minimal targeted patches over rewrites.',
+      'For each suggested change: targetId = section heading in kebab-case, patchType (reword|expand|trim), summary (1 sentence why), patch (the replacement markdown text).',
+      'Return { "records": [...] }.',
+    ], {
+      projectName,
+      sectionHeading: section.heading,
+      sectionContent: section.content,
+      astIndexSummary: astIndex.summary,
+    }),
+  }));
 }
 
 function buildAstEntrypoint(
@@ -7472,8 +7798,12 @@ function inferFlowType(kind: FlowMapEntrypoint['kind']): FlowTraceRecord['flowTy
 function matchServiceCandidatesForEntrypoint(
   entrypoint: FlowMapEntrypoint,
   executionServices: ServiceSummary['executionServices'],
+  callGraphIndex?: Map<string, Set<string>>,
+  interfaceImplMap?: Map<string, string[]>,
 ): Array<{ service: ServiceSummary['executionServices'][number]; operation: ServiceSummary['executionServices'][number]['operations'][number]; score: number }> {
   const entryTokens = tokenizeForMatch([entrypoint.name, entrypoint.trigger, entrypoint.target, ...entrypoint.notes].join(' '));
+  // call graph: which types does the controller/handler actually call?
+  const controllerCallees = callGraphIndex ? [...(callGraphIndex.get(entrypoint.target) ?? new Set<string>())] : [];
   const results: Array<{ service: ServiceSummary['executionServices'][number]; operation: ServiceSummary['executionServices'][number]['operations'][number]; score: number }> = [];
   for (const service of executionServices) {
     const serviceTokens = tokenizeForMatch(`${service.name} ${service.purpose}`);
@@ -7483,6 +7813,14 @@ function matchServiceCandidatesForEntrypoint(
       if (entryTokens.has(service.name.replace(/Service$/, '').toLowerCase())) score += 4;
       if (entrypoint.trigger.toLowerCase().includes(operation.name.toLowerCase())) score += 5;
       if (entrypoint.target.toLowerCase().includes(service.name.replace(/Service$/, '').toLowerCase())) score += 3;
+      // call graph boost: controller directly calls this service type (or its implementation)
+      const implsOfService = interfaceImplMap?.get(service.name) ?? [];
+      if (controllerCallees.some((callee) =>
+        callee === service.name
+        || service.name.includes(callee)
+        || callee.includes(service.name.replace(/Service$/, ''))
+        || implsOfService.includes(callee),
+      )) score += 8;
       if (score > 0) {
         results.push({ service, operation, score });
       }
@@ -7520,7 +7858,14 @@ function findGraphNodeByName(codeGraph: CodeKnowledgeGraph, nodeName: string): {
 function classifyCollaboratorRole(
   collaborator: string,
   sideEffects: string[],
+  annotationKindMap?: Map<string, string>,
 ): FlowTraceStep['role'] {
+  // annotation-based classification takes priority
+  const annotationKind = annotationKindMap?.get(collaborator);
+  if (annotationKind === 'repository') return 'repository';
+  if (annotationKind === 'service') return 'service';
+  if (annotationKind === 'controller') return 'controller';
+  // regex fallback
   if (/Repository$/.test(collaborator)) return 'repository';
   if (/Mapper$/.test(collaborator)) return 'mapper';
   if (/Validator|Resolver|Policy|Guard/.test(collaborator)) return 'validator';

@@ -72,8 +72,8 @@ export interface AgenticReviewContext {
   javaAstCatalog?: JavaAstFile[];
   codeKnowledgeGraph?: CodeKnowledgeGraph;
   expectationDocuments?: Array<{ path: string; content: string }>;
-  graph: unknown;
-  validation: {
+  graph?: unknown;
+  validation?: {
     status: string;
     summary: { gaps: number; conflicts: number; warnings: number; violations: number };
     issues: Array<{
@@ -184,6 +184,56 @@ export async function runAgenticReviewBundle(
       ...merged.issues,
     ],
   };
+}
+
+/**
+ * Run a raw prompt against the configured cloud AI CLI and return the AI's response text.
+ * Same CLI path as runAgenticPrompt but skips structured review parsing — returns plain text.
+ * Used by Source Import cloud AI to feed the same slice prompts as local ollama agents.
+ */
+export async function runCloudRawPrompt(context: AgenticReviewContext, prompt: string): Promise<string> {
+  if (context.mode === 'cli') {
+    const cwd = context.workspaceRoot ?? path.dirname(context.sourcePath);
+    const cli = await resolveProviderCli(context.provider, context.model, prompt, cwd);
+    if (!cli) return '';
+    try {
+      const output = await executeCli(cli.command, cli.args, cli.stdin ?? '', cwd);
+      const normalized = normalizeCliOutput(output.stdout, output.stderr);
+      return extractRawAiText(normalized, context.provider);
+    } finally {
+      await cli.cleanup?.().catch(() => undefined);
+    }
+  }
+  if (context.mode === 'endpoint' && context.endpoint) {
+    const result = await runEndpointReview(context, prompt);
+    return result.rawOutput ?? result.summary ?? '';
+  }
+  return '';
+}
+
+function extractRawAiText(normalized: string, provider: AgenticReviewContext['provider']): string {
+  if (provider === 'claude') {
+    const envelope = safeJsonParse(normalized.trim());
+    if (envelope && typeof envelope === 'object') {
+      const env = envelope as Record<string, unknown>;
+      if (env.type === 'result' && typeof env.result === 'string') return env.result;
+    }
+    return normalized;
+  }
+  if (provider === 'codex') {
+    const lines = normalized.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const agentMessages = lines
+      .map((l) => safeJsonParse(l))
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+      .filter((item) => item.type === 'item.completed')
+      .map((item) => item.item)
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+      .filter((item) => item.type === 'agent_message')
+      .map((item) => (typeof item.text === 'string' ? item.text.trim() : ''))
+      .filter(Boolean);
+    return agentMessages.at(-1) ?? normalized;
+  }
+  return normalized;
 }
 
 export async function probeAgentRuntime(
@@ -360,7 +410,7 @@ async function runPromptFileReview(context: AgenticReviewContext, prompt: string
 
 function localReview(context: AgenticReviewContext): AgenticReviewResult {
   const notes: string[] = [];
-  const issues: AgenticReviewIssue[] = context.validation.issues.map((issue) => ({
+  const issues: AgenticReviewIssue[] = (context.validation?.issues ?? []).map((issue) => ({
     severity: normalizeSeverity(issue.severity),
     code: issue.code ?? 'issue',
     message: issue.message ?? '',
@@ -368,11 +418,11 @@ function localReview(context: AgenticReviewContext): AgenticReviewResult {
     sourceLine: issue.sourceLine,
   }));
 
-  if (context.validation.summary.violations === 0 && context.validation.summary.gaps === 0) {
+  if ((context.validation?.summary.violations ?? 0) === 0 && (context.validation?.summary.gaps ?? 0) === 0) {
     notes.push('Semantic source is structurally coherent.');
   }
 
-  if (context.validation.summary.warnings > 0) {
+  if ((context.validation?.summary.warnings ?? 0) > 0) {
     notes.push('Review warnings before trusting the generated graph as a final architecture view.');
   }
 
@@ -395,7 +445,7 @@ function localReview(context: AgenticReviewContext): AgenticReviewResult {
 
 async function persistReviewArtifacts(
   context: AgenticReviewContext,
-  _prompt: string,
+  prompt: string,
   result: AgenticReviewResult,
 ): Promise<AgenticReviewResult> {
   if (!context.workspaceRoot) {
@@ -406,6 +456,10 @@ async function persistReviewArtifacts(
   await fs.mkdir(reviewDir, { recursive: true });
 
   const baseName = `${slugify(context.artifactName ?? path.basename(context.sourcePath))}.${slugify(result.provider)}.${slugify(result.mode)}`;
+  const promptPath = path.join(reviewDir, `${baseName}.prompt.md`);
+  await fs.writeFile(promptPath, prompt, 'utf8');
+  result.promptArtifactPath = promptPath;
+
   const mdPath = path.join(reviewDir, `${baseName}.md`);
   const markdownLines = [
     '# AI Native Review',
@@ -416,7 +470,7 @@ async function persistReviewArtifacts(
     `- Model: ${result.model}`,
     `- Bridge: ${result.bridgeAction}`,
     result.usedEndpoint ? `- Endpoint: ${result.usedEndpoint}` : undefined,
-    result.promptPath ? `- Prompt file: ${result.promptPath}` : undefined,
+    `- Prompt file: ${promptPath}`,
     result.rawOutput ? `- Raw output: available` : undefined,
     '',
     '## Summary',
@@ -477,7 +531,7 @@ async function persistReviewArtifacts(
     ...result.issues.map((issue) => `- [${issue.severity}] ${issue.code}: ${issue.message}`),
     '',
     '## Validation summary',
-    JSON.stringify(context.validation.summary, null, 2),
+    JSON.stringify(context.validation?.summary ?? {}, null, 2),
   );
   await fs.writeFile(
     mdPath,
@@ -741,6 +795,13 @@ async function runPromptStage(
   prompt: string,
   stage: string,
 ): Promise<AgenticReviewResult> {
+  // Save the stage prompt to the real review dir before running (temp dir is cleaned up after)
+  if (context.workspaceRoot) {
+    const reviewDir = context.artifactDir ?? path.join(context.workspaceRoot, '.ai-native', 'review');
+    await fs.mkdir(reviewDir, { recursive: true });
+    const stageBaseName = `${slugify(context.artifactName ?? path.basename(context.sourcePath))}.${slugify(context.provider)}.${slugify(context.mode)}.${stage}`;
+    await fs.writeFile(path.join(reviewDir, `${stageBaseName}.prompt.md`), prompt, 'utf8').catch(() => undefined);
+  }
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `ai-native-review-${slugify(stage)}-`));
   try {
     return await runAgenticPrompt(

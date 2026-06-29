@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import type * as vscode from 'vscode';
 import { getConfig } from './config.js';
 import { serverNames } from './constants.js';
@@ -70,7 +71,7 @@ export class McpRegistry {
       { server: 'compiler', url: config.compilerUrl, connected: this.clients.has('compiler') },
       { server: 'javaParser', url: config.javaParserUrl, connected: this.clients.has('javaParser') },
       { server: 'jqassistant', url: config.jqassistantUrl, connected: this.clients.has('jqassistant') },
-      { server: 'deterministicGraph', url: config.deterministicGraphUrl, connected: this.clients.has('deterministicGraph') },
+      { server: 'documentImport', url: config.documentImportUrl, connected: this.clients.has('documentImport') },
     ];
   }
 
@@ -111,6 +112,11 @@ export class McpRegistry {
         capabilities: {},
       },
     );
+    client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => {
+      const data = notification.params.data;
+      const message = typeof data === 'string' ? data : JSON.stringify(data);
+      this.outputChannel.appendLine(`[mcp:${server}] ${message}`);
+    });
     const transport = new StreamableHTTPClientTransport(new URL(url));
     await client.connect(transport);
     const connected = { client, transport, url };
@@ -130,8 +136,8 @@ export class McpRegistry {
         return config.javaParserUrl;
       case 'jqassistant':
         return config.jqassistantUrl;
-      case 'deterministicGraph':
-        return config.deterministicGraphUrl;
+      case 'documentImport':
+        return config.documentImportUrl;
     }
   }
 }

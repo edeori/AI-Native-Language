@@ -8,7 +8,7 @@ export interface MpcConfigFile {
   compilerUrl?: string;
   javaParserUrl?: string;
   jqassistantUrl?: string;
-  deterministicGraphUrl?: string;
+  documentImportUrl?: string;
   artifactRoot?: string;
   javaBasePackage?: string;
   reviewProvider?: 'codex' | 'claude';
@@ -18,6 +18,7 @@ export interface MpcConfigFile {
   reviewCommandId?: string;
   reviewCommandArgsJson?: string;
   reviewPromptFileName?: string;
+  reconAiEnabled?: boolean;
 }
 
 let configStorageRoot: vscode.Uri | undefined;
@@ -71,7 +72,7 @@ export function getDefaultMcpConfigFile(): MpcConfigFile {
     compilerUrl: 'http://10.9.0.2:3003/mcp',
     javaParserUrl: 'http://10.9.0.2:3004/mcp',
     jqassistantUrl: 'http://10.9.0.2:3005/mcp',
-    deterministicGraphUrl: 'http://10.9.0.2:3006/mcp',
+    documentImportUrl: 'http://10.9.0.2:3007/mcp',
     artifactRoot: '.ai-native',
     javaBasePackage: 'com.example.generated',
     reviewProvider: 'codex',
@@ -81,6 +82,7 @@ export function getDefaultMcpConfigFile(): MpcConfigFile {
     reviewCommandId: '',
     reviewCommandArgsJson: '{"prompt":"${prompt}"}',
     reviewPromptFileName: '.github/prompts/ai-native-review.prompt.md',
+    reconAiEnabled: false,
   };
 }
 

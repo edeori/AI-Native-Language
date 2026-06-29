@@ -61,7 +61,7 @@ export class VersionedArtifactTreeDataProvider implements vscode.TreeDataProvide
         if (!index) {
           return await this.getFallbackItems(root);
         }
-        if (this.kind === 'validation' || this.kind === 'review') {
+        if (this.kind === 'validation' || this.kind === 'alignment' || this.kind === 'review') {
           return renderVersionItems(baseNames[0], index, this.kind, this.options);
         }
         const latest = index.records[index.records.length - 1];
@@ -320,7 +320,7 @@ export class VersionedArtifactTreeDataProvider implements vscode.TreeDataProvide
       }
     }
 
-    if (this.kind === 'validation' || this.kind === 'review') {
+    if (this.kind === 'validation' || this.kind === 'alignment' || this.kind === 'review') {
       const directFolder = vscode.Uri.joinPath(root, this.kind);
       const directMarkdownFiles = await findMarkdownFiles(directFolder, this.kind);
       if (directMarkdownFiles.length > 0) {
@@ -341,7 +341,9 @@ export class VersionedArtifactTreeDataProvider implements vscode.TreeDataProvide
 
       const canonicalFile = this.kind === 'validation'
         ? vscode.Uri.joinPath(root, 'source.validation.md')
-        : vscode.Uri.joinPath(root, 'source.review.md');
+        : this.kind === 'alignment'
+          ? vscode.Uri.joinPath(root, 'source.alignment.md')
+          : vscode.Uri.joinPath(root, 'source.review.md');
       if (await pathExists(canonicalFile)) {
         return [
           new VersionedArtifactTreeItem(
@@ -361,21 +363,25 @@ export class VersionedArtifactTreeDataProvider implements vscode.TreeDataProvide
 
     const emptyDescription = this.kind === 'validation'
       ? 'Run Validate input to create the first validation markdown.'
-      : this.kind === 'review'
-        ? 'Run Generate / refresh graph to create the first review markdown.'
-        : this.kind === 'databaseSchema'
-          ? 'Run source import or graph generation to create the first schema markdown.'
-          : 'Generate outputs to populate this view.';
+      : this.kind === 'alignment'
+        ? 'Run Doc-Code Alignment check to create the first alignment report.'
+        : this.kind === 'review'
+          ? 'Run Generate / refresh graph to create the first review markdown.'
+          : this.kind === 'databaseSchema'
+            ? 'Run source import or graph generation to create the first schema markdown.'
+            : 'Generate outputs to populate this view.';
 
     return [
       new VersionedArtifactTreeItem(
         this.kind === 'validation'
           ? 'Validation outputs missing'
-          : this.kind === 'review'
-            ? 'Review outputs missing'
-            : this.kind === 'databaseSchema'
-              ? 'Database schema outputs missing'
-              : `No ${this.kind} markdown yet`,
+          : this.kind === 'alignment'
+            ? 'No alignment report yet'
+            : this.kind === 'review'
+              ? 'Review outputs missing'
+              : this.kind === 'databaseSchema'
+                ? 'Database schema outputs missing'
+                : `No ${this.kind} markdown yet`,
         emptyDescription,
         vscode.TreeItemCollapsibleState.None,
         undefined,
@@ -536,7 +542,7 @@ function filterFilesByMode(files: Record<string, string>, kind: ArtifactVersionK
     if (mode === 'graph-preview') {
       return relativePath.endsWith('.graph.json');
     }
-    if (kind === 'semantic' || kind === 'validation' || kind === 'review' || kind === 'databaseSchema') {
+    if (kind === 'semantic' || kind === 'validation' || kind === 'alignment' || kind === 'review' || kind === 'databaseSchema') {
       return isRelevantMarkdownFile(relativePath, kind);
     }
     if (mode === 'markdown-only') {
@@ -553,6 +559,9 @@ function isRelevantMarkdownFile(fileName: string, kind: ArtifactVersionKind): bo
   }
   if (kind === 'validation') {
     return fileName.endsWith('.validation.md') || fileName === 'validation.md';
+  }
+  if (kind === 'alignment') {
+    return fileName.endsWith('.alignment.md') || fileName === 'alignment.md';
   }
   if (kind === 'review') {
     return fileName.endsWith('.review.md') || fileName === 'review.md';

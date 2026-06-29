@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
-export type ArtifactVersionKind = 'semantic' | 'validation' | 'graph' | 'review' | 'recon' | 'databaseSchema';
+export type ArtifactVersionKind = 'semantic' | 'validation' | 'alignment' | 'graph' | 'review' | 'recon' | 'databaseSchema';
 
 export interface VersionedArtifactFile {
   path: string;

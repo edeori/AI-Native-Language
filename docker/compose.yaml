@@ -74,17 +74,17 @@ services:
     volumes:
       - ../.ai-native:/app/.ai-native
 
-  deterministic-graph:
+  document-import:
     build:
       context: ..
       dockerfile: docker/Dockerfile.mcp
       args:
-        SERVICE: deterministic-graph
+        SERVICE: document-import
     environment:
       MCP_TRANSPORT_MODE: http
       MCP_PATH: /mcp
-      PORT: 3006
+      PORT: 3007
     ports:
-      - "3006:3006"
+      - "3007:3007"
     volumes:
       - ../.ai-native:/app/.ai-native

@@ -4,8 +4,25 @@ import { dirname, join } from 'node:path';
 import YAML from 'yaml';
 import type { CodeKnowledgeGraph } from './code-graph.js';
 
+const OLLAMA_NUM_CTX = 32768;
+
+
+// Estimate timeout from model size: larger models are slower per token
+function deriveModelLimits(model: string): { maxInputSize: number; timeoutMs: number } {
+  const lower = model.toLowerCase();
+  const sizeMatch = lower.match(/:?(\d+(?:\.\d+)?)x?b/);
+  const sizeB = sizeMatch ? parseFloat(sizeMatch[1]) : 7;
+  // timeout: ~200ms/token for 7b on consumer hardware, scales roughly linearly
+  // cap input at half ctx for small models (less coherent at boundary)
+  const scaleFactor = sizeB <= 3 ? 0.4 : sizeB <= 7 ? 0.55 : sizeB <= 14 ? 0.65 : 0.7;
+  const msPerToken = sizeB <= 3 ? 80 : sizeB <= 7 ? 160 : sizeB <= 14 ? 280 : 480;
+  return {
+    maxInputSize: Math.floor(OLLAMA_NUM_CTX * 4 * scaleFactor),
+    timeoutMs: Math.floor(OLLAMA_NUM_CTX * scaleFactor * msPerToken),
+  };
+}
+
 export type EnrichmentProviderKind = 'none' | 'ollama' | 'cloud';
-export type CloudAgentKind = 'codex' | 'claude';
 export type EnrichmentCapability = 'low' | 'normal' | 'high';
 export type LocalAgentConfigKey =
   | 'moduleClassifier'
@@ -55,13 +72,11 @@ export interface EnrichmentModelCatalogItem {
 export interface LocalAgentConfig {
   enabled: boolean;
   provider: EnrichmentProviderKind;
-  cloudAgent: CloudAgentKind;
   capability: EnrichmentCapability;
   model: string;
   endpoint: string;
   timeoutMs: number;
   maxInputSize: number;
-  autoMerge: boolean;
   minConfidence: number;
 }
 
@@ -94,7 +109,6 @@ export interface LocalAgentOutput {
   capability: EnrichmentCapability;
   model: string;
   status: 'completed' | 'skipped' | 'failed';
-  autoMerge: boolean;
   minConfidence: number;
   records: Array<Record<string, unknown>>;
   slices?: Array<{
@@ -224,6 +238,7 @@ export interface LocalAgentPaths {
   dir: string;
   outputPath: string;
   schemaPath: string;
+  promptsDir: string;
 }
 
 export interface EnrichmentInput {
@@ -306,109 +321,100 @@ const DEFAULT_AGENTOR_MODELS_CONFIG: AgentorModelsConfig = {
     moduleClassifier: {
       enabled: true,
       provider: 'ollama',
-      cloudAgent: 'codex',
+
       capability: 'normal',
       model: 'qwen2.5-coder:7b',
       endpoint: 'http://127.0.0.1:11434',
       timeoutMs: 1800000,
       maxInputSize: 120000,
-      autoMerge: false,
       minConfidence: 0.75,
     },
     generalEnrichment: {
       enabled: true,
       provider: 'ollama',
-      cloudAgent: 'codex',
+
       capability: 'normal',
       model: 'qwen2.5-coder:7b',
       endpoint: 'http://127.0.0.1:11434',
-      timeoutMs: 1800000,
-      maxInputSize: 180000,
-      autoMerge: false,
+      timeoutMs: 300000,
+      maxInputSize: 40000,
       minConfidence: 0.75,
     },
     astComponentClassifier: {
       enabled: true,
       provider: 'ollama',
-      cloudAgent: 'codex',
+
       capability: 'low',
       model: 'qwen2.5-coder:3b',
       endpoint: 'http://127.0.0.1:11434',
-      timeoutMs: 1800000,
-      maxInputSize: 90000,
-      autoMerge: false,
+      timeoutMs: 180000,
+      maxInputSize: 32000,
       minConfidence: 0.8,
     },
     flowCandidate: {
       enabled: true,
       provider: 'ollama',
-      cloudAgent: 'codex',
+
       capability: 'normal',
       model: 'qwen2.5-coder:7b',
       endpoint: 'http://127.0.0.1:11434',
-      timeoutMs: 1800000,
-      maxInputSize: 120000,
-      autoMerge: false,
+      timeoutMs: 300000,
+      maxInputSize: 40000,
       minConfidence: 0.8,
     },
     repositoryPurpose: {
       enabled: true,
       provider: 'ollama',
-      cloudAgent: 'codex',
+
       capability: 'low',
       model: 'qwen2.5-coder:3b',
       endpoint: 'http://127.0.0.1:11434',
-      timeoutMs: 1800000,
-      maxInputSize: 70000,
-      autoMerge: false,
+      timeoutMs: 120000,
+      maxInputSize: 24000,
       minConfidence: 0.75,
     },
     sqlMigrationSemantics: {
       enabled: true,
       provider: 'ollama',
-      cloudAgent: 'codex',
+
       capability: 'normal',
       model: 'qwen2.5-coder:7b',
       endpoint: 'http://127.0.0.1:11434',
-      timeoutMs: 1800000,
-      maxInputSize: 90000,
-      autoMerge: false,
+      timeoutMs: 480000,
+      maxInputSize: 36000,
       minConfidence: 0.75,
     },
     componentPackaging: {
       enabled: true,
       provider: 'ollama',
-      cloudAgent: 'codex',
+
       capability: 'normal',
       model: 'qwen2.5-coder:7b',
       endpoint: 'http://127.0.0.1:11434',
-      timeoutMs: 1800000,
-      maxInputSize: 100000,
-      autoMerge: false,
+      timeoutMs: 300000,
+      maxInputSize: 40000,
       minConfidence: 0.8,
     },
     validationTriage: {
       enabled: true,
       provider: 'ollama',
-      cloudAgent: 'codex',
+
       capability: 'low',
       model: 'qwen2.5-coder:3b',
       endpoint: 'http://127.0.0.1:11434',
-      timeoutMs: 1800000,
-      maxInputSize: 70000,
-      autoMerge: false,
+      timeoutMs: 120000,
+      maxInputSize: 24000,
       minConfidence: 0.7,
     },
     semanticPolishing: {
       enabled: false,
       provider: 'ollama',
-      cloudAgent: 'codex',
+
       capability: 'normal',
-      model: 'gemma3:12b',
+      model: 'qwen2.5-coder:7b',
       endpoint: 'http://127.0.0.1:11434',
-      timeoutMs: 1800000,
-      maxInputSize: 180000,
-      autoMerge: false,
+      timeoutMs: 300000,
+      maxInputSize: 40000,
       minConfidence: 0.85,
     },
   },
@@ -507,6 +513,7 @@ export function resolveLocalAgentPaths(projectRoot: string, role: LocalAgentConf
     dir,
     outputPath: join(dir, 'latest.json'),
     schemaPath: join(dir, 'schema.json'),
+    promptsDir: join(dir, 'prompts'),
   };
 }
 
@@ -612,7 +619,10 @@ export async function writeAgentorModelsConfig(projectRoot: string, config: Part
 }
 
 export function getLocalAgentConfig(config: AgentorModelsConfig, role: LocalAgentConfigKey): LocalAgentConfig {
-  return config.localAgents[role];
+  const base = config.localAgents[role];
+  if (base.provider !== 'ollama') return base;
+  const derived = deriveModelLimits(base.model);
+  return { ...base, maxInputSize: derived.maxInputSize, timeoutMs: derived.timeoutMs };
 }
 
 export async function probeLocalEnrichmentProvider(projectRoot: string, override?: Partial<AgentorModelsConfig>): Promise<{ ok: boolean; message: string; provider: EnrichmentProviderKind }> {
@@ -666,6 +676,7 @@ export async function runLocalDiscoveryPrompt(projectRoot: string, prompt: strin
         model: roleConfig.model,
         prompt: truncatePrompt(prompt, roleConfig.maxInputSize),
         stream: false,
+        options: { num_ctx: OLLAMA_NUM_CTX },
       }),
     });
     if (!response.ok) {
@@ -676,6 +687,42 @@ export async function runLocalDiscoveryPrompt(projectRoot: string, prompt: strin
   } catch {
     return undefined;
   }
+}
+
+function buildEnrichmentSlices(task: EnrichmentTaskName, input: EnrichmentInput, config: AgentorModelsConfig, maxInputSize: number): Array<{ prompt: string }> {
+  const modules = input.snapshot.moduleRoots?.length ? input.snapshot.moduleRoots : [input.projectName];
+  const chunkSize = Math.max(1, Math.ceil(modules.length / Math.ceil(modules.length / 3)));
+  const chunks: string[][] = [];
+  for (let i = 0; i < modules.length; i += chunkSize) {
+    chunks.push(modules.slice(i, i + chunkSize));
+  }
+  const perChunk = Math.max(1, Math.ceil(10 / chunks.length));
+  return chunks.map((moduleChunk) => {
+    const sliceInput: EnrichmentInput = {
+      ...input,
+      analysis: {
+        ...input.analysis,
+        endpointCatalog: input.analysis.endpointCatalog.slice(0, perChunk + 2),
+        serviceSummary: {
+          ...input.analysis.serviceSummary,
+          executionServices: input.analysis.serviceSummary.executionServices.slice(0, perChunk),
+          scheduledJobs: input.analysis.serviceSummary.scheduledJobs.slice(0, Math.ceil(perChunk / 2)),
+          asyncListeners: input.analysis.serviceSummary.asyncListeners.slice(0, Math.ceil(perChunk / 2)),
+        },
+      },
+      snapshot: { ...input.snapshot, moduleRoots: moduleChunk },
+      codeGraph: {
+        ...input.codeGraph,
+        summary: {
+          ...input.codeGraph.summary,
+          serviceNames: (input.codeGraph.summary.serviceNames ?? []).slice(0, perChunk * 2),
+          controllerNames: (input.codeGraph.summary.controllerNames ?? []).slice(0, perChunk),
+          entityNames: (input.codeGraph.summary.entityNames ?? []).slice(0, perChunk),
+        },
+      },
+    };
+    return { prompt: truncatePrompt(buildEnrichmentPrompt(task, sliceInput, config), maxInputSize) };
+  });
 }
 
 export async function runLocalEnrichment(input: EnrichmentInput): Promise<{ output: EnrichmentOutput; paths: EnrichmentPaths }> {
@@ -690,16 +737,32 @@ export async function runLocalEnrichment(input: EnrichmentInput): Promise<{ outp
   });
   const taskNames = config.capabilities[roleConfig.capability].tasks;
   const tasks: EnrichmentTaskResult[] = [];
-
   for (const task of taskNames) {
-    const prompt = buildEnrichmentPrompt(task, input, config);
-    const result = await provider.runTask({
+    const slices = buildEnrichmentSlices(task, input, config, roleConfig.maxInputSize);
+    const allCandidates: EnrichmentCandidate[] = [];
+    let hadFailure = false;
+    let lastError: string | undefined;
+    for (const slice of slices) {
+      const result = await provider.runTask({
+        task,
+        model: roleConfig.model,
+        capability: roleConfig.capability,
+        prompt: slice.prompt,
+      });
+      if (result.status === 'failed') {
+        hadFailure = true;
+        lastError = result.error;
+      } else {
+        allCandidates.push(...result.candidates);
+      }
+    }
+    tasks.push({
       task,
+      status: allCandidates.length > 0 ? 'completed' : hadFailure ? 'failed' : 'skipped',
       model: roleConfig.model,
-      capability: roleConfig.capability,
-      prompt: truncatePrompt(prompt, roleConfig.maxInputSize),
+      candidates: allCandidates,
+      ...(hadFailure && allCandidates.length === 0 ? { error: lastError } : {}),
     });
-    tasks.push(result);
   }
 
   const output: EnrichmentOutput = {
@@ -743,6 +806,8 @@ export async function runLocalAgentRole(input: {
   }>;
   buildFallbackRecords?: () => Array<Record<string, unknown>>;
   onSliceProgress?: (event: { role: LocalAgentConfigKey; sliceId: string; label: string; status: 'running' | 'completed' | 'failed' }) => void | Promise<void>;
+  /** Cloud AI runner: when provided, called instead of ollama for each slice. Returns raw AI response text. */
+  cloudRunner?: (prompt: string) => Promise<string>;
 }): Promise<LocalAgentOutput> {
   const runStartedAt = new Date();
   const config = await readAgentorModelsConfig(input.projectRoot);
@@ -750,9 +815,10 @@ export async function runLocalAgentRole(input: {
   const definition = getLocalAgentDefinition(input.role);
   const paths = resolveLocalAgentPaths(input.projectRoot, input.role);
   await mkdir(paths.dir, { recursive: true });
+  await mkdir(paths.promptsDir, { recursive: true });
   await writeFile(paths.schemaPath, JSON.stringify(buildLocalAgentSchema(definition.agentId), null, 2) + '\n', 'utf8');
 
-  if (!roleConfig.enabled || roleConfig.provider === 'none') {
+  if (!input.cloudRunner && (!roleConfig.enabled || roleConfig.provider === 'none')) {
     const finishedAt = new Date();
     const output: LocalAgentOutput = {
       schemaVersion: '1.0',
@@ -766,7 +832,6 @@ export async function runLocalAgentRole(input: {
       capability: roleConfig.capability,
       model: roleConfig.model,
       status: 'skipped',
-      autoMerge: roleConfig.autoMerge,
       minConfidence: roleConfig.minConfidence,
       records: [],
       slices: [],
@@ -801,7 +866,6 @@ export async function runLocalAgentRole(input: {
       capability: roleConfig.capability,
       model: roleConfig.model,
       status: 'skipped',
-      autoMerge: roleConfig.autoMerge,
       minConfidence: roleConfig.minConfidence,
       records: [],
       slices: [],
@@ -817,25 +881,39 @@ export async function runLocalAgentRole(input: {
     for (const slice of slices) {
       const sliceStartedAt = new Date();
       await input.onSliceProgress?.({ role: input.role, sliceId: slice.id, label: slice.label, status: 'running' });
-      const response = await provider.runJsonPrompt({
-        model: roleConfig.model,
-        prompt: truncatePrompt(slice.prompt, roleConfig.maxInputSize),
-      });
-      const sliceRecords = parseLocalAgentRecords(response.raw, definition.agentId, roleConfig.model, slice.buildFallbackRecords?.() ?? []);
+      const truncated = truncatePrompt(slice.prompt, roleConfig.maxInputSize);
+      await writeFile(join(paths.promptsDir, `${slice.id}.prompt.md`), truncated, 'utf8');
+      let rawResponse: string | undefined;
+      let responseOk = true;
+      let responseError: string | undefined;
+      if (input.cloudRunner) {
+        try {
+          rawResponse = await input.cloudRunner(truncated);
+        } catch (err) {
+          responseOk = false;
+          responseError = err instanceof Error ? err.message : String(err);
+        }
+      } else {
+        const response = await provider.runJsonPrompt({ model: roleConfig.model, prompt: truncated });
+        rawResponse = response.raw;
+        responseOk = response.ok;
+        responseError = response.message;
+      }
+      const sliceRecords = parseLocalAgentRecords(rawResponse, definition.agentId, roleConfig.model, slice.buildFallbackRecords?.() ?? []);
       const sliceFinishedAt = new Date();
       records.push(...sliceRecords);
       sliceRuns.push({
         sliceId: slice.id,
         label: slice.label,
-        status: response.ok ? 'completed' : 'failed',
+        status: responseOk ? 'completed' : 'failed',
         startedAt: sliceStartedAt.toISOString(),
         finishedAt: sliceFinishedAt.toISOString(),
         durationMs: sliceFinishedAt.getTime() - sliceStartedAt.getTime(),
         recordCount: sliceRecords.length,
-        error: response.ok ? undefined : response.message,
+        error: responseOk ? undefined : responseError,
       });
-      await input.onSliceProgress?.({ role: input.role, sliceId: slice.id, label: slice.label, status: response.ok ? 'completed' : 'failed' });
-      if (!response.ok) {
+      await input.onSliceProgress?.({ role: input.role, sliceId: slice.id, label: slice.label, status: responseOk ? 'completed' : 'failed' });
+      if (!responseOk) {
         hadFailure = true;
       }
     }
@@ -852,7 +930,6 @@ export async function runLocalAgentRole(input: {
       capability: roleConfig.capability,
       model: roleConfig.model,
       status: hadFailure ? 'failed' : 'completed',
-      autoMerge: roleConfig.autoMerge,
       minConfidence: roleConfig.minConfidence,
       records,
       slices: sliceRuns,
@@ -875,7 +952,6 @@ export async function runLocalAgentRole(input: {
       capability: roleConfig.capability,
       model: roleConfig.model,
       status: 'failed',
-      autoMerge: roleConfig.autoMerge,
       minConfidence: roleConfig.minConfidence,
       records: [],
       slices: [],
@@ -1073,13 +1149,12 @@ function normalizeLocalAgentsConfig(
     result[definition.key] = {
       enabled: typeof override?.enabled === 'boolean' ? override.enabled : base.enabled,
       provider: override?.provider === 'ollama' || override?.provider === 'cloud' ? override.provider : (override?.provider === 'none' ? 'none' : base.provider),
-      cloudAgent: override?.cloudAgent === 'claude' ? 'claude' : (override?.cloudAgent === 'codex' ? 'codex' : base.cloudAgent),
+
       capability: override?.capability === 'low' || override?.capability === 'high' ? override.capability : (override?.capability === 'normal' ? 'normal' : base.capability),
       model: typeof override?.model === 'string' && override.model.trim() ? override.model.trim() : base.model,
       endpoint: typeof override?.endpoint === 'string' && override.endpoint.trim() ? override.endpoint.trim() : base.endpoint,
       timeoutMs: typeof override?.timeoutMs === 'number' && override.timeoutMs > 0 ? override.timeoutMs : base.timeoutMs,
       maxInputSize: typeof override?.maxInputSize === 'number' && override.maxInputSize > 0 ? override.maxInputSize : base.maxInputSize,
-      autoMerge: typeof override?.autoMerge === 'boolean' ? override.autoMerge : base.autoMerge,
       minConfidence: typeof override?.minConfidence === 'number' ? override.minConfidence : base.minConfidence,
     };
   }
@@ -1133,37 +1208,19 @@ function createProvider(config: { provider: EnrichmentProviderKind; model: strin
 function buildEnrichmentPrompt(task: EnrichmentTaskName, input: EnrichmentInput, config: AgentorModelsConfig): string {
   const digest = {
     projectName: input.projectName,
-    repositoryProjects: input.analysis.repositoryStructure.topLevelProjects,
-    runtimeModules: input.analysis.repositoryStructure.backendRuntimeLayers,
-    buildSupport: input.analysis.repositoryStructure.backendSupportModules,
-    endpoints: input.analysis.endpointCatalog.slice(0, 24).map((entry) => `${entry.method} ${entry.path}`),
-    services: input.analysis.serviceSummary.executionServices.slice(0, 16).map((service) => ({
+    endpoints: input.analysis.endpointCatalog.slice(0, 12).map((entry) => `${entry.method} ${entry.path}`),
+    services: input.analysis.serviceSummary.executionServices.slice(0, 10).map((service) => ({
       name: service.name,
       purpose: service.purpose,
-      operations: service.operations.slice(0, 5),
+      operations: service.operations.slice(0, 3),
     })),
-    jobs: input.analysis.serviceSummary.scheduledJobs,
-    listeners: input.analysis.serviceSummary.asyncListeners,
-    triggers: input.analysis.flowSummary.triggers,
-    flowSummaries: input.analysis.flowSummary.flows,
-    snapshot: {
-      topLevelDirectories: input.snapshot.topLevelDirectories,
-      topLevelFiles: input.snapshot.topLevelFiles,
-      moduleRoots: input.snapshot.moduleRoots,
-    },
-    graphSummary: {
-      moduleRoots: input.codeGraph.summary.moduleRoots,
-      endpointFamilies: input.codeGraph.summary.endpointFamilies,
-      serviceNames: input.codeGraph.summary.serviceNames,
-      controllerNames: input.codeGraph.summary.controllerNames,
-      repositoryNames: input.codeGraph.summary.repositoryNames,
-      entityNames: input.codeGraph.summary.entityNames,
-      jobNames: input.codeGraph.summary.jobNames,
-      listenerNames: input.codeGraph.summary.listenerNames,
-      flowTraces: input.codeGraph.summary.flowTraces,
-      externalSystems: input.codeGraph.summary.externalSystems,
-    },
-    preview: input.preview,
+    jobs: input.analysis.serviceSummary.scheduledJobs?.slice(0, 8),
+    listeners: input.analysis.serviceSummary.asyncListeners?.slice(0, 8),
+    serviceNames: input.codeGraph.summary.serviceNames?.slice(0, 20),
+    controllerNames: input.codeGraph.summary.controllerNames?.slice(0, 16),
+    entityNames: input.codeGraph.summary.entityNames?.slice(0, 16),
+    externalSystems: input.codeGraph.summary.externalSystems?.slice(0, 8),
+    moduleRoots: input.snapshot.moduleRoots?.slice(0, 8),
   };
 
   return [
@@ -1249,6 +1306,7 @@ class OllamaEnrichmentProvider implements LocalEnrichmentProvider {
           prompt: request.prompt,
           stream: false,
           format: 'json',
+          options: { num_ctx: OLLAMA_NUM_CTX },
         }),
         signal: AbortSignal.timeout(this.config.timeoutMs),
       });
@@ -1291,6 +1349,7 @@ class OllamaEnrichmentProvider implements LocalEnrichmentProvider {
           prompt: request.prompt,
           stream: false,
           format: 'json',
+          options: { num_ctx: OLLAMA_NUM_CTX },
         }),
         signal: AbortSignal.timeout(this.config.timeoutMs),
       });

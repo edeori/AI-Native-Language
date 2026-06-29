@@ -4,7 +4,11 @@
     {
       "label": "build:vscode-extension",
       "type": "shell",
-      "command": "source ~/.nvm/nvm.sh && nvm use 20 && npm run build:vscode-extension",
+      "command": "npm",
+      "args": [
+        "run",
+        "build:vscode-extension"
+      ],
       "group": "build",
       "problemMatcher": []
     }

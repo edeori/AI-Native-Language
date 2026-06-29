@@ -76,50 +76,41 @@ Instead, it should win on experience:
 - Regenerate only the affected semantic slice and its downstream targets.
 - Use cached canonical IR and cached intermediate artifacts wherever possible.
 
-## Local Runner Strategy
+## Runner Architecture
 
-- The workflow should prefer local runners for anything deterministic, cacheable, or inexpensive.
-- Local runners can handle:
-  - parsing
-  - validation
-  - invariant checks
-  - diff calculation
-  - template expansion
-  - smoke tests
-  - cached IR generation
-  - simple code synthesis from canonical templates
-- Cloud or remote AI should be reserved for:
-  - ambiguous intent extraction
-  - complex normalization
-  - large refactors
-  - migration planning
-  - difficult semantic reasoning
-  - cases where local models are not strong enough
+The current implementation uses MCP (Model Context Protocol) servers running in Docker containers on a local bridge network (`10.9.0.2`). These cover the deterministic, in-process work:
 
-### Why Local Runners Matter
+- Java AST parsing and caching
+- jQAssistant bytecode analysis
+- Canonical graph generation
+- Semantic validation
+- Doc-code alignment checks
+- Reconnaissance prompt generation
 
-- They reduce token usage by avoiding repeated cloud calls for routine work.
-- They reduce waiting time because many checks run immediately on the developer machine.
-- They improve privacy and control for proprietary codebases.
-- They allow the semantic workflow to function even when cloud access is slow or unavailable.
+Cloud AI (Claude via Anthropic API) handles:
+- Complex semantic enrichment (agentic review bundle)
+- Ambiguous intent extraction
+- Cases requiring reasoning beyond local model capability
+
+Local Ollama can substitute for cloud AI for:
+- Semantic enrichment when the Ollama endpoint is configured
+- Offline or privacy-sensitive environments
 
 ### Practical Split
 
 ```text
 Developer edit
     ↓
-local parse / validate / diff / cache
+MCP servers (Docker, local): parse / validate / graph / alignment
     ↓
-only if needed: local model or cloud AI
+only if needed: Ollama (local) or Claude API (cloud)
     ↓
-generate or refine canonical IR
+enriched canonical IR
     ↓
-generate target output
-    ↓
-local test and verify
+versioned artifacts saved to .ai-native/
 ```
 
-The best cost model is usually local-first, remote-when-necessary.
+The best cost model is MCP-first (fast, no token cost), cloud-when-necessary.
 
 ## What Can Realistically Run On A Developer Laptop
 

@@ -11,11 +11,9 @@ The goal is to keep the semantic model, tooling contracts, examples, and impleme
 ├── AI_Native_Semantic_Pilot_Notes.md
 ├── AI_Native_Semantic_Workflow.md
 ├── README.md
-├── agents/
 ├── docs/
 ├── examples/
 ├── mcp-servers/
-├── local-runners/
 ├── vscode-extension/
 └── docker/
 ```
@@ -24,71 +22,44 @@ The goal is to keep the semantic model, tooling contracts, examples, and impleme
 
 ### `docs/`
 
-- repository architecture
-- bootstrap guide
-- workflow notes that are more operational than conceptual
-- future implementation guidance
+- [source-import/](source-import/) — Source Import pipeline lépések részletesen
+- [document-import/](document-import/) — Document Import pipeline lépések részletesen
+- [actions/](actions/) — minden plugin action és command leírása
+- `CURRENT_PROCESSING_PIPELINE.md` — pipeline design elvek és artifact stratégia
+- `MCP_SERVER_CONTRACTS.md` — MCP server szerepkörök összefoglalója
+- `PLUGIN_INSTALLATION.md` — extension build, package, install útmutató
+- `REPO_STRUCTURE.md` — ez a fájl
 
 ### `examples/`
 
-- semantic markdown examples
-- canonical graph JSON examples
-- validation examples
-- security policy examples
-- dependency integration examples
+- semantic markdown példák
+- kanonikus gráf JSON példák
+- validáció példák
 
 ### `mcp-servers/`
 
-- semantic core server implementation
-- validation server implementation
-- compiler / generator server implementation
-- Java parser implementation
-- `jqassistant` integration server
-- shared deterministic and artifact utilities
-
-### `local-runners/`
-
-- optional local helper area
-- not the primary architecture focus anymore compared to MCP-driven execution
+- `semantic-core/` — kanonikus gráf, recon prompt, review prompt bundle
+- `validator/` — semantic validáció, policy
+- `compiler/` — alkalmazás scaffold (jövőbeni funkció, nincs extensionbe bekötve)
+- `java-parser/` — Java AST parsing
+- `jqassistant/` — bytecode scan, Maven/modul struktúra
+- `document-import/` — dokumentum → Markdown konverzió, semantic elemzés, alignment
+- `shared/` — determinisztikus artifact utilities, `importSourceProjectState`
 
 ### `vscode-extension/`
 
-- developer-facing plugin scaffold
-- semantic file editing workflow
-- validation triggers
-- graph previews
-- generated diff views
-
-### `agents/`
-
-- bounded task schemas
-- agent policies
-- allowed tool lists
-- stop conditions
-- output contract definitions
+- plugin UI (Flow panel, Actions panel, Document Import, Settings)
+- artifact tree view-ok (validation, graph, semantic, database schema)
+- Recon Runs panel
 
 ### `docker/`
 
-- container and compose scaffolding
-- local service orchestration templates
-- environment variable templates
+- Docker Compose konfiguráció az MCP szerverekhez
+- `10.9.0.2` hálózaton futó service-ek (portok: 3001–3007, kivéve 3006)
 
 ## Reproducibility Principle
 
-- The repository should be readable without running code.
-- The semantic model should be inspectable in plain text.
-- The generated artifacts should be derivable from the committed source.
-- The toolchain should be provider-neutral and cloneable by other teams.
-
-## Current note
-
-The repository is now evolving toward a deterministic-first artifact pipeline where:
-
-- AST outputs
-- `jqassistant` outputs
-- deterministic graphs
-- AI-facing support artifacts
-
-are central to later AI-assisted implementation work.
-
-That means the repo is no longer only about semantic markdown and generated graph output.
+- A repository plain textből olvasható legyen futtatás nélkül
+- A semantic model inspektálható legyen
+- A generált artifactek levezethetők legyenek a kommittált forrásból
+- A toolchain provider-semleges és klónozható legyen más csapatok számára

@@ -15,18 +15,25 @@ COPY AI_Native_Semantic_Pilot_Notes.md ./
 COPY AI_Native_Semantic_Workflow.md ./
 COPY AI_Native_Semantic_Programming_Platform.md ./
 
-COPY vscode-extension/package.json ./vscode-extension/
-
 RUN npm ci --ignore-scripts
 RUN npm rebuild tree-sitter tree-sitter-java --build-from-source --nodedir=/usr/local
 RUN npm run build
 
-FROM node:20-alpine AS runtime
+FROM node:20-bookworm-slim AS runtime
 
 WORKDIR /app
 
 ENV MCP_TRANSPORT_MODE=http
 ENV PORT=3000
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends bash curl unzip zip openjdk-17-jre-headless \
+  && rm -rf /var/lib/apt/lists/*
+
+ENV SDKMAN_DIR=/root/.sdkman
+RUN bash -lc 'curl -s "https://get.sdkman.io" | bash'
+RUN bash -lc 'source "$SDKMAN_DIR/bin/sdkman-init.sh" && yes | sdk install jqassistant'
+RUN printf '#!/bin/sh\nexec /root/.sdkman/candidates/jqassistant/current/bin/jqassistant "$@"\n' > /usr/local/bin/jqassistant && chmod +x /usr/local/bin/jqassistant
 
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules

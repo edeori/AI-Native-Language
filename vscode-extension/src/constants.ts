@@ -9,13 +9,17 @@ export const commandIds = {
   createSemanticSourceTemplate: 'aiNative.createSemanticSourceTemplate',
   validateActiveSemanticMarkdown: 'aiNative.validateActiveSemanticMarkdown',
   generateCanonicalGraph: 'aiNative.generateCanonicalGraph',
+  runJqassistantScan: 'aiNative.runJqassistantScan',
+  runAiEnrichment: 'aiNative.runAiEnrichment',
   openMarkdownArtifactPreview: 'aiNative.openMarkdownArtifactPreview',
   openGraphPreview: 'aiNative.openGraphPreview',
-  generateSpringBootSkeleton: 'aiNative.generateSpringBootSkeleton',
-  openArtifactsFolder: 'aiNative.openArtifactsFolder',
+openArtifactsFolder: 'aiNative.openArtifactsFolder',
   showMcpStatus: 'aiNative.showMcpStatus',
   importSourceProject: 'aiNative.importSourceProject',
-  resumeRecon: 'aiNative.resumeRecon',
+  importDocuments: 'aiNative.importDocuments',
+  showEndpoints: 'aiNative.showEndpoints',
+  runFlowExtraction: 'aiNative.runFlowExtraction',
+  runDocCodeAlignment: 'aiNative.runDocCodeAlignment',
 } as const;
 
 export const viewIds = {
@@ -34,5 +38,5 @@ export const serverNames = {
   compiler: 'compiler',
   javaParser: 'java-parser',
   jqassistant: 'jqassistant',
-  deterministicGraph: 'deterministic-graph',
+  documentImport: 'document-import',
 } as const;

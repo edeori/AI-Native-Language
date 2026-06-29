@@ -332,58 +332,22 @@ Documentation is contextual input, not the final source of truth.
 - Local runners for deterministic work
 - Remote/cloud AI only when necessary for complex interpretation or generation
 
-## 14. Pilot Acceptance Criteria
+## 14. Implementation Status
 
-The pilot is acceptable when it can:
+### Implemented
 
-- read a system-slice `Semantic Markdown`
-- generate canonical graph IR
-- detect missing information, contradictions, and security violations
-- represent enterprise integrations and transformations
-- generate Spring Boot / Java 17+ target code
-- remain provider-agnostic
-- keep semantic source and generated target code reviewable in the same branch
+- VSCode plugin with Source Import and Document Import pipelines
+- Semantic Markdown reading, validation, and enrichment via MCP servers
+- Canonical graph IR generation (`source.codegraph.json`)
+- Validation: detect missing information, gaps, contradictions, security violations
+- Enterprise integration representation (Java AST, jQAssistant bytecode analysis)
+- AI-assisted semantic enrichment (cloud: agentic review bundle; local: Ollama)
+- Reconnaissance prompt generation
+- Doc-code alignment checking
+- Provider-neutral architecture (MCP over Streamable HTTP, model is a config detail)
 
-## 15. Pre-Implementation Artifacts
+### Future / Not Yet Implemented
 
-The following can be prepared before any real code execution exists:
-
-### Stable artifacts
-
-- canonical terminology and primitive definitions
-- semantic markdown structure and writing rules
-- validation contract and severity model
-- canonical IR schema and mapping rules
-- security model and dependency model
-- provider independence rules
-- repo layout and branching workflow
-- plugin command set and UX outline
-
-### Example artifacts
-
-- one complete semantic markdown example
-- one complete canonical graph example
-- one Spring Boot output skeleton example
-- one security policy example
-- one dependency integration example
-- one validation failure example with gaps and violations
-
-### Planning artifacts
-
-- end-to-end happy path for one system slice
-- incremental refinement strategy
-- manual override policy
-- acceptance test checklist
-- no-code pilot generation plan
-
-### Example artifacts location
-
-- `examples/team_knowledge_publishing_service.semantic.md`
-- `examples/team_knowledge_publishing_service.graph.json`
-
-### What this enables
-
-- a seed state that can later be used to generate the pilot
-- a reusable semantic foundation for a real project
-- a structured starting point for future AI-assisted refinement and training
-- a clear separation between specification work and implementation work
+- Spring Boot / Java 17+ target code generation from semantic IR
+- Full planner and runtime interpreter
+- Platform adapter / compiler backend

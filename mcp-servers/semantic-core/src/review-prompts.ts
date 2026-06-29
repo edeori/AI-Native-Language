@@ -3,6 +3,7 @@ export interface ReviewPromptBundleInput {
   semanticSource: string;
   graph: unknown;
   reviewDossier?: unknown;
+  flowMap?: unknown;
   validation: {
     status: string;
     summary: { gaps: number; conflicts: number; warnings: number; violations: number };
@@ -32,6 +33,7 @@ export function buildReviewPromptBundle(input: ReviewPromptBundleInput): ReviewP
   const previewDigest = renderPreviewDigest(input.graph);
   const dossierDigest = renderReviewDossierDigest(input.reviewDossier);
   const expectationDigest = renderExpectationDocuments(input.expectationDocuments ?? []);
+  const flowDigest = renderFlowMapDigest(input.flowMap);
 
   const commonContext = [
     `Source: ${input.sourcePath}`,
@@ -75,8 +77,11 @@ export function buildReviewPromptBundle(input: ReviewPromptBundleInput): ReviewP
       '',
       commonContext,
       '',
+      'Detected flow traces (deterministic, from bytecode analysis):',
+      flowDigest,
+      '',
       'Task:',
-      'Infer the real request, command, async, and scheduled flows only. Focus on paths through controllers, services, jobs, listeners, and persistence boundaries.',
+      'Use the detected flow traces above as ground truth for execution paths. Infer the real request, command, async, and scheduled flows only. Focus on paths through controllers, services, jobs, listeners, and persistence boundaries.',
       'Return valid JSON with summary, notes, issues, and refinedSemanticMarkdown concentrated on flow scenarios.',
     ].join('\n'),
     dataModelPrompt: [
@@ -162,6 +167,7 @@ function renderReviewDossierDigest(reviewDossier: unknown): string {
   const reviewFocus = Array.isArray(dossier.reviewFocus) ? dossier.reviewFocus.filter((item): item is string => typeof item === 'string') : [];
   const tasks = Array.isArray(enrichment?.tasks) ? enrichment?.tasks as Array<Record<string, unknown>> : [];
   const candidateCount = typeof enrichment?.candidateCount === 'number' ? enrichment.candidateCount : 0;
+  const flows = dossier.flows && typeof dossier.flows === 'object' ? dossier.flows as Record<string, unknown> : undefined;
   return [
     `- graph nodes: ${typeof graph?.nodeCount === 'number' ? graph.nodeCount : 'n/a'}`,
     `- graph edges: ${typeof graph?.edgeCount === 'number' ? graph.edgeCount : 'n/a'}`,
@@ -172,7 +178,34 @@ function renderReviewDossierDigest(reviewDossier: unknown): string {
     `- enrichment tasks: ${tasks.map((task) => `${stringValue(task.task) ?? 'task'}:${stringValue(task.status) ?? 'unknown'}:${typeof task.candidateCount === 'number' ? task.candidateCount : 0}`).join(' | ') || 'none'}`,
     `- validation issues: ${Array.isArray(validation?.issues) ? validation.issues.length : 'n/a'}`,
     `- review focus: ${reviewFocus.slice(0, 12).join(' | ') || 'none'}`,
+    ...(flows ? [
+      `- flow triggers: ${typeof flows.triggerCount === 'number' ? flows.triggerCount : 'n/a'} (${Array.isArray(flows.triggerKinds) ? (flows.triggerKinds as string[]).join(', ') : 'n/a'})`,
+      `- flows: ${typeof flows.flowCount === 'number' ? flows.flowCount : 'n/a'} (${Array.isArray(flows.flowNames) ? (flows.flowNames as string[]).slice(0, 8).join(' | ') : 'n/a'})`,
+    ] : []),
   ].join('\n');
+}
+
+function renderFlowMapDigest(flowMap: unknown): string {
+  if (!flowMap || typeof flowMap !== 'object') return 'No flow trace data available.';
+  const obj = flowMap as Record<string, unknown>;
+  const triggers = Array.isArray(obj.triggers) ? obj.triggers as Array<Record<string, unknown>> : [];
+  const flows = Array.isArray(obj.flows) ? obj.flows as Array<Record<string, unknown>> : [];
+  if (!triggers.length && !flows.length) return 'No flow trace data available.';
+
+  const lines: string[] = [
+    `Entrypoints (${triggers.length}):`,
+    ...triggers.slice(0, 20).map((t) =>
+      `  [${stringValue(t.kind) ?? 'unknown'}] ${stringValue(t.name) ?? '?'} → ${stringValue(t.target) ?? '?'}`,
+    ),
+    '',
+    `Flow traces (${flows.length}):`,
+    ...flows.slice(0, 15).map((flow) => {
+      const steps = Array.isArray(flow.steps) ? flow.steps as Array<Record<string, unknown>> : [];
+      const stepStr = steps.map((s) => `${stringValue(s.role) ?? '?'}:${stringValue(s.nodeName) ?? '?'}`).join(' → ');
+      return `  [${stringValue(flow.flowType) ?? 'flow'}] ${stringValue(flow.name) ?? '?'}: ${stepStr || '(no steps)'}`;
+    }),
+  ];
+  return lines.join('\n');
 }
 
 function renderPreviewDigest(graph: unknown): string {

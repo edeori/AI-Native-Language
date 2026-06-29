@@ -40,6 +40,7 @@ function createServer() {
     semanticSource: z.string(),
     graph: z.any(),
     reviewDossier: z.any().optional(),
+    flowMap: z.any().optional(),
     validation: z.object({
       status: z.string(),
       summary: z.object({
@@ -243,12 +244,13 @@ function createServer() {
       description: 'Generate the canonical multi-agent review prompt bundle for semantic rewrite and architecture inference.',
       inputSchema: reviewPromptInputSchema,
     },
-    async ({ sourcePath, semanticSource, graph, reviewDossier, validation, expectationDocuments }) => {
+    async ({ sourcePath, semanticSource, graph, reviewDossier, flowMap, validation, expectationDocuments }) => {
       const bundle = buildReviewPromptBundle({
         sourcePath,
         semanticSource,
         graph,
         reviewDossier,
+        flowMap,
         validation,
         expectationDocuments,
       });

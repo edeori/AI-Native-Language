@@ -349,14 +349,47 @@ This enrichment should be able to run per:
 - explain the role of a layer
 - attach semantic hints to graph nodes
 
+### Current behavior: two separate enrichment tiers
+
+AI enrichment is split into two independent tiers that run at different times and must be triggered separately.
+
+**Tier 1 — Local Ollama enrichment (runs automatically during Source Import)**
+
+When the Source Import action is triggered from the menu, local Ollama agents run inline as part of the import pipeline.
+
+The following agents execute automatically:
+
+- `moduleClassifier` — internal module boundary recognition
+- `astComponentClassifier` — Java class component role detection
+- `repositoryPurpose` — repository purpose description
+- `sqlMigrationSemantics` — SQL migration semantics
+- `flowCandidate` — flow candidate identification
+- `componentPackaging` — component packaging hints
+- `generalEnrichment` — general node enrichment
+
+These agents call a locally running Ollama instance (default: `http://127.0.0.1:11434`).
+They do not contact any external AI provider.
+Model configuration lives in `.ai-native/config/models.yaml` inside the target project.
+
+**Tier 2 — Cloud AI enrichment (separate manual action, does not run automatically)**
+
+Cloud AI enrichment (Claude or Codex) does not run during Source Import.
+
+It must be triggered explicitly via the "Run AI Enrichment" action in the plugin.
+
+This action runs with:
+
+- `enableOllamaEnrichment: false`
+- `enableCloudEnrichment: true`
+
+It does not re-run local Ollama agents.
+
 ### Important rule
 
-If local agents are available, prefer them first.
+The two tiers are mutually exclusive per action invocation.
 
-If no local agents are available, fallback may use:
-
-- Codex
-- Claude
+Source Import runs Ollama only.
+The separate enrichment action runs cloud AI only.
 
 ### Expected outputs
 
@@ -551,9 +584,7 @@ We still need to settle:
 
 Decision:
 
-- a separate MCP server owns deterministic graph generation from AST + `jqassistant`
-- the current shared pipeline may call the same shared builder functions during transition
-- long-term ownership belongs to `deterministic-graph`
+- deterministic graph generation runs in-process via the shared library (`buildDeterministicGraphArtifacts`)
 
 ### 13.5. AI-specific graph split
 

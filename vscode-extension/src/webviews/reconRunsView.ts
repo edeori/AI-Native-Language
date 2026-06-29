@@ -33,6 +33,8 @@ export interface ReconRunSnapshot {
   phase: string;
   startedAt: string;
   finishedAt?: string;
+  enabledSteps?: string[];
+  jqassistantStatus?: ReconTaskStatus | 'off';
   astStatus?: ReconTaskStatus;
   astStartedAt?: string;
   astFinishedAt?: string;
@@ -50,7 +52,9 @@ export interface ReconRunSnapshot {
   codeGraphProgressUpdatedAt?: string;
   codeGraphHeartbeatCount?: number;
   codeGraphPhase?: string;
-  localAgentStatus?: ReconTaskStatus;
+  aiEnrichmentEnabled?: boolean;
+  aiEnrichmentStatus?: ReconTaskStatus | 'off';
+  localAgentStatus?: ReconTaskStatus | 'off';
   localAgentStartedAt?: string;
   localAgentFinishedAt?: string;
   localAgentPhase?: string;
@@ -80,6 +84,10 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  getSnapshot(): ReconRunSnapshot | undefined {
+    return this.snapshot;
+  }
+
   setSnapshot(snapshot: ReconRunSnapshot | undefined): void {
     this.snapshot = snapshot;
     this.refresh();
@@ -98,9 +106,6 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
         if (message?.command === 'open-actions') {
           await vscode.commands.executeCommand('aiNative.openDashboard');
         }
-        if (message?.command === 'resume-recon') {
-          await vscode.commands.executeCommand('aiNative.resumeRecon', message?.stage);
-        }
       });
     webviewView.webview.html = this.render();
   }
@@ -111,54 +116,81 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
     const snapshot = this.snapshot;
     const runningModule = snapshot?.moduleRuns?.find((module) => module.status === 'running');
     const events = snapshot?.events?.slice(-8) ?? [];
-    const stages = [
+    const enabled = new Set(snapshot?.enabledSteps ?? ['jqassistant', 'activate']);
+    const showAll = !snapshot?.enabledSteps;
+
+    // Source Import internal sub-status: worst-case of ast/analysis/graph
+    const sourceImportStatus = (() => {
+      const sub = [snapshot?.astStatus, snapshot?.analysisStatus, snapshot?.codeGraphStatus];
+      if (sub.some((s) => s === 'failed')) return 'failed';
+      if (sub.some((s) => s === 'running')) return 'running';
+      if (sub.every((s) => s === 'completed')) return 'completed';
+      return 'pending';
+    })();
+    const sourceImportDetail = (() => {
+      if (snapshot?.codeGraphArtifactPath) {
+        const files = snapshot.astFileCount ? ` · ${snapshot.astFileCount} files` : '';
+        const modules = snapshot.moduleRuns?.length ? ` · ${snapshot.moduleRuns.length} modules` : '';
+        return `AST${files}, analysis, code graph ready${modules}`;
+      }
+      if (snapshot?.analysisPhase) return snapshot.analysisPhase;
+      if (snapshot?.codeGraphPhase) return snapshot.codeGraphPhase;
+      if (snapshot?.astArtifactPath) return `AST indexed${snapshot.astFileCount ? ` (${snapshot.astFileCount} files)` : ''}, analysis running`;
+      return 'AST parsing, deterministic analysis and code graph build';
+    })();
+
+    const stages: Array<{ label: string; status: string; detail: string; show: boolean }> = [
       {
-        label: 'AST catalog',
-        status: snapshot?.astStatus ?? 'pending',
-        detail: snapshot?.astArtifactPath ? `${snapshot.astFileCount ?? 0} files indexed` : 'Waiting for java-parser output.',
+        label: 'jQAssistant Scan',
+        status: snapshot?.jqassistantStatus ?? 'pending',
+        detail: snapshot?.jqassistantStatus === 'completed'
+          ? 'Bytecode, Maven module and call graph scan complete.'
+          : snapshot?.jqassistantStatus === 'running'
+            ? 'Scanning bytecode and Maven module graph…'
+            : snapshot?.jqassistantStatus === 'off'
+              ? 'Skipped — jQAssistant scan was not selected.'
+              : 'Maven module, bytecode and call graph analysis.',
+        show: showAll || enabled.has('jqassistant'),
       },
       {
-        label: 'Deterministic analysis',
-        status: snapshot?.analysisStatus ?? 'pending',
-        detail: snapshot?.analysisPhase ?? 'Waiting for analysis, snapshot, and deterministic classification.',
+        label: 'Source Import',
+        status: sourceImportStatus,
+        detail: sourceImportDetail,
+        show: showAll || enabled.has('activate'),
       },
       {
-        label: 'Deterministic graph bundle',
-        status: snapshot?.codeGraphStatus ?? 'pending',
-        detail:
-          snapshot?.codeGraphPhase ??
-          (snapshot?.codeGraphProgressPath
-            ? `Progress: ${snapshot.codeGraphProgressPath}`
-            : snapshot?.codeGraphArtifactPath
-              ? 'Ready'
-              : 'Waiting for deterministic graph artifact build.'),
-      },
-      {
-        label: 'Local enrichment',
+        label: 'Local AI Agents',
         status: snapshot?.localAgentStatus ?? 'pending',
-        detail: snapshot?.localAgentPhase ?? 'Waiting for optional local enrichment slices.',
+        detail: snapshot?.localAgentStatus === 'off'
+          ? 'Skipped — Local AI Agents was not selected.'
+          : snapshot?.localAgentPhase ?? 'Local enrichment agents (flow candidates, service roles).',
+        show: showAll || enabled.has('activate'),
       },
       {
-        label: 'Recon prompts and agents',
-        status:
-          snapshot?.projectPromptStatus === 'completed' && snapshot?.moduleRuns?.length === 0
-            ? 'completed'
-            : snapshot?.moduleRuns?.length
-            ? snapshot.moduleRuns.every((module) => module.status === 'completed')
-              ? 'completed'
-              : snapshot.moduleRuns.some((module) => module.status === 'failed')
-                ? 'failed'
-                : snapshot.moduleRuns.some((module) => module.status === 'running')
-                  ? 'running'
-                  : snapshot?.projectPromptStatus === 'running'
-                    ? 'running'
-                    : 'pending'
-            : snapshot?.projectPromptStatus ?? 'pending',
-        detail: snapshot?.projectPromptArtifactPath
-          ? `recon prompt ready; ${snapshot?.moduleRuns?.length ?? 0} module agents`
-          : 'Waiting for MCP reconnaissance prompt bundle.',
+        label: 'Semantic Enrichment',
+        status: snapshot?.aiEnrichmentStatus ?? 'pending',
+        detail: snapshot?.aiEnrichmentStatus === 'off'
+          ? 'Skipped — Semantic Enrichment was not selected.'
+          : snapshot?.aiEnrichmentStatus === 'completed'
+            ? 'Cloud AI enrichment pass complete.'
+            : 'Re-generates source.semantic.md from cached artifacts.',
+        show: showAll || enabled.has('ai-enrichment'),
       },
-    ] as const;
+      {
+        label: 'Flow Extraction',
+        status: 'pending',
+        detail: 'Merges flows and processes from graph, AST and imported docs.',
+        show: enabled.has('flow-extraction'),
+      },
+      {
+        label: 'Generate Graph',
+        status: snapshot?.status === 'completed' ? 'completed' : snapshot?.status === 'failed' ? 'failed' : 'pending',
+        detail: snapshot?.status === 'completed'
+          ? 'Canonical semantic graph and review artifacts ready.'
+          : 'Canonical semantic graph from source.semantic.md.',
+        show: showAll || enabled.has('graph'),
+      },
+    ];
     const finalOutputStatus = snapshot?.status === 'completed' ? 'completed' : snapshot?.status === 'failed' ? 'failed' : 'pending';
     const moduleCards = snapshot?.moduleRuns?.length
       ? snapshot.moduleRuns
@@ -314,36 +346,6 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
         font-size: 10px;
         line-height: 1.35;
       }
-      .stage-actions {
-        display: grid;
-        gap: 6px;
-        margin-top: 2px;
-      }
-      .stage-action {
-        width: 100%;
-        display: grid;
-        gap: 2px;
-        text-align: left;
-        border-radius: 8px;
-        border: 1px solid var(--vscode-panel-border);
-        background: rgba(255,255,255,0.02);
-        color: var(--vscode-foreground);
-        padding: 8px 10px;
-        cursor: pointer;
-      }
-      .stage-action:hover {
-        background: rgba(14, 165, 233, 0.08);
-        border-color: rgba(14, 165, 233, 0.35);
-      }
-      .stage-action span:first-child {
-        font-size: 11px;
-        font-weight: 700;
-      }
-      .stage-action-hint {
-        font-size: 10px;
-        color: var(--vscode-descriptionForeground);
-        line-height: 1.3;
-      }
       .badge {
         text-transform: uppercase;
         letter-spacing: 0.06em;
@@ -456,44 +458,47 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
           <div class="muted">${escapeHtml(snapshot ? `${snapshot.projectName} · ${snapshot.runId}` : 'No active recon run yet.')}</div>
           <div class="progress"><div class="bar" style="width:${computeProgress(snapshot)}%"></div></div>
           <div class="chips">
+            <span class="chip">jqa: ${escapeHtml(snapshot?.jqassistantStatus ?? 'off')}</span>
             <span class="chip">ast: ${escapeHtml(snapshot?.astStatus ?? 'pending')}</span>
             <span class="chip">analysis: ${escapeHtml(snapshot?.analysisStatus ?? 'pending')}</span>
             <span class="chip">graph: ${escapeHtml(snapshot?.codeGraphStatus ?? 'pending')}</span>
-            <span class="chip">prompt: ${escapeHtml(snapshot?.projectPromptStatus ?? 'pending')}</span>
+            <span class="chip">agents: ${escapeHtml(snapshot?.localAgentStatus ?? 'off')}</span>
+            <span class="chip">enrichment: ${escapeHtml(snapshot?.aiEnrichmentStatus ?? 'off')}</span>
             <span class="chip">modules: ${escapeHtml(String(snapshot?.moduleRuns.length ?? 0))}</span>
-            <span class="chip">status: ${escapeHtml(snapshot?.status ?? 'idle')}</span>
+          </div>
+        </div>
+        <div class="stage ${snapshot?.aiEnrichmentStatus ?? (snapshot?.aiEnrichmentEnabled === false ? 'completed' : 'pending')}">
+          <div class="stage-title">
+            <span>AI enrichment</span>
+            <span class="badge ${snapshot?.aiEnrichmentStatus ?? (snapshot?.aiEnrichmentEnabled === false ? 'completed' : 'pending')}">${escapeHtml(snapshot?.aiEnrichmentStatus ?? (snapshot?.aiEnrichmentEnabled === false ? 'off' : snapshot?.localAgentStatus ?? 'pending'))}</span>
+          </div>
+          <div class="stage-detail">
+            ${
+              snapshot?.aiEnrichmentEnabled === false
+                ? 'AI enrichment has not been run yet. Deterministic artifacts are already available.'
+                : snapshot?.aiEnrichmentStatus === 'completed'
+                  ? 'AI enrichment has already refined the deterministic artifacts.'
+                  : snapshot?.aiEnrichmentStatus === 'running'
+                    ? 'AI enrichment is currently running.'
+                    : snapshot?.aiEnrichmentStatus === 'failed'
+                      ? 'AI enrichment failed and can be rerun without repeating the deterministic import.'
+                      : 'AI enrichment is pending. Use the AI enrichment button when you want refinement.'
+            }
           </div>
         </div>
         <div class="pipeline">
           ${stages
-            .map(
+            .filter((stage) => stage.show)
+          .map(
               (stage) => {
-                const actionLabel = stage.status === 'completed' ? 'Re-run from checkpoint' : 'Resume from here';
-                const actionHint =
-                  stage.label === 'AST catalog'
-                    ? 'Reuses cached AST if present, otherwise re-parses.'
-                    : stage.label === 'Deterministic analysis'
-                      ? 'Reuses cached AST and reruns deterministic analysis and snapshot stages.'
-                      : stage.label === 'Deterministic graph bundle'
-                        ? 'Rebuilds the deterministic graph artifacts from cached analysis.'
-                        : stage.label === 'Local enrichment'
-                          ? 'Re-runs optional local enrichment slices from deterministic artifacts.'
-                          : stage.label === 'Recon prompts and agents'
-                            ? 'Rebuilds recon prompts and reruns project/module recon agents if needed.'
-                          : 'Continues semantic rewrite from the latest checkpoint.';
+                const displayStatus = stage.status === 'off' ? 'pending' : stage.status;
                 return `
-              <div class="stage ${stage.status}">
+              <div class="stage ${displayStatus}">
                 <div class="stage-title">
                   <span>${escapeHtml(stage.label)}</span>
-                  <span class="badge ${stage.status}">${escapeHtml(stage.status)}</span>
+                  <span class="badge ${displayStatus}">${escapeHtml(stage.status)}</span>
                 </div>
                 <div class="stage-detail">${escapeHtml(stage.detail)}</div>
-                <div class="stage-actions">
-                  <button class="stage-action" data-command="resume-recon" data-stage="${escapeHtml(stage.label)}">
-                    <span>${escapeHtml(actionLabel)}</span>
-                    <span class="stage-action-hint">${escapeHtml(actionHint)}</span>
-                  </button>
-                </div>
               </div>
               `;
               },
@@ -505,7 +510,7 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
             <span>Current activity</span>
             <span>${escapeHtml(snapshot?.activeTask || runningModule?.moduleRoot || 'idle')}</span>
           </div>
-          <div class="muted">The recon run updates this as AST indexing, deterministic analysis, deterministic graph construction, enrichment, and recon agents move through the new pipeline.</div>
+          <div class="muted">The recon run updates this as AST indexing, deterministic analysis, deterministic graph construction, optional AI enrichment, and recon agents move through the new pipeline.</div>
           ${
             snapshot?.astArtifactPath
               ? `<div class="muted small">AST: ${escapeHtml(snapshot.astArtifactPath)}${snapshot.astFileCount != null ? ` · ${snapshot.astFileCount} files` : ''}</div>`
@@ -545,12 +550,6 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
                   : 'Waiting for the final semantic rewrite and artifact write.'
             }
           </div>
-          <div class="stage-actions">
-            <button class="stage-action" data-command="resume-recon" data-stage="semantic">
-              <span>${snapshot?.status === 'completed' ? 'Re-run semantic assembly' : 'Resume semantic assembly'}</span>
-              <span class="stage-action-hint">Runs the semantic rewrite, review, validation output, and final artifact write from the latest checkpoint.</span>
-            </button>
-          </div>
         </div>
       </div>
 
@@ -589,12 +588,6 @@ export class ReconRunsWebviewProvider implements vscode.WebviewViewProvider {
     </div>
     <script nonce="${nonce}">
       const vscode = acquireVsCodeApi();
-      document.querySelectorAll('[data-command="resume-recon"]').forEach((button) => {
-        button.addEventListener('click', () => {
-          const stage = button.getAttribute('data-stage') || '';
-          vscode.postMessage({ command: 'resume-recon', stage });
-        });
-      });
       document.querySelectorAll('[data-command="open-artifacts"]').forEach((button) => {
         button.addEventListener('click', () => vscode.postMessage({ command: 'open-artifacts' }));
       });

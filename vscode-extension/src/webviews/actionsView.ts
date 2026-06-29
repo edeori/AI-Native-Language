@@ -13,9 +13,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this.context.extensionUri],
     };
     webviewView.webview.onDidReceiveMessage(async (message) => {
-      if (typeof message?.command !== 'string') {
-        return;
-      }
+      if (typeof message?.command !== 'string') return;
       await vscode.commands.executeCommand(message.command);
     });
     webviewView.webview.html = this.render();
@@ -23,85 +21,100 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
 
   private render(): string {
     const cspSource = this.view?.webview.cspSource ?? '';
-    const scriptNonce = nonce();
+    const n = nonce();
     return /* html */ `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${scriptNonce}';"
-    />
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${n}';" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Native Actions</title>
     <style>
-      :root {
-        color-scheme: dark;
-      }
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
       body {
         font-family: var(--vscode-font-family);
         color: var(--vscode-foreground);
-        margin: 0;
-        padding: 12px;
+        margin: 0; padding: 10px;
         background: var(--vscode-sideBar-background);
       }
-      .stack {
-        display: grid;
-        gap: 8px;
+
+      .section-label {
+        font-size: 10px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.5px; color: var(--vscode-descriptionForeground);
+        margin: 0 0 6px 2px;
       }
-      .card {
+
+      .btn-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+
+      .action-btn {
+        display: flex; align-items: center; gap: 8px;
+        width: 100%; padding: 7px 10px;
         border: 1px solid var(--vscode-panel-border);
-        border-radius: 10px;
+        border-radius: 7px;
         background: var(--vscode-editor-background);
-        padding: 10px;
+        color: var(--vscode-foreground);
+        font-size: 12px; font-weight: 600;
+        cursor: pointer; text-align: left;
+        transition: background 0.1s;
       }
-      .title {
-        font-size: 12px;
-        font-weight: 700;
-        margin-bottom: 8px;
-      }
-      .muted {
+      .action-btn:hover { background: var(--vscode-list-hoverBackground); }
+
+      .btn-icon {
+        font-size: 14px; flex-shrink: 0; line-height: 1;
         color: var(--vscode-descriptionForeground);
-        font-size: 11px;
-        line-height: 1.4;
       }
-      .actions {
-        display: grid;
-        gap: 6px;
-        margin-top: 10px;
-      }
-      button {
-        width: 100%;
-        padding: 7px 10px;
-        border: 1px solid var(--vscode-button-border, transparent);
-        border-radius: 8px;
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-        font-weight: 600;
-        font-size: 12px;
-        cursor: pointer;
-        text-align: center;
+      .btn-label { flex: 1; }
+      .btn-desc {
+        font-size: 10px; font-weight: 400;
+        color: var(--vscode-descriptionForeground);
+        margin-top: 1px;
       }
     </style>
   </head>
   <body>
-    <div class="stack">
-      <div class="card">
-        <div class="title">Actions</div>
-        <div class="actions">
-          <button data-command="${commandIds.importSourceProject}">Import source project</button>
-          <button data-command="${commandIds.createSemanticSourceTemplate}">Start from scratch</button>
-          <button data-command="${commandIds.validateActiveSemanticMarkdown}">Validate input</button>
-          <button data-command="${commandIds.openGraphPreview}">Show graph</button>
-          <button data-command="${commandIds.generateCanonicalGraph}">Generate / refresh graph</button>
-          <button data-command="${commandIds.generateSpringBootSkeleton}">Generate Spring Boot</button>
-        </div>
-      </div>
+
+    <div class="section-label">Graph</div>
+    <div class="btn-group">
+      <button class="action-btn" data-command="${commandIds.openGraphPreview}">
+        <span class="btn-icon">⬡</span>
+        <span>
+          <div class="btn-label">Show graph</div>
+          <div class="btn-desc">Open the latest canonical graph</div>
+        </span>
+      </button>
+      <button class="action-btn" data-command="${commandIds.showEndpoints}">
+        <span class="btn-icon">⚡</span>
+        <span>
+          <div class="btn-label">Endpoint summary</div>
+          <div class="btn-desc">REST · SOAP · GraphQL · Events · gRPC</div>
+        </span>
+      </button>
     </div>
-    <script nonce="${scriptNonce}">
+
+    <div class="section-label">Validation</div>
+    <div class="btn-group">
+      <button class="action-btn" data-command="${commandIds.validateActiveSemanticMarkdown}">
+        <span class="btn-icon">✓</span>
+        <span>
+          <div class="btn-label">Validate semantic</div>
+          <div class="btn-desc">Check active source.semantic.md against policy</div>
+        </span>
+      </button>
+      <button class="action-btn" data-command="${commandIds.runDocCodeAlignment}">
+        <span class="btn-icon">⇄</span>
+        <span>
+          <div class="btn-label">Doc-code alignment</div>
+          <div class="btn-desc">Check imported docs against code artifacts</div>
+        </span>
+      </button>
+    </div>
+
+    <script nonce="${n}">
       const vscode = acquireVsCodeApi();
-      document.querySelectorAll('button[data-command]').forEach((button) => {
-        button.addEventListener('click', () => vscode.postMessage({ command: button.dataset.command }));
+      document.querySelectorAll('button[data-command]').forEach((btn) => {
+        btn.addEventListener('click', () => vscode.postMessage({ command: btn.dataset.command }));
       });
     </script>
   </body>

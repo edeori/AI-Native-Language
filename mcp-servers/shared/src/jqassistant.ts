@@ -42,6 +42,12 @@ export interface JqassistantArtifact {
         parentArtifactId: string;
         moduleName: string;
       }>;
+      externalDependencies?: Array<{
+        groupId: string;
+        artifactId: string;
+        version?: string;
+        scope?: string;
+      }>;
     };
     packageGraph: {
       packages: string[];
@@ -57,12 +63,23 @@ export interface JqassistantArtifact {
         packageName?: string;
         simpleName: string;
         kind?: string;
+        annotations?: string[];
+        interfaces?: string[];
+        superClass?: string;
       }>;
       dependencies: Array<{
         fromType: string;
         toType: string;
         fromPackage?: string;
         toPackage?: string;
+      }>;
+    };
+    callGraph?: {
+      edges: Array<{
+        callerType: string;
+        callerMethod: string;
+        calleeType: string;
+        calleeMethod: string;
       }>;
     };
   };

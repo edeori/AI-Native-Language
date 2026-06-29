@@ -10,27 +10,7 @@
     "vscode": "^1.97.0"
   },
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:aiNative.openConfiguration",
-    "onCommand:aiNative.openReconRuns",
-    "onCommand:aiNative.openDashboard",
-    "onCommand:aiNative.openTutorial",
-    "onCommand:aiNative.refreshAll",
-    "onCommand:aiNative.createSemanticSourceTemplate",
-    "onCommand:aiNative.validateActiveSemanticMarkdown",
-    "onCommand:aiNative.generateCanonicalGraph",
-    "onCommand:aiNative.openMarkdownArtifactPreview",
-    "onCommand:aiNative.openGraphPreview",
-    "onCommand:aiNative.generateSpringBootSkeleton",
-    "onCommand:aiNative.openArtifactsFolder",
-    "onCommand:aiNative.showMcpStatus",
-    "onView:aiNativeActions",
-    "onView:aiNativeValidation",
-    "onView:aiNativeReviewArtifacts",
-    "onView:aiNativeSemanticArtifacts",
-    "onView:aiNativeDatabaseSchema",
-    "onView:aiNativeMcpHub",
-    "onView:aiNativeRecon"
+    "onStartupFinished"
   ],
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json && node esbuild.mjs",
@@ -89,16 +69,28 @@
         "title": "AI Native: Show Graph"
       },
       {
-        "command": "aiNative.generateSpringBootSkeleton",
-        "title": "AI Native: Generate Spring Boot Skeleton"
-      },
-      {
         "command": "aiNative.openArtifactsFolder",
         "title": "AI Native: Open Artifact Folder"
       },
       {
         "command": "aiNative.showMcpStatus",
         "title": "AI Native: Show MCP Status"
+      },
+      {
+        "command": "aiNative.importDocuments",
+        "title": "AI Native: Import Documents"
+      },
+      {
+        "command": "aiNative.showEndpoints",
+        "title": "AI Native: Show Endpoint Summary"
+      },
+      {
+        "command": "aiNative.runFlowExtraction",
+        "title": "AI Native: Run Flow Extraction"
+      },
+      {
+        "command": "aiNative.runDocCodeAlignment",
+        "title": "AI Native: Run Doc-Code Alignment"
       }
     ],
     "configuration": {
@@ -129,10 +121,10 @@
           "default": "http://localhost:3005/mcp",
           "description": "Remote Streamable HTTP endpoint for the jqassistant MCP server."
         },
-        "aiNative.mcp.deterministicGraphUrl": {
+        "aiNative.mcp.documentImportUrl": {
           "type": "string",
-          "default": "http://localhost:3006/mcp",
-          "description": "Remote Streamable HTTP endpoint for the deterministic-graph MCP server."
+          "default": "http://localhost:3007/mcp",
+          "description": "Remote Streamable HTTP endpoint for the document-import MCP server."
         },
         "aiNative.artifactRoot": {
           "type": "string",
@@ -159,6 +151,21 @@
       "aiNativeSemantic": [
         {
           "type": "webview",
+          "id": "aiNativeFlow",
+          "name": "Import Source"
+        },
+        {
+          "type": "webview",
+          "id": "aiNativeRecon",
+          "name": "Recon Runs"
+        },
+        {
+          "type": "webview",
+          "id": "aiNativeDocImport",
+          "name": "Document Import"
+        },
+        {
+          "type": "webview",
           "id": "aiNativeActions",
           "name": "Actions"
         },
@@ -177,11 +184,6 @@
         {
           "id": "aiNativeDatabaseSchema",
           "name": "Database Schema"
-        },
-        {
-          "type": "webview",
-          "id": "aiNativeRecon",
-          "name": "Recon Runs"
         },
         {
           "id": "aiNativeMcpHub",
