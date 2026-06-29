@@ -5,10 +5,51 @@
 
 Lefuttatja az MCP validátort az aktív `source.semantic.md`-n.
 
-1. Verziós checkpoint: ha a fájl változott az utolsó snapshot óta, automatikusan elmenti az aktuális állapotot
-2. MCP hívás: `validator` → `validate_semantic_markdown` (policy: `get_validation_policy`)
-3. A validáció issue-i megjelennek VSCode diagnosztika figyelmeztetésekként a szerkesztőben (gap / conflict / warning / violation)
-4. Artifact mentése: `.ai-native/validation/<slug>.validation.md`
+## Lépések
+
+1. **Verziós checkpoint**: `ensureSemanticVersionCheckpoint` — ha a fájl tartalma változott az utolsó snapshot óta, elmenti az aktuális állapotot
+2. **Validation policy betöltése**: MCP `validator` → `get_validation_policy`
+3. **Validáció futtatása**: MCP `validator` → `validate_semantic_markdown` (`persist: true` — a szerver is ment fájlt)
+4. **VSCode diagnosztikák**: az issue-k megjelennek szerkesztő figyelmeztetésekként (gap / conflict / warning / violation)
+5. **Plain file mentése**: `.ai-native/validation/<slug>.validation.md`
+6. **Verziózott artifact mentése**: `writeVersionedArtifact` kind `validation`
+7. **Feedback delta**: `submitFeedbackDelta` → MCP `validator` → `ingest_feedback_delta`
+8. **Megnyitás + info üzenet**: `source.semantic.md` megnyílik, értesítés az issue-k számával
+
+## A mentett validation.md tartalma
+
+```
+# AI Native Validation
+- Source: <path>
+- MCP report path: <path>
+- MCP summary: gaps=N, conflicts=N, warnings=N, violations=N
+
+## MCP issues
+- [severity] code: message
+
+## Retraining delta
+- missing sections: ...
+- schema gaps: ...
+- persistence gaps: ...
+- review targets: ...
+
+## Graph signals
+- nodes: N
+- edges: N
+- database schema tables: N
+- graph layers: ...
+
+## Delta hints
+- ...
+```
+
+## Mit ellenőriz a validátor
+
+Részletesen: [docs/source-import/05-validation.md](../source-import/05-validation.md#mit-ellenőriz-a-validátor)
+
+Röviden: section completeness, quality (processes/interfaces/modules), contradictions (rules/security), security policy violations, dependency references, layering.
+
+Státusz: `validated` (tiszta) · `ready` (csak warning) · `draft` (gap/conflict/violation van)
 
 A Generate Graph lépés megköveteli, hogy legyen friss validációs snapshot (sourceHash egyezés) — ezt a gomb futtatja le.
 

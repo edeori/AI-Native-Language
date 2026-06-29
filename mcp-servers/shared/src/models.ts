@@ -11,6 +11,7 @@ export type SemanticSectionName =
   | 'examples'
   | 'acceptance_criteria';
 
+// acceptance_criteria is optional — source-derived files may not have it
 export const REQUIRED_SECTIONS: SemanticSectionName[] = [
   'system',
   'intent',
@@ -22,7 +23,6 @@ export const REQUIRED_SECTIONS: SemanticSectionName[] = [
   'security',
   'dependencies',
   'examples',
-  'acceptance_criteria',
 ];
 
 export interface SemanticSection {

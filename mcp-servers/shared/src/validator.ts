@@ -1,6 +1,6 @@
-import type { CanonicalGraph, SemanticDocument, ValidationIssue, ValidationReport } from './models.js';
+import type { CanonicalGraph, SemanticDocument, SemanticSectionName, ValidationIssue, ValidationReport } from './models.js';
 import { isEnterpriseLikeDocument, loadReferenceCorpus } from './reference-corpus.js';
-import { getSectionItemLine, getSectionItems, getSectionText, hasRequiredSections } from './semantic-markdown.js';
+import { KNOWN_SECTIONS, getSectionItemLine, getSectionItems, getSectionText, hasRequiredSections } from './semantic-markdown.js';
 import { validationPolicyText } from './validation-policy.js';
 
 function normalizeText(value: string): string {
@@ -42,7 +42,7 @@ function assessSectionCompleteness(document: SemanticDocument, issues: Validatio
   }
 
   for (const [sectionName, section] of Object.entries(document.sections)) {
-    if (!section.raw.trim()) {
+    if (KNOWN_SECTIONS.has(sectionName as SemanticSectionName) && !section.raw.trim()) {
       issues.push(createIssue('gap', 'empty_section', `Section "${sectionName}" is empty.`, `#${sectionName}`));
     }
   }
@@ -129,19 +129,26 @@ function assessSecurity(document: SemanticDocument, policyText: string | undefin
 
 function assessDependencies(document: SemanticDocument, issues: ValidationIssue[]): void {
   const dependencyItems = getSectionItems(document, 'dependencies');
-  const processText = getSectionText(document, 'processes').toLowerCase();
-  const interfaceText = getSectionText(document, 'interfaces').toLowerCase();
-  const combined = `${processText}\n${interfaceText}`;
+  // Search all sections except 'dependencies' itself to avoid self-reference.
+  // With H3+ content folded into their parent H2 sections by the parser, this
+  // correctly covers sub-section content (mail capabilities, storage, etc.).
+  const searchText = Object.entries(document.sections)
+    .filter(([name]) => name !== 'dependencies')
+    .map(([, section]) => section.raw)
+    .join('\n')
+    .toLowerCase();
 
   for (const [index, dependency] of dependencyItems.entries()) {
     const normalized = normalizeText(dependency);
-    if (!combined.includes(normalized.split(/\s+/)[0] ?? normalized)) {
+    const firstWord = normalized.split(/\s+/)[0] ?? normalized;
+    if (firstWord.length < 3) continue;
+    if (!searchText.includes(firstWord)) {
       const sourceLine = getSectionItemLine(document, 'dependencies', index);
       issues.push(
         createIssue(
           'warning',
           'dependency_unreferenced',
-          `Dependency "${dependency}" is not referenced in processes or interfaces.`,
+          `Dependency "${dependency}" is not referenced in the semantic document.`,
           `#dependencies:${index}`,
           sourceLine,
         ),
@@ -242,12 +249,20 @@ function assessQuality(document: SemanticDocument, graph: CanonicalGraph, issues
     dataFlowCount: getSectionItems(document, 'data_flows').length,
   }, combinedText);
 
-  if (enterpriseLike && modules.length === 0 && referenceCorpus.primary) {
+  // Only warn if module structure is not described anywhere in the document.
+  // Multi-module projects often describe modules in context, interfaces, or
+  // dedicated sub-sections rather than a top-level ## modules section.
+  const moduleReferenceCount = Object.values(document.sections)
+    .map((s) => s.raw.toLowerCase())
+    .join('\n')
+    .split(/\bmodule\b/)
+    .length - 1;
+  if (enterpriseLike && modules.length === 0 && moduleReferenceCount < 3 && referenceCorpus.primary) {
     issues.push(
       createIssue(
         'warning',
         'missing_modules',
-        `The slice looks enterprise-like, but no modules section was defined. The reference corpus shows layered architectures, so describe module boundaries explicitly.`,
+        `The slice looks enterprise-like, but no module structure was found. The reference corpus shows layered architectures, so describe module boundaries explicitly.`,
         '#modules',
       ),
     );

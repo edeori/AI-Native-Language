@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
+import { REQUIRED_SECTIONS } from './models.js';
 import type { SemanticDocument, SemanticSection, SemanticSectionName } from './models.js';
 
-const KNOWN_SECTIONS = new Set<SemanticSectionName>([
+export const KNOWN_SECTIONS = new Set<SemanticSectionName>([
   'system',
   'intent',
   'context',
@@ -15,6 +16,7 @@ const KNOWN_SECTIONS = new Set<SemanticSectionName>([
   'examples',
   'acceptance_criteria',
 ]);
+
 
 export function normalizeSectionName(rawName: string): string {
   return rawName.trim().toLowerCase().replace(/\s+/g, '_');
@@ -68,12 +70,27 @@ export function parseSemanticMarkdown(markdown: string, sourcePath?: string): Se
   };
 
   rawLines.forEach((line, lineNumber) => {
-    const headingMatch = /^#{1,6}\s+(.+)$/.exec(line.trim());
+    const headingMatch = /^(#{1,6})\s+(.+)$/.exec(line.trim());
     if (headingMatch) {
-      flush();
-      currentName = headingMatch[1].trim();
-      currentBuffer = [];
-      currentStartLine = lineNumber;
+      const depth = headingMatch[1].length;
+      if (depth === 1) {
+        // H1 is the document title — not a semantic section
+        flush();
+        currentName = '';
+        currentBuffer = [];
+        return;
+      }
+      if (depth === 2) {
+        // H2 starts a new top-level section
+        flush();
+        currentName = headingMatch[2].trim();
+        currentBuffer = [];
+        currentStartLine = lineNumber;
+        currentEndLine = lineNumber;
+        return;
+      }
+      // H3+ is sub-section content — accumulate into the current H2 section buffer
+      currentBuffer.push(line);
       currentEndLine = lineNumber;
       return;
     }
@@ -102,7 +119,7 @@ export async function parseSemanticMarkdownFromFile(path: string): Promise<Seman
 }
 
 export function hasRequiredSections(document: SemanticDocument): string[] {
-  return [...KNOWN_SECTIONS].filter((section) => !document.sections[section]);
+  return [...REQUIRED_SECTIONS].filter((section) => !document.sections[section]);
 }
 
 export function getSectionText(document: SemanticDocument, section: string): string {
