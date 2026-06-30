@@ -19,7 +19,6 @@ SYNC_ITEMS=(
   tsconfig.json
   README.md
   AI_Native_Semantic_Pilot_Spec.md
-  AI_Native_Semantic_Pilot_Notes.md
   AI_Native_Semantic_Workflow.md
   AI_Native_Semantic_Programming_Platform.md
   docs
@@ -41,7 +40,7 @@ ssh ${SSH_OPTIONS} -p "${REMOTE_PORT}" "${SSH_TARGET}" \
 
 echo "Cleaning previous build inputs on remote host ..."
 ssh ${SSH_OPTIONS} -p "${REMOTE_PORT}" "${SSH_TARGET}" \
-  "cd '${REMOTE_DEPLOY_DIR}' && rm -rf package.json package-lock.json tsconfig.base.json tsconfig.json README.md AI_Native_Semantic_Pilot_Spec.md AI_Native_Semantic_Pilot_Notes.md AI_Native_Semantic_Workflow.md AI_Native_Semantic_Programming_Platform.md docs examples reference-projects mcp-servers docker"
+  "cd '${REMOTE_DEPLOY_DIR}' && rm -rf package.json package-lock.json tsconfig.base.json tsconfig.json README.md AI_Native_Semantic_Pilot_Spec.md AI_Native_Semantic_Workflow.md AI_Native_Semantic_Programming_Platform.md docs examples reference-projects mcp-servers docker"
 
 if ssh ${SSH_OPTIONS} -p "${REMOTE_PORT}" "${SSH_TARGET}" "command -v rsync >/dev/null 2>&1"; then
   echo "Syncing required build inputs to remote host with rsync ..."

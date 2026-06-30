@@ -2,7 +2,7 @@
   "name": "ai-native-semantic-workflow",
   "displayName": "AI Native Semantic Workflow",
   "description": "Developer-facing VSCode extension for the AI-native semantic workflow.",
-  "version": "0.1.4",
+  "version": "0.2.3",
   "private": true,
   "icon": "media/ai-native.png",
   "main": "./out/extension.js",

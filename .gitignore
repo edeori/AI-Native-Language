@@ -3,6 +3,13 @@
 !.claude/skills/
 .mcp.json
 
+
+# Local runner runtime files
+local-runners/logs/
+
+# jqassistant binary — download locally, not committed
+docker/jqassistant.zip
+
 node_modules
 dist
 out

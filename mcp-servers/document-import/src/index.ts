@@ -401,7 +401,7 @@ function createServer(): McpServer {
     confluenceToken: z.string().optional(),
     confluenceUser: z.string().optional(),
     confluenceApiToken: z.string().optional(),
-    persist: z.boolean().optional().default(true),
+    persist: z.boolean().optional().default(false),
   }).refine((value) => Boolean(value.sourcePath || value.content || value.confluenceUrl), {
     message: 'Provide sourcePath, content, or confluenceUrl.',
   });
@@ -429,7 +429,7 @@ function createServer(): McpServer {
         user: z.string().optional(),
         token: z.string().optional(),
         apiToken: z.string().optional(),
-        persist: z.boolean().optional().default(true),
+        persist: z.boolean().optional().default(false),
       }).refine((value) => Boolean(value.pageId || value.pageUrl), {
         message: 'Provide pageId or pageUrl.',
       }),

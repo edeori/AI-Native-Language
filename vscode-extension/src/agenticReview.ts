@@ -607,6 +607,7 @@ async function buildClaudeInvocation(
     provider: 'claude',
     args: [
       '-p',
+      '--verbose',
       '--dangerously-skip-permissions',
       '--output-format',
       'stream-json',

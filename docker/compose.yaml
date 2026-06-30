@@ -9,10 +9,9 @@ services:
       MCP_TRANSPORT_MODE: http
       MCP_PATH: /mcp
       PORT: 3001
+    restart: unless-stopped
     ports:
       - "3001:3001"
-    volumes:
-      - ../.ai-native:/app/.ai-native
 
   validator:
     build:
@@ -24,10 +23,9 @@ services:
       MCP_TRANSPORT_MODE: http
       MCP_PATH: /mcp
       PORT: 3002
+    restart: unless-stopped
     ports:
       - "3002:3002"
-    volumes:
-      - ../.ai-native:/app/.ai-native
 
   compiler:
     build:
@@ -39,10 +37,9 @@ services:
       MCP_TRANSPORT_MODE: http
       MCP_PATH: /mcp
       PORT: 3003
+    restart: unless-stopped
     ports:
       - "3003:3003"
-    volumes:
-      - ../.ai-native:/app/.ai-native
 
   java-parser:
     build:
@@ -54,10 +51,9 @@ services:
       MCP_TRANSPORT_MODE: http
       MCP_PATH: /mcp
       PORT: 3004
+    restart: unless-stopped
     ports:
       - "3004:3004"
-    volumes:
-      - ../.ai-native:/app/.ai-native
 
   jqassistant:
     build:
@@ -69,10 +65,9 @@ services:
       MCP_TRANSPORT_MODE: http
       MCP_PATH: /mcp
       PORT: 3005
+    restart: unless-stopped
     ports:
       - "3005:3005"
-    volumes:
-      - ../.ai-native:/app/.ai-native
 
   document-import:
     build:
@@ -84,7 +79,6 @@ services:
       MCP_TRANSPORT_MODE: http
       MCP_PATH: /mcp
       PORT: 3007
+    restart: unless-stopped
     ports:
       - "3007:3007"
-    volumes:
-      - ../.ai-native:/app/.ai-native

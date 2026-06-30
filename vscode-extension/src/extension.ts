@@ -1751,9 +1751,6 @@ async function importSourceProject(
           resumeFromStage: normalizeResumeStage(resumeFromStage),
           javaAstCatalog,
           jqassistantArtifact: jqassistantArtifact as never,
-          enableOllamaEnrichment: ollamaEnabled,
-          enableCloudEnrichment: sourceCloudEnabled,
-          cloudAgentRunner,
           onAnalysisProgress: async (event) => {
             const analysisAt = new Date().toISOString();
             outputChannel.appendLine(
@@ -2779,8 +2776,6 @@ async function runAiEnrichment(
           projectName,
           outputDir,
           resumeFromStage: 'semantic',
-          enableOllamaEnrichment: true,
-          enableCloudEnrichment: false,
           jqassistantArtifact: jqassistantArtifact as JqassistantArtifact | undefined,
         });
         outputChannel.appendLine('[source-to-semantic] Local AI enrichment completed.');

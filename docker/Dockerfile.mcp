@@ -11,7 +11,6 @@ COPY docs ./docs
 COPY reference-projects ./reference-projects
 COPY README.md ./
 COPY AI_Native_Semantic_Pilot_Spec.md ./
-COPY AI_Native_Semantic_Pilot_Notes.md ./
 COPY AI_Native_Semantic_Workflow.md ./
 COPY AI_Native_Semantic_Programming_Platform.md ./
 
@@ -27,13 +26,14 @@ ENV MCP_TRANSPORT_MODE=http
 ENV PORT=3000
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash curl unzip zip openjdk-17-jre-headless \
+  && apt-get install -y --no-install-recommends bash curl tar unzip zip openjdk-17-jre-headless \
   && rm -rf /var/lib/apt/lists/*
 
-ENV SDKMAN_DIR=/root/.sdkman
-RUN bash -lc 'curl -s "https://get.sdkman.io" | bash'
-RUN bash -lc 'source "$SDKMAN_DIR/bin/sdkman-init.sh" && yes | sdk install jqassistant'
-RUN printf '#!/bin/sh\nexec /root/.sdkman/candidates/jqassistant/current/bin/jqassistant "$@"\n' > /usr/local/bin/jqassistant && chmod +x /usr/local/bin/jqassistant
+COPY docker/jqassistant.zip /tmp/jqa.zip
+RUN unzip /tmp/jqa.zip -d /opt \
+  && mv /opt/jqassistant-commandline-neo4jv5-2.9.1 /opt/jqassistant \
+  && ln -s /opt/jqassistant/bin/jqassistant.sh /usr/local/bin/jqassistant \
+  && rm /tmp/jqa.zip
 
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
@@ -43,7 +43,6 @@ COPY --from=build /app/docs ./docs
 COPY --from=build /app/reference-projects ./reference-projects
 COPY --from=build /app/README.md ./
 COPY --from=build /app/AI_Native_Semantic_Pilot_Spec.md ./
-COPY --from=build /app/AI_Native_Semantic_Pilot_Notes.md ./
 COPY --from=build /app/AI_Native_Semantic_Workflow.md ./
 COPY --from=build /app/AI_Native_Semantic_Programming_Platform.md ./
 

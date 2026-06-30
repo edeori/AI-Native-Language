@@ -8,6 +8,7 @@ import {
   readAgentorModelsConfig,
   writeAgentorModelsConfig,
   type AgentorModelsConfig,
+  type CloudAgentKind,
   type LocalAgentConfig,
   type LocalAgentConfigKey,
 } from '@ai-native/semantic-shared';
@@ -699,6 +700,10 @@ function normalizeProvider(value: string): AgentorModelsConfig['provider'] {
   return value === 'ollama' ? value : 'none';
 }
 
+function normalizeCloudAgent(value: string): CloudAgentKind {
+  return value === 'claude' ? 'claude' : 'codex';
+}
+
 function normalizeCapability(value: string): AgentorModelsConfig['capability'] {
   return value === 'low' || value === 'high' ? value : 'normal';
 }
@@ -707,11 +712,13 @@ function normalizeSingleRoleInput(values: Record<string, unknown>, fallback: Loc
   return {
     enabled: typeof values.enabled === 'boolean' ? values.enabled : fallback.enabled,
     provider: normalizeProvider(String(values.provider ?? fallback.provider)),
+    cloudAgent: normalizeCloudAgent(String(values.cloudAgent ?? fallback.cloudAgent)),
     capability: normalizeCapability(String(values.capability ?? fallback.capability)),
     model: String(values.model ?? fallback.model).trim() || fallback.model,
     endpoint: String(values.endpoint ?? fallback.endpoint).trim() || fallback.endpoint,
     timeoutMs: positiveInteger(values.timeoutMs, fallback.timeoutMs),
     maxInputSize: positiveInteger(values.maxInputSize, fallback.maxInputSize),
+    autoMerge: typeof values.autoMerge === 'boolean' ? values.autoMerge : fallback.autoMerge,
     minConfidence: normalizeConfidence(values.minConfidence, fallback.minConfidence),
   };
 }

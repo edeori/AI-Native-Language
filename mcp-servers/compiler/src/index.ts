@@ -3,10 +3,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   generateCanonicalGraph,
   generateSpringBootSkeleton,
-  persistGeneratedSpringBootSkeleton,
   parseSemanticMarkdown,
   parseSemanticMarkdownFromFile,
   startMcpServer,
+  storeDownload,
 } from '@ai-native/semantic-shared';
 
 function createServer() {
@@ -18,10 +18,8 @@ function createServer() {
   const compileInputSchema = z.object({
     path: z.string().optional(),
     content: z.string().optional(),
-    outputDir: z.string().optional(),
     basePackage: z.string().optional(),
     artifactName: z.string().optional(),
-    persist: z.boolean().optional().default(true),
   });
 
   server.registerTool(
@@ -146,30 +144,17 @@ Naming: \`V1__init.sql\`, \`V2__add_user_table.sql\`
   server.registerTool(
     'generate_spring_boot_skeleton',
     {
-      description: 'Generate a limited Java 17+ Spring Boot skeleton from the canonical graph model.',
+      description: 'Generate a limited Java 17+ Spring Boot skeleton from the canonical graph model. Returns a downloadPath (e.g. /download/uuid.tar.gz) — combine with this server\'s base URL to download the archive: curl "<base-url><downloadPath>" | tar -xz -C <target-dir>',
       inputSchema: compileInputSchema,
     },
-    async ({ path, content, outputDir, basePackage, artifactName, persist }) => {
+    async ({ path, content, basePackage, artifactName }) => {
       const document = content ? parseSemanticMarkdown(content, path) : await parseSemanticMarkdownFromFile(path ?? '');
       const graph = generateCanonicalGraph(document);
-      const generated = generateSpringBootSkeleton(graph, { outputDir, basePackage, artifactName });
+      const generated = generateSpringBootSkeleton(graph, { basePackage, artifactName });
 
-      const files = generated.files.map((file) => ({
-        path: file.path,
-        contentPreview: file.content.slice(0, 1200),
-      }));
-
-      let artifactRoot: string | undefined;
-      let manifestPath: string | undefined;
-      if (persist !== false) {
-        artifactRoot = generated.outputDir;
-        const persistResult = await persistGeneratedSpringBootSkeleton(
-          generated,
-          artifactName || graph.metadata.title || 'generated-application',
-          undefined,
-        );
-        manifestPath = persistResult.manifestPath;
-      }
+      const downloadId = storeDownload(
+        generated.files.map((f) => ({ path: f.path, content: f.content })),
+      );
 
       return {
         content: [
@@ -177,10 +162,8 @@ Naming: \`V1__init.sql\`, \`V2__add_user_table.sql\`
             type: 'text',
             text: JSON.stringify(
               {
-                artifactRoot,
-                manifestPath,
-                outputDir: generated.outputDir,
-                files,
+                downloadPath: `/download/${downloadId}.tar.gz`,
+                files: generated.files.map((f) => ({ path: f.path, size: f.content.length })),
                 graph,
               },
               null,

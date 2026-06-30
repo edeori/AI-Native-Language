@@ -359,33 +359,3 @@ export function generateSpringBootSkeleton(
 
   return { outputDir, files };
 }
-
-export async function persistGeneratedSpringBootSkeleton(
-  generated: GeneratedArtifactSet,
-  artifactName: string,
-  workspaceRoot?: string,
-): Promise<{ manifestPath: string; writtenFiles: string[] }> {
-  const root = getWorkspaceRoot(workspaceRoot);
-  const writtenFiles: string[] = [];
-  for (const file of generated.files) {
-    await writeTextFile(file.path, file.content);
-    writtenFiles.push(file.path);
-  }
-
-  const safeManifestName = normalizeArtifactName(artifactName, 'generated-application', 64).toLowerCase();
-  const manifestPath = join(root, '.ai-native', 'generated', `${safeManifestName}.json`);
-  await writeTextFile(
-    manifestPath,
-    JSON.stringify(
-      {
-        artifactName,
-        outputDir: generated.outputDir,
-        files: generated.files.map((file) => file.path),
-      },
-      null,
-      2,
-    ),
-  );
-
-  return { manifestPath, writtenFiles };
-}
