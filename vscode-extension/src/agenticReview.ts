@@ -559,28 +559,61 @@ async function resolveProviderCli(
   mcpServers?: Record<string, string>,
 ): Promise<{ command: string; args: string[]; stdin?: string; provider: AgenticReviewContext['provider']; cleanup?: () => Promise<void> } | undefined> {
   switch (provider) {
-    case 'codex':
+    case 'codex': {
+      const codexCmd = resolveExecutablePath('codex') ?? 'codex';
+      const codexCaps = await probeCaps(codexCmd);
       return {
-        command: resolveExecutablePath('codex') ?? 'codex',
+        command: codexCmd,
         args: [
           'exec',
-          '--skip-git-repo-check',
-          '--sandbox',
-          'workspace-write',
-          ...(workspaceRoot ? ['--cd', workspaceRoot] : []),
-          '--model',
-          model || 'gpt-5.5',
+          ...(codexCaps.has('skip-git-repo-check') ? ['--skip-git-repo-check']              : []),
+          ...(codexCaps.has('sandbox')             ? ['--sandbox', 'workspace-write']        : []),
+          ...(workspaceRoot                        ? ['--cd', workspaceRoot]                 : []),
+          '--model', model || 'gpt-5.5',
           '--json',
           '-',
         ],
         stdin: prompt,
         provider,
       };
+    }
     case 'claude':
       return buildClaudeInvocation(model, prompt, workspaceRoot, mcpServers);
     default:
       return undefined;
   }
+}
+
+// ── CLI capability cache ─────────────────────────────────────────
+// Probed once per process lifetime via `--help` output.
+
+const cliCapCache = new Map<string, Set<string>>();
+
+async function probeCaps(command: string): Promise<Set<string>> {
+  const cached = cliCapCache.get(command);
+  if (cached) return cached;
+  const caps = new Set<string>();
+  try {
+    const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve) => {
+      const child = spawn(command, ['--help'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '', err = '';
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', (c: string) => { out += c; });
+      child.stderr.on('data', (c: string) => { err += c; });
+      child.on('close', () => resolve({ stdout: out, stderr: err }));
+      child.on('error', () => resolve({ stdout: out, stderr: err }));
+    });
+    const helpText = stdout + stderr;
+    if (helpText.includes('--dangerously-skip-permissions')) caps.add('dangerously-skip-permissions');
+    if (helpText.includes('--output-format'))               caps.add('output-format');
+    if (helpText.includes('--mcp-config'))                  caps.add('mcp-config');
+    if (helpText.includes('--verbose'))                     caps.add('verbose');
+    if (helpText.includes('--skip-git-repo-check'))         caps.add('skip-git-repo-check');
+    if (helpText.includes('--sandbox'))                     caps.add('sandbox');
+  } catch { /* command not found — caps stays empty */ }
+  cliCapCache.set(command, caps);
+  return caps;
 }
 
 async function buildClaudeInvocation(
@@ -590,9 +623,10 @@ async function buildClaudeInvocation(
   mcpServers?: Record<string, string>,
 ): Promise<{ command: string; args: string[]; stdin?: string; provider: 'claude'; cleanup?: () => Promise<void> } | undefined> {
   const command = resolveExecutablePath('claude') ?? 'claude';
+  const caps = await probeCaps(command);
 
   let mcpConfigPath: string | undefined;
-  if (mcpServers && Object.keys(mcpServers).length > 0) {
+  if (mcpServers && Object.keys(mcpServers).length > 0 && caps.has('mcp-config')) {
     const config = {
       mcpServers: Object.fromEntries(
         Object.entries(mcpServers).map(([name, url]) => [name, { type: 'http', url }]),
@@ -607,13 +641,11 @@ async function buildClaudeInvocation(
     provider: 'claude',
     args: [
       '-p',
-      '--verbose',
-      '--dangerously-skip-permissions',
-      '--output-format',
-      'stream-json',
-      '--model',
-      model || 'sonnet',
-      ...(mcpConfigPath ? ['--mcp-config', mcpConfigPath] : []),
+      ...(caps.has('verbose')                      ? ['--verbose']                              : []),
+      ...(caps.has('dangerously-skip-permissions') ? ['--dangerously-skip-permissions']         : []),
+      ...(caps.has('output-format')               ? ['--output-format', 'stream-json']         : []),
+      '--model', model || 'sonnet',
+      ...(mcpConfigPath                           ? ['--mcp-config', mcpConfigPath]            : []),
     ],
     stdin: prompt,
     cleanup: async () => {
@@ -652,7 +684,10 @@ function executeCli(command: string, args: string[], prompt: string, cwd?: strin
     });
     child.on('close', (code) => {
       clearTimeout(timeout);
-      if (code === 0) {
+      // Resolve if stdout has content — some CLI versions exit non-zero even on success
+      // (e.g. Claude with --verbose emits warnings, Codex on partial tool failures).
+      // Only hard-fail when stdout is empty AND exit code is non-zero.
+      if (code === 0 || stdout.trim()) {
         resolve({ stdout, stderr });
       } else {
         reject(new Error(`Command ${command} exited with code ${code}. ${stderr.trim()}`.trim()));

@@ -58,9 +58,7 @@ services:
   jqassistant:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.mcp
-      args:
-        SERVICE: jqassistant
+      dockerfile: docker/Dockerfile.jqassistant
     environment:
       MCP_TRANSPORT_MODE: http
       MCP_PATH: /mcp
