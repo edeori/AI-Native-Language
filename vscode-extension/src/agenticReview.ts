@@ -69,6 +69,8 @@ export interface AgenticReviewContext {
   artifactDir?: string;
   artifactName?: string;
   semanticSource: string;
+  /** MCP servers to expose to the Claude CLI subprocess (name → http URL) */
+  mcpServers?: Record<string, string>;
   javaAstCatalog?: JavaAstFile[];
   codeKnowledgeGraph?: CodeKnowledgeGraph;
   expectationDocuments?: Array<{ path: string; content: string }>;
@@ -194,7 +196,7 @@ export async function runAgenticReviewBundle(
 export async function runCloudRawPrompt(context: AgenticReviewContext, prompt: string, onChunk?: (raw: string) => void): Promise<string> {
   if (context.mode === 'cli') {
     const cwd = context.workspaceRoot ?? path.dirname(context.sourcePath);
-    const cli = await resolveProviderCli(context.provider, context.model, prompt, cwd);
+    const cli = await resolveProviderCli(context.provider, context.model, prompt, cwd, context.mcpServers);
     if (!cli) return '';
     try {
       const output = await executeCli(cli.command, cli.args, cli.stdin ?? '', cwd, onChunk);
@@ -554,6 +556,7 @@ async function resolveProviderCli(
   model: string,
   prompt: string,
   workspaceRoot?: string,
+  mcpServers?: Record<string, string>,
 ): Promise<{ command: string; args: string[]; stdin?: string; provider: AgenticReviewContext['provider']; cleanup?: () => Promise<void> } | undefined> {
   switch (provider) {
     case 'codex':
@@ -574,7 +577,7 @@ async function resolveProviderCli(
         provider,
       };
     case 'claude':
-      return buildClaudeInvocation(model, prompt, workspaceRoot);
+      return buildClaudeInvocation(model, prompt, workspaceRoot, mcpServers);
     default:
       return undefined;
   }
@@ -584,8 +587,21 @@ async function buildClaudeInvocation(
   model: string,
   prompt: string,
   workspaceRoot?: string,
+  mcpServers?: Record<string, string>,
 ): Promise<{ command: string; args: string[]; stdin?: string; provider: 'claude'; cleanup?: () => Promise<void> } | undefined> {
   const command = resolveExecutablePath('claude') ?? 'claude';
+
+  let mcpConfigPath: string | undefined;
+  if (mcpServers && Object.keys(mcpServers).length > 0) {
+    const config = {
+      mcpServers: Object.fromEntries(
+        Object.entries(mcpServers).map(([name, url]) => [name, { type: 'http', url }]),
+      ),
+    };
+    mcpConfigPath = path.join(os.tmpdir(), `ai-native-mcp-${Date.now()}.json`);
+    await fs.writeFile(mcpConfigPath, JSON.stringify(config), 'utf8');
+  }
+
   return {
     command,
     provider: 'claude',
@@ -596,10 +612,11 @@ async function buildClaudeInvocation(
       'stream-json',
       '--model',
       model || 'sonnet',
+      ...(mcpConfigPath ? ['--mcp-config', mcpConfigPath] : []),
     ],
     stdin: prompt,
     cleanup: async () => {
-      // no-op
+      if (mcpConfigPath) await fs.unlink(mcpConfigPath).catch(() => undefined);
     },
   };
 }

@@ -9,6 +9,7 @@ const execAsync = promisify(exec);
 interface AssembledContext {
   prompt: string;
   directionPath: string;
+  isCreating: boolean;
 }
 
 export async function assemblePrompt(
@@ -20,7 +21,9 @@ export async function assemblePrompt(
 ): Promise<AssembledContext> {
   const topics = detectTopics(direction);
 
-  const [semanticSections, graphSlice, docEntities, memory, fileIndex, projectOverview, dbSchema, layerCtx, moduleCtx] = await Promise.all([
+  const needsConventions = topics.isCreating;
+
+  const [semanticSections, graphSlice, docEntities, memory, fileIndex, projectOverview, dbSchema, layerCtx, moduleCtx, conventions] = await Promise.all([
     topics.isSimple || topics.isConfig ? Promise.resolve('') : readSemanticSections(artifactRoot, direction),
     topics.isConfig ? Promise.resolve('') : readGraphSlice(artifactRoot, direction, topics.isSimple || topics.isBugFix ? 10 : 15),
     topics.isSimple || topics.isConfig ? Promise.resolve('') : readDocEntities(artifactRoot, direction),
@@ -30,12 +33,13 @@ export async function assemblePrompt(
     topics.isDb     ? readDatabaseSchema(artifactRoot)             : Promise.resolve(''),
     topics.isLayer  ? readLayerContext(artifactRoot, direction)     : Promise.resolve(''),
     topics.isModule ? readModuleComponents(artifactRoot, direction) : Promise.resolve(''),
+    needsConventions ? readStructuralConventions(artifactRoot)     : Promise.resolve(''),
   ]);
 
   const prompt = buildPrompt({
     taskId, direction, workspaceRoot, topics,
     semanticSections, graphSlice, docEntities, memory, fileIndex,
-    projectOverview, dbSchema, layerCtx, moduleCtx,
+    projectOverview, dbSchema, layerCtx, moduleCtx, conventions,
   });
 
   const contextSummary = [
@@ -54,15 +58,18 @@ export async function assemblePrompt(
       dbSchema          ? 'db-schema ✓'  : '',
       layerCtx          ? 'layers ✓'     : '',
       moduleCtx         ? 'modules ✓'    : '',
+      conventions       ? 'conventions ✓': '',
     ].filter(Boolean).join('  ')}`,
     `Topics: ${[
-      topics.isSimple ? 'simple' : '',
-      topics.isTest   ? 'test'   : '',
-      topics.isBugFix ? 'bugfix' : '',
-      topics.isConfig ? 'config' : '',
-      topics.isDb     ? 'db'     : '',
-      topics.isLayer  ? 'layer'  : '',
-      topics.isModule ? 'module' : '',
+      topics.isSimple   ? 'simple'   : '',
+      topics.isTest     ? 'test'     : '',
+      topics.isBugFix   ? 'bugfix'   : '',
+      topics.isConfig   ? 'config'   : '',
+      topics.isCreating ? 'creating' : '',
+      topics.isApi      ? 'api'      : '',
+      topics.isDb       ? 'db'       : '',
+      topics.isLayer    ? 'layer'    : '',
+      topics.isModule   ? 'module'   : '',
     ].filter(Boolean).join(', ') || 'standard'}`,
     `Prompt chars: ~${prompt.length}`,
     `Timestamp: ${new Date().toISOString()}`,
@@ -71,7 +78,7 @@ export async function assemblePrompt(
   const directionPath = path.join(runDirectory, 'direction.md');
   await fs.writeFile(directionPath, contextSummary, 'utf8');
 
-  return { prompt, directionPath };
+  return { prompt, directionPath, isCreating: topics.isCreating || topics.isApi };
 }
 
 // ── Topic detection ──────────────────────────────────────────────
@@ -81,6 +88,8 @@ interface Topics {
   isTest: boolean;
   isBugFix: boolean;
   isConfig: boolean;
+  isCreating: boolean;
+  isApi: boolean;
   isDb: boolean;
   isLayer: boolean;
   isModule: boolean;
@@ -90,13 +99,15 @@ function detectTopics(direction: string): Topics {
   const lower = direction.toLowerCase();
   const has = (words: string[]) => words.some(w => lower.includes(w));
   return {
-    isSimple: has(['comment', 'komment', 'javadoc', 'rename', 'format', 'typo', 'whitespace', 'indent', 'értelmező', 'leírás csak', 'csak komment']),
-    isTest:   has(['test', 'teszt', 'junit', 'spec', 'assert', 'mock', 'stub', 'unittes', 'integrációs teszt']),
-    isBugFix: has(['fix', 'hiba', 'bug', 'hibás', 'broken', 'npe', 'exception', 'javít', 'crash', 'error']),
-    isConfig: has(['config', 'configuration', 'property', 'properties', 'yml', 'yaml', 'env', 'beállítás', 'konfig']),
-    isDb:     has(['entity', 'entities', 'table', 'schema', 'database', 'migration', 'repository', 'jpa', 'hibernate', 'sql', 'persist', 'column']),
-    isLayer:  has(['layer', 'api', 'controller', 'service', 'persistence', 'endpoint', 'interface', 'rest']),
-    isModule: has(['module', 'service', 'common', 'persistence', 'web', 'app', 'component']),
+    isSimple:   has(['comment', 'komment', 'javadoc', 'rename', 'átnevez', 'format', 'typo', 'whitespace', 'indent', 'értelmező', 'leírás csak', 'csak komment', 'csak átnevez']),
+    isTest:     has(['test', 'teszt', 'junit', 'assert', 'mock', 'stub', 'egységteszt', 'integrációs teszt', 'tesztelés', 'tesztet írj', 'tesztet kell']),
+    isBugFix:   has(['fix', 'hiba', 'bug', 'hibás', 'broken', 'npe', 'exception', 'javít', 'crash', 'error', 'nem működik', 'elromlo', 'stacktrace', 'elszáll']),
+    isConfig:   has(['config', 'configuration', 'property', 'properties', 'yml', 'yaml', 'env', 'beállítás', 'konfig', 'környezeti változó', 'application.yaml', 'application.yml']),
+    isCreating: has(['new', 'új', 'create', 'létrehoz', 'hozz létre', 'add new', 'implement', 'implementálj', 'generate', 'scaffold', 'modul', 'module', 'service hozzáadás', 'fejlessz', 'csináld meg', 'build new', 'new module', 'new service', 'új osztály', 'új modul', 'készíts', 'készítsd el', 'fejleszd', 'valósítsd meg', 'írd meg']),
+    isApi:      has(['openapi', 'yaml', 'endpoint', 'végpont', 'dto', 'rest api', 'api spec', 'api leíró', 'api specifikáció', 'swagger', 'new endpoint', 'új endpoint', 'új végpont', 'végpontot', 'request body', 'response schema', 'path param', 'controller', 'api definíció', 'api yaml', 'api-t bővít', 'api-hoz', 'endpointot', 'dto-t', 'kérés séma', 'válasz séma', 'útvonal']),
+    isDb:       has(['entity', 'entities', 'table', 'tábla', 'schema', 'database', 'adatbázis', 'migration', 'migráció', 'repository', 'jpa', 'hibernate', 'sql', 'persist', 'column', 'oszlop', 'adatmodell', 'rekord']),
+    isLayer:    has(['layer', 'réteg', 'api', 'controller', 'vezérlő', 'service', 'persistence', 'endpoint', 'végpont', 'interface', 'rest']),
+    isModule:   has(['module', 'modul', 'service', 'common', 'persistence', 'web', 'app', 'component', 'komponens']),
   };
 }
 
@@ -278,6 +289,18 @@ async function readFileIndex(artifactRoot: string, workspaceRoot: string, direct
   return parts.join('\n\n');
 }
 
+// ── Structural conventions ───────────────────────────────────────
+// General conventions are served by the MCP tool `get_maven_project_conventions`.
+// This function only reads a project-specific override file if present.
+
+async function readStructuralConventions(artifactRoot: string): Promise<string> {
+  try {
+    const override = await fs.readFile(path.join(artifactRoot, 'development', 'conventions.md'), 'utf8');
+    if (override.trim()) return override.trim();
+  } catch { /* no project-specific override */ }
+  return '';
+}
+
 // ── Project overview ─────────────────────────────────────────────
 
 async function readProjectOverview(artifactRoot: string): Promise<string> {
@@ -375,14 +398,20 @@ function buildPrompt(p: {
   dbSchema: string;
   layerCtx: string;
   moduleCtx: string;
+  conventions: string;
 }): string {
   const s: string[] = [];
   const { topics } = p;
 
   // ── Stable prefix (cache-friendly: same across tasks for the same project) ──
-  s.push(`You are an AI coding agent implementing a task in the repository at \`${p.workspaceRoot}\`.\nWork ONLY inside that path. Do NOT commit or push anything.\nWrite a report.md in the task run directory when done.`);
+  const hints: string[] = [];
+  if (topics.isCreating) hints.push('When creating new modules, classes, or packages: call MCP tool `get_maven_project_conventions` to get the canonical module layout, package naming, dependency chain, and version rules.');
+  if (topics.isApi)      hints.push('When writing or extending OpenAPI YAML, DTOs, or REST endpoints: call MCP tool `get_openapi_yaml_conventions` to get the canonical URL, schema naming, and response structure rules.');
+  const hintBlock = hints.length > 0 ? '\n' + hints.join('\n') : '';
+  s.push(`You are an AI coding agent implementing a task in the repository at \`${p.workspaceRoot}\`.\nWork ONLY inside that path. Do NOT commit or push anything.\nWrite a report.md in the task run directory when done.${hintBlock}`);
 
   if (p.projectOverview) s.push(`## Project overview\n\n${p.projectOverview}`);
+  if (p.conventions)     s.push(`## Project-specific conventions\n\n${p.conventions}`);
   if (p.semanticSections) s.push(`## Semantic context\n\n${p.semanticSections}`);
   if (p.dbSchema)         s.push(`## Database schema\n\n${p.dbSchema}`);
   if (p.layerCtx)         s.push(`## Architecture layers\n\n${p.layerCtx}`);

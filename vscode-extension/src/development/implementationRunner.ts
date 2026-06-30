@@ -33,7 +33,7 @@ export async function runImplementationTask(
   await onStateChange(task.taskId);
 
   try {
-    const { prompt, directionPath } = await assemblePrompt(
+    const { prompt, directionPath, isCreating } = await assemblePrompt(
       artifactRoot,
       task.taskId,
       task.direction,
@@ -55,6 +55,7 @@ export async function runImplementationTask(
       artifactName: task.taskId,
       artifactDir: taskRunDir,
       semanticSource: '',
+      mcpServers: isCreating ? { compiler: config.compilerUrl } : undefined,
     };
 
     outputChannel.appendLine(`[development] calling ${config.reviewProvider} (${config.reviewModel})…`);
