@@ -1,28 +1,30 @@
-# 6. AI Review (opcionális)
+# 6. AI Analízis — ✦ Analyze with AI
 
-**Hol:** `documentImportView.ts` → `commandIds.runAiEnrichment` → `runAiEnrichment()` az `extension.ts`-ben
+**Hol:** Document Import panel → **✦ Analyze with AI** gomb, vagy Command Palette: `AI Native: Analyze Imported Documents with AI`
 
-## Mikor fut le
+## Mikor érdemes futtatni
 
-Ha a Document Import panelen be van jelölve az **AI Review** checkbox, az import végén — miután a `source.semantic.md` és `doc-entities.json` kiírásra kerültek — az extension automatikusan lefuttatja a cloud AI enrichment passt.
+Az **▶ Import Documents** gomb lefutása után — vagy bármikor, ha a `.ai-native/imports/` mappában vannak `.md` fájlok és frissíteni akarod a `source.semantic.md`-t.
 
-## Mit csinál
+Az analízis **függetlenül futtatható** az import lépéstől: ha korábban már importáltál dokumentumokat és azok megvannak az `imports/` mappában, a gomb azokat is fel tudja dolgozni.
 
-Az `runAiEnrichment` command `cloudEnabled: true` módban fut:
+## Konfiguráció szükséglete
 
-1. Beolvassa a frissen írt `.ai-native/source.semantic.md`-t
-2. Betölti a validation policy-t a `validator` MCP szerverről (`get_validation_policy`)
-3. Felépít egy review prompt bundle-t a `semanticCore`-tól (`generate_review_prompt_bundle`) — ez tartalmazza az architecture, flow, data model, consistency és merge promptokat
-4. Lefuttatja a `runAgenticReviewBundle`-t a konfigurált AI providerrel (Claude vagy Codex)
+A parancs a Settings panelen beállított **AI Review Provider**-t használja (Claude CLI vagy endpoint). Ha nincs AI provider konfigurálva, a parancs figyelmeztetést jelenít meg.
 
-## Mit nem csinál
+## Mit ad vissza
 
-Ez a lépés **nem írja vissza** a `source.semantic.md`-t — az enrichment eredménye csak artifact-ként kerül elmentésre. Célja a semantic leírás minőségének cloud AI-val való értékelése, nem automatikus felülírása.
+Claude az összes importált dokumentumból egy teljes `source.semantic.md`-t ír, amely tartalmazza:
+- Az összes megtalált komponenst, modult, adatbázis táblát
+- Az összes REST API endpointot és event topicot
+- Az összes flow-t, folyamatot, migrációs lépést, részletesen
+- Az adatokat és azok mozgását a rendszerben
+- Az összes külső függőséget
 
-## Konfiguráció
+Ha már létezik `source.semantic.md`, Claude azt is megkapja és kibővíti — nem törli a meglévő tartalmat.
 
-Az AI provider és modell a Settings panelen konfigurálható (Settings → AI Review Provider). Ugyanaz a konfiguráció, amit a Flow panel többi cloud AI lépése is használ.
+## Kapcsolat a régi "AI Review" checkbox-szal
 
-## Ha nincs bejelölve
+A régi flow-ban volt egy **AI Review** checkbox az Import panelen, ami az import végén automatikusan lefuttatta a kódgráf AI enrichmentjét (`runAiEnrichment`). Ez a checkbox **el lett távolítva** — a kódgráf enrichment csak a source import flow-ban releváns, nem a dokumentum importnál.
 
-Ha az AI Review nincs bejelölve, az import a `doc-entities.json` és `source.semantic.md` írásával véget ér. A cloud AI pass később manuálisan is lefuttatható a Flow panel **Semantic Enrichment** lépésével.
+Az **✦ Analyze with AI** gomb teljesen más logika: kifejezetten az importált dokumentumok szöveges tartalmát dolgozza fel Claude-dal, és abból ír `source.semantic.md`-t.

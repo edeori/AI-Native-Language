@@ -337,6 +337,9 @@ function inferTableNameFromExplicitSchemaItem(item: string): string | undefined 
   if (nameMatch?.[1]) return normalizeHint(nameMatch[1]);
   const explicitMatch = item.match(/^\s*-\s*([a-zA-Z0-9_."`-]+)\s*(?:\(|\||$)/);
   if (explicitMatch?.[1]) return normalizeHint(explicitMatch[1]);
+  // bold markdown format: **table_name**: columns...
+  const boldMatch = item.match(/^\*\*([a-zA-Z0-9_."`-]+)\*\*\s*:/);
+  if (boldMatch?.[1]) return normalizeHint(boldMatch[1]);
   return inferTableNameFromText(item);
 }
 

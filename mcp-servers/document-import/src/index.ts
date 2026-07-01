@@ -194,6 +194,8 @@ function detectDocKind(sections: DocSection[], entities: {
 
 // ─── Semantic patch builder ────────────────────────────────────────────────
 
+const FULL_CONTENT_LIMIT = 12000;
+
 function buildSemanticPatch(params: {
   docTitle: string;
   docKind: DocKind;
@@ -203,22 +205,13 @@ function buildSemanticPatch(params: {
   dataModels: string[];
   techStack: string[];
   sections: DocSection[];
+  fullMarkdown?: string;
 }): string {
-  const { docTitle, components, flows, apis, dataModels, techStack, sections } = params;
+  const { docTitle, components, flows, apis, dataModels, techStack, sections, fullMarkdown } = params;
   const lines: string[] = [];
-
-  // Pull full content of descriptive sections to use as context
-  const descSection = sections.find((s) =>
-    s.level <= 2 && /\b(overview|description|summary|introduction|background|purpose)\b/i.test(s.title)
-  );
 
   lines.push(`## Imported: ${docTitle}`);
   lines.push('');
-
-  if (descSection?.content) {
-    lines.push(descSection.content.split('\n').slice(0, 6).join('\n'));
-    lines.push('');
-  }
 
   if (components.length > 0) {
     lines.push('### Components & Modules');
@@ -254,6 +247,17 @@ function buildSemanticPatch(params: {
     lines.push('');
   }
 
+  // Include the full document text so downstream AI tools can extract meaning
+  // that regex heuristics miss (Hungarian text, domain-specific terminology, etc.)
+  if (fullMarkdown && fullMarkdown.trim().length > 50) {
+    const body = fullMarkdown.length > FULL_CONTENT_LIMIT
+      ? fullMarkdown.slice(0, FULL_CONTENT_LIMIT) + '\n… (truncated)'
+      : fullMarkdown;
+    lines.push('### Document Content');
+    lines.push(body.trim());
+    lines.push('');
+  }
+
   return lines.join('\n').trimEnd();
 }
 
@@ -285,8 +289,9 @@ function buildNewSemanticMd(params: {
   dataModels: string[];
   techStack: string[];
   sections: DocSection[];
+  fullMarkdown?: string;
 }): string {
-  const { docTitle, components, flows, apis, dataModels, techStack, sections } = params;
+  const { docTitle, components, flows, apis, dataModels, techStack, sections, fullMarkdown } = params;
 
   const overviewSection = sections.find((s) =>
     s.level <= 2 && /\b(overview|description|summary|introduction|background|purpose|system)\b/i.test(s.title)
@@ -340,6 +345,15 @@ function buildNewSemanticMd(params: {
     lines.push('');
   }
 
+  if (fullMarkdown && fullMarkdown.trim().length > 50) {
+    const body = fullMarkdown.length > FULL_CONTENT_LIMIT
+      ? fullMarkdown.slice(0, FULL_CONTENT_LIMIT) + '\n… (truncated)'
+      : fullMarkdown;
+    lines.push(`# document_content`);
+    lines.push(body.trim());
+    lines.push('');
+  }
+
   return lines.join('\n');
 }
 
@@ -361,7 +375,7 @@ function analyzeDocumentForSemantic(params: {
   const techStack = extractTechStack(markdown);
   const docKind = detectDocKind(sections, { components, flows, apis });
 
-  const patch = buildSemanticPatch({ docTitle, docKind, components, flows, apis, dataModels, techStack, sections });
+  const patch = buildSemanticPatch({ docTitle, docKind, components, flows, apis, dataModels, techStack, sections, fullMarkdown: markdown });
 
   let mergedSemanticMd: string;
   let mode: 'create' | 'enrich';
@@ -369,7 +383,7 @@ function analyzeDocumentForSemantic(params: {
     mergedSemanticMd = mergeIntoExisting(existingSemanticMd, patch, docTitle);
     mode = 'enrich';
   } else {
-    mergedSemanticMd = buildNewSemanticMd({ docTitle, docKind, components, flows, apis, dataModels, techStack, sections });
+    mergedSemanticMd = buildNewSemanticMd({ docTitle, docKind, components, flows, apis, dataModels, techStack, sections, fullMarkdown: markdown });
     mode = 'create';
   }
 
@@ -396,14 +410,16 @@ function createServer(): McpServer {
     sourcePath: z.string().optional(),
     outputDir: z.string().optional(),
     content: z.string().optional(),
+    contentBase64: z.string().optional(),
+    fileName: z.string().optional(),
     format: z.enum(['doc', 'docx', 'pdf', 'html', 'txt', 'md']).optional(),
     confluenceUrl: z.string().optional(),
     confluenceToken: z.string().optional(),
     confluenceUser: z.string().optional(),
     confluenceApiToken: z.string().optional(),
     persist: z.boolean().optional().default(false),
-  }).refine((value) => Boolean(value.sourcePath || value.content || value.confluenceUrl), {
-    message: 'Provide sourcePath, content, or confluenceUrl.',
+  }).refine((value) => Boolean(value.sourcePath || value.content || value.contentBase64 || value.confluenceUrl), {
+    message: 'Provide sourcePath, content, contentBase64, or confluenceUrl.',
   });
 
   server.registerTool(
@@ -413,8 +429,13 @@ function createServer(): McpServer {
       inputSchema: convertInputSchema,
     },
     async (input) => {
-      const result = await importDocument(input);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      try {
+        const result = await importDocument(input);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }] };
+      }
     },
   );
 
@@ -435,8 +456,13 @@ function createServer(): McpServer {
       }),
     },
     async (input) => {
-      const result = await importConfluencePage(input);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      try {
+        const result = await importConfluencePage(input);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: msg }) }] };
+      }
     },
   );
 
@@ -513,14 +539,29 @@ function createServer(): McpServer {
 async function importDocument(input: Record<string, unknown>): Promise<Record<string, unknown>> {
   const sourcePath = typeof input.sourcePath === 'string' ? input.sourcePath : undefined;
   const content = typeof input.content === 'string' ? input.content : undefined;
+  const contentBase64 = typeof input.contentBase64 === 'string' ? input.contentBase64 : undefined;
+  const fileName = typeof input.fileName === 'string' ? input.fileName : undefined;
   const explicitFormat = typeof input.format === 'string' ? input.format as ImportKind : undefined;
   const persist = input.persist !== false;
   const outputDir = typeof input.outputDir === 'string' ? input.outputDir : undefined;
 
-  const kind = explicitFormat ?? detectKind(sourcePath);
-  const extracted = content ?? (sourcePath ? await extractDocumentText(sourcePath, kind) : '');
-  const markdown = normalizeToMarkdown(extracted, sourcePath ?? 'inline-content');
-  const baseName = path.basename(sourcePath ?? 'imported-document', path.extname(sourcePath ?? ''));
+  // Resolve the effective file name for kind detection and output naming
+  const effectivePath = sourcePath ?? fileName;
+  const kind = explicitFormat ?? detectKind(effectivePath);
+
+  let extracted: string;
+  if (content !== undefined) {
+    extracted = content;
+  } else if (contentBase64 !== undefined) {
+    const buffer = Buffer.from(contentBase64, 'base64');
+    extracted = await extractDocumentTextFromBuffer(buffer, effectivePath ?? '', kind);
+  } else if (sourcePath) {
+    extracted = await extractDocumentText(sourcePath, kind);
+  } else {
+    extracted = '';
+  }
+  const markdown = normalizeToMarkdown(extracted, effectivePath ?? 'inline-content');
+  const baseName = path.basename(effectivePath ?? 'imported-document', path.extname(effectivePath ?? ''));
   const safeBase = sanitizeName(baseName || 'imported-document');
 
   let markdownPath: string | undefined;
@@ -573,30 +614,51 @@ async function importConfluencePage(input: Record<string, unknown>): Promise<Rec
 async function fetchConfluencePage(input: {
   pageUrl?: string; pageId?: string; baseUrl?: string; user?: string; token?: string;
 }): Promise<{ pageId?: string; title?: string; url?: string; body: string }> {
-  const url = resolveConfluenceApiUrl(input);
+  const resolvedInput = {
+    ...input,
+    baseUrl: input.baseUrl ?? process.env.CONFLUENCE_URL,
+  };
+  const url = resolveConfluenceApiUrl(resolvedInput);
   const headers: Record<string, string> = { accept: 'application/json' };
-  if (input.user && input.token) {
+  const pat = input.token && !input.user ? input.token : process.env.CONFLUENCE_PERSONAL_TOKEN;
+  if (pat) {
+    headers.authorization = `Bearer ${pat}`;
+  } else if (input.user && input.token) {
     headers.authorization = `Basic ${Buffer.from(`${input.user}:${input.token}`).toString('base64')}`;
   }
   const response = await fetch(url, { headers });
-  if (!response.ok) throw new Error(`Confluence returned ${response.status}`);
+  if (!response.ok) throw new Error(`Confluence returned ${response.status} for ${url}`);
   const json = await response.json() as any;
   return { pageId: json.id, title: json.title, url: json._links?.webui ? `${input.baseUrl ?? ''}${json._links.webui}` : input.pageUrl, body: extractConfluenceBody(json) };
 }
 
 function resolveConfluenceApiUrl(input: { pageUrl?: string; pageId?: string; baseUrl?: string }): string {
-  if (input.pageUrl) return input.pageUrl;
+  const expand = 'body.storage,body.view,version,space';
+  if (input.pageUrl) {
+    const match = input.pageUrl.match(/\/pages\/(\d+)/);
+    if (match) {
+      const pageId = match[1];
+      const baseUrl = input.pageUrl.replace(/\/(spaces|pages)\/.*$/, '');
+      return `${baseUrl}/rest/api/content/${pageId}?expand=${expand}`;
+    }
+    return input.pageUrl;
+  }
   if (!input.baseUrl || !input.pageId) throw new Error('Requires baseUrl and pageId when pageUrl is not provided.');
-  return `${input.baseUrl.replace(/\/$/, '')}/rest/api/content/${encodeURIComponent(input.pageId)}?expand=body.storage,version,space`;
+  return `${input.baseUrl.replace(/\/$/, '')}/rest/api/content/${encodeURIComponent(input.pageId)}?expand=${expand}`;
 }
 
 async function extractDocumentText(sourcePath: string, kind: ImportKind): Promise<string> {
   const buffer = await fs.readFile(sourcePath);
-  if (kind === 'pdf' || path.extname(sourcePath).toLowerCase() === '.pdf') {
+  return extractDocumentTextFromBuffer(buffer, sourcePath, kind);
+}
+
+async function extractDocumentTextFromBuffer(buffer: Buffer, nameHint: string, kind: ImportKind): Promise<string> {
+  const ext = path.extname(nameHint).toLowerCase();
+  if (kind === 'pdf' || ext === '.pdf') {
     const parsed = await pdfParse(buffer);
     return parsed.text?.trim() ?? '';
   }
-  if (kind === 'docx' || path.extname(sourcePath).toLowerCase() === '.docx') {
+  if (kind === 'docx' || ext === '.docx') {
     const result = await mammoth.extractRawText({ buffer });
     return result.value.trim();
   }
@@ -636,10 +698,44 @@ function buildWarnings(kind: ImportKind, extracted: string): string[] {
 }
 
 function extractConfluenceBody(json: any): string {
+  // Prefer rendered view HTML (no Confluence macros) over raw storage format
+  const viewHtml = json?.body?.view?.value;
+  if (typeof viewHtml === 'string' && viewHtml.length > 50) {
+    return viewHtml
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<th[^>]*>/gi, ' | ')
+      .replace(/<td[^>]*>/gi, ' | ')
+      .replace(/<tr[^>]*>/gi, '\n')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<\/h[1-6]>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#[0-9]+;/g, ' ')
+      .replace(/&[a-zA-Z]+;/g, ' ')
+      // Second pass after &amp; decode (e.g. &amp;lt; → &lt; → <)
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+  // Fall back to storage format: keep text inside macros, strip only the macro wrapper tags
   const storage = json?.body?.storage?.value;
   if (typeof storage === 'string') {
     return storage
-      .replace(/<ac:structured-macro[\s\S]*?<\/ac:structured-macro>/g, '')
+      .replace(/<ac:structured-macro[^>]*>/g, '')
+      .replace(/<\/ac:structured-macro>/g, '')
+      .replace(/<ac:parameter[^>]*>[\s\S]*?<\/ac:parameter>/g, '')
+      .replace(/<ac:rich-text-body[^>]*>/g, '')
+      .replace(/<\/ac:rich-text-body>/g, '')
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();

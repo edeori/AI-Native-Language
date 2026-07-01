@@ -77,6 +77,8 @@ services:
       MCP_TRANSPORT_MODE: http
       MCP_PATH: /mcp
       PORT: 3007
+      CONFLUENCE_URL: ${CONFLUENCE_URL:-}
+      CONFLUENCE_PERSONAL_TOKEN: ${CONFLUENCE_PERSONAL_TOKEN:-}
     restart: unless-stopped
     ports:
       - "3007:3007"

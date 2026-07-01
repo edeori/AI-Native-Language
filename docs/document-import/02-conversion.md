@@ -1,10 +1,12 @@
 # 2. Konverzió Markdownná
 
-**Hol:** `document-import` MCP szerver — `mcp-servers/document-import/src/index.ts`
+**Hol:** `document-import` MCP szerver (Docker) → de a fájlt az **extension írja a host fájlrendszerére**
 
-Minden item külön MCP hívással konvertálódik. Az eredmény mindig normalizált Markdown.
+Minden item külön MCP hívással konvertálódik. Az eredmény normalizált Markdown, amit az extension ment el helyben.
 
 ## Lokális fájl → `convert_document_to_markdown`
+
+A fájl tartalmát az extension beolvassa és base64-ben küldi az MCP szervernek (`contentBase64` + `fileName`) — a Docker container nem fér hozzá a host fájlrendszerhez, ezért nem `sourcePath`-ot kap.
 
 | Formátum | Feldolgozás |
 |---|---|
@@ -14,32 +16,27 @@ Minden item külön MCP hívással konvertálódik. Az eredmény mindig normaliz
 | `.html` / `.htm` | raw olvasás, HTML tagek eltávolítva |
 | `.md` / `.txt` | közvetlen olvasás |
 
-A nyers szövegből normalizált Markdown készül (`normalizeToMarkdown`):
-- `\r\n` → `\n`
-- hármas+ üressor → kettős üressor
-- `# <fájlnév>` fejléc a tetején
-
 ## Confluence oldal → `fetch_confluence_page`
 
-- Confluence REST API hívás: `GET /rest/api/content/{pageId}?expand=body.storage,version,space`
-- Ha csak URL áll rendelkezésre (nem pageId), az URL-t direkt kéri le
-- Basic Auth header ha `user` + `token` meg van adva
-- Structured macro blokkok eltávolítása (`<ac:structured-macro>`)
-- HTML tagek strip-elése, whitespace normalizálás
-- Ugyanaz a `normalizeToMarkdown` pass, mint a lokális fájloknál
+- Confluence REST API: `GET /rest/api/content/{pageId}?expand=body.storage,body.view,version,space`
+- Az URL-ből a numeric page ID-t extráktolja és REST API hívást épít belőle
+- Bearer token (Personal Access Token) a `CONFLUENCE_PERSONAL_TOKEN` env változóból vagy az extension által átadott `token` mezőből
+- **`body.view`** (renderelt HTML) — elsődleges forrás, macro-mentes
+- **`body.storage`** (Confluence Storage Format XML) — fallback, ha `body.view` üres
+- HTML strip: táblák, listák megtartva, entitások dekódolva
 
-## Persist — mindig megtörténik
+## Mentés — host fájlrendszeren
 
-Az MCP szerver **minden konverzió után automatikusan** menti a kimenetet a `.ai-native/imports/` alá (`persist` alapértéke `true`, az extension nem kapcsolja ki):
+Az extension a konvertált Markdown-t **közvetlenül a host fájlrendszerére** menti (nem Docker volume-on keresztül):
 
 ```
-.ai-native/imports/<name>.md               ← a Markdown verzió
-.ai-native/imports/<name>.txt              ← a nyers szöveg
-.ai-native/imports/<name>.import-manifest.json  ← metaadat
+.ai-native/imports/<safe-name>.md
 ```
 
-A manifest tartalmazza: forrás útvonal, formátum, Markdown path, szöveg path, figyelmeztetések (pl. PDF-ből nagyon kevés szöveg jött ki, `.doc` konverzió korlátozott).
+A `safe-name` Confluence oldalakból a page title-ből, fájloknál a fájlnévből képzett URL-safe string.
+
+> Az MCP szerver `persist: false` módban hívódik — a Docker container oldalán **nem** keletkeznek fájlok. Csak a `markdown` mező kerül vissza a válaszban, amit az extension ment el.
 
 ## Kimenet az extension felé
 
-A konvertált Markdown átadódik az [elemzési lépésnek](03-analysis.md). Az extension a `markdown` mezőt veszi át a válaszból — a `.ai-native/imports/` fájlokat nem olvassa vissza, azok archív másolatok.
+A konvertált Markdown visszakerül az extensionhez, ami `importsDir/<safe-name>.md`-be menti. Az import lefutása után az **✦ Analyze with AI** lépés ezeket a fájlokat olvassa be.

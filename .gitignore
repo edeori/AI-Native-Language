@@ -38,3 +38,7 @@ out
 .ai-native/generated/
 .ai-native/config/
 .ai-native/development/
+
+# local secrets — never commit
+.env
+docker/.env

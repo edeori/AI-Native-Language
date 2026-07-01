@@ -31,8 +31,9 @@ import {
   type JqassistantArtifact,
   type JavaAstFile,
 } from '@ai-native/semantic-shared';
-import { runAgenticPrompt, runAgenticReviewBundle, runCloudRawPrompt, type AgenticDiagramClassification, type AgenticReviewContext, type AgenticReviewResult, type ReviewPromptBundle } from './agenticReview.js';
+import { runAgenticPrompt, runAgenticReviewBundle, runCloudRawPrompt, CreditExhaustedError, type AgenticDiagramClassification, type AgenticReviewContext, type AgenticReviewResult, type ReviewPromptBundle } from './agenticReview.js';
 import { hashArtifactContent, readLatestVersionedArtifact, writeVersionedArtifact } from './versionedArtifacts.js';
+import { analyzeDocImports } from './docImportAnalysis.js';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const outputChannel = vscode.window.createOutputChannel('AI Native Semantic Workflow');
@@ -177,7 +178,11 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       await createSemanticSourceTemplate();
     }),
     vscode.commands.registerCommand(commandIds.importSourceProject, async (options?: { ollamaEnabled?: boolean; jqassistantEnabled?: boolean; sourceCloudEnabled?: boolean; enabledSteps?: string[] }) => {
-      await importSourceProject(context, diagnostics, registry, outputChannel, refreshViews, reconRunsProvider, undefined, options?.ollamaEnabled ?? true, options?.jqassistantEnabled ?? true, options?.enabledSteps, options?.sourceCloudEnabled ?? false);
+      try {
+        await importSourceProject(context, diagnostics, registry, outputChannel, refreshViews, reconRunsProvider, undefined, options?.ollamaEnabled ?? true, options?.jqassistantEnabled ?? true, options?.enabledSteps, options?.sourceCloudEnabled ?? false);
+      } catch (err) {
+        if (!handleCreditExhaustedError(err, outputChannel)) throw err;
+      }
     }),
     vscode.commands.registerCommand(commandIds.openTutorial, async () => {
       await openExampleSlice();
@@ -196,10 +201,18 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       await EndpointSummaryPanel.show(context);
     }),
     vscode.commands.registerCommand(commandIds.runFlowExtraction, async (opts?: { flowAiEnabled?: boolean }) => {
-      await runFlowExtraction(context, registry, outputChannel, refreshViews, flowProvider, opts?.flowAiEnabled ?? false);
+      try {
+        await runFlowExtraction(context, registry, outputChannel, refreshViews, flowProvider, opts?.flowAiEnabled ?? false);
+      } catch (err) {
+        if (!handleCreditExhaustedError(err, outputChannel)) throw err;
+      }
     }),
     vscode.commands.registerCommand(commandIds.runDocCodeAlignment, async () => {
-      await runDocCodeAlignment(context, registry, outputChannel, refreshViews);
+      try {
+        await runDocCodeAlignment(context, registry, outputChannel, refreshViews);
+      } catch (err) {
+        if (!handleCreditExhaustedError(err, outputChannel)) throw err;
+      }
     }),
     vscode.commands.registerCommand(commandIds.openDevelopmentView, async () => {
       try {
@@ -349,13 +362,26 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       await runValidation(context, diagnostics, registry, outputChannel, undefined, refreshViews);
     }),
     vscode.commands.registerCommand(commandIds.generateCanonicalGraph, async (options?: { aiReviewEnabled?: boolean }) => {
-      await runGraphGeneration(context, diagnostics, registry, outputChannel, undefined, refreshViews, options?.aiReviewEnabled ?? true);
+      try {
+        await runGraphGeneration(context, diagnostics, registry, outputChannel, undefined, refreshViews, options?.aiReviewEnabled ?? true);
+      } catch (err) {
+        if (!handleCreditExhaustedError(err, outputChannel)) throw err;
+      }
     }),
     vscode.commands.registerCommand(commandIds.runJqassistantScan, async () => {
       await runJqassistantScan(context, registry, outputChannel, refreshViews);
     }),
     vscode.commands.registerCommand(commandIds.runAiEnrichment, async (opts?: { ollamaEnabled?: boolean; cloudEnabled?: boolean }) => {
       await runAiEnrichment(reconRunsProvider, outputChannel, refreshViews, opts?.ollamaEnabled ?? false, opts?.cloudEnabled ?? true, registry);
+    }),
+    vscode.commands.registerCommand(commandIds.analyzeDocImports, async () => {
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!workspaceRoot) { vscode.window.showWarningMessage('Open a workspace first.'); return; }
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Analyzing imported documents with AI…', cancellable: false },
+        async () => analyzeDocImports({ workspaceRoot, outputChannel, registry }),
+      );
+      await refreshViews();
     }),
     vscode.commands.registerCommand(commandIds.openMarkdownArtifactPreview, async (resource?: vscode.Uri | string) => {
       await openMarkdownArtifactPreview(resource, outputChannel);
@@ -728,7 +754,7 @@ async function runGraphGeneration(
         return;
       }
       const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
-        content: source.getText(),
+        content: normalizeSemanticMdSections(source.getText()),
         policyText: validationPolicy,
         persist: true,
       });
@@ -1080,6 +1106,47 @@ function applyReviewToGraph(
   } as typeof graph;
 }
 
+function handleCreditExhaustedError(err: unknown, outputChannel: vscode.OutputChannel): boolean {
+  if (!(err instanceof CreditExhaustedError)) return false;
+  const msg = err.message || 'API credit or usage limit reached.';
+  outputChannel.appendLine(`[ai-native] CREDIT EXHAUSTED: ${msg}`);
+  outputChannel.show(true);
+  void vscode.window.showErrorMessage(`⛔ AI credit limit reached: ${msg}`, 'Open Claude.ai').then((action) => {
+    if (action === 'Open Claude.ai') void vscode.env.openExternal(vscode.Uri.parse('https://claude.ai'));
+  });
+  return true;
+}
+
+const KNOWN_SEMANTIC_SECTIONS = new Set([
+  'system', 'intent', 'context', 'interfaces', 'processes',
+  'data_flows', 'data_models', 'database_schema', 'rules',
+  'security', 'dependencies', 'examples', 'acceptance_criteria',
+]);
+
+// Convert H1-as-sections semantic.md format to H2-as-sections so parseSemanticMarkdown can read it.
+// Also renames data_models → database_schema for MCP compatibility.
+function normalizeSemanticMdSections(content: string): string {
+  const lines = content.split('\n');
+  const usesH1 = lines.some(line => {
+    const m = /^#\s+(\w[\w _-]*)\s*$/.exec(line.trim());
+    return !!m && KNOWN_SEMANTIC_SECTIONS.has(m[1].toLowerCase().replace(/[\s-]+/g, '_'));
+  });
+  if (!usesH1) return content;
+  return lines.map(line => {
+    const m = /^(#{1,5})\s+(.+)$/.exec(line);
+    if (!m) return line;
+    if (m[1].length === 1) {
+      const name = m[2].trim().toLowerCase().replace(/[\s-]+/g, '_');
+      if (KNOWN_SEMANTIC_SECTIONS.has(name) || name === 'data_models') {
+        const sectionTitle = name === 'data_models' ? 'database_schema' : m[2].trim();
+        return `## ${sectionTitle}`;
+      }
+      return line; // document title H1, keep
+    }
+    return `#${line}`; // H2→H3, H3→H4: becomes sub-content within the H2 section
+  }).join('\n');
+}
+
 async function openGraphPreview(
   context: vscode.ExtensionContext,
   registry: McpRegistry,
@@ -1126,7 +1193,7 @@ async function openGraphPreview(
     }
 
     const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
-      content: source.getText(),
+      content: normalizeSemanticMdSections(source.getText()),
       persist: false,
     });
     const payload = asObject(response.json);
@@ -1160,7 +1227,7 @@ async function openGraphPreview(
 
       const canonicalDocument = await vscode.workspace.openTextDocument(canonicalSemanticPath);
       const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
-        content: canonicalDocument.getText(),
+        content: normalizeSemanticMdSections(canonicalDocument.getText()),
         persist: false,
       });
       const payload = asObject(response.json);
@@ -2707,6 +2774,7 @@ async function readJsonIfExists(filePath: string): Promise<unknown | undefined> 
     return undefined;
   }
 }
+
 
 async function runAiEnrichment(
   reconRunsProvider: ReconRunsWebviewProvider,

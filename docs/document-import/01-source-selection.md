@@ -20,12 +20,14 @@ URL mező + Add gomb. Az URL-ből egy `ImportItem` jön létre:
 { kind: 'confluence', name: string, url: string, user?: string, token?: string }
 ```
 
-Hitelesítés: ha a Confluence szerver nem nyilvános, `user` + `token` (Basic Auth) szükséges. Ezeket közvetlenül a panelen lehet megadni, nem a Settings-ben tárolódnak.
+**Hitelesítés:** Confluence credentials a panel Confluence credentials szekciójában állítható be:
+- **Instance URL** — a Confluence alap URL (pl. `https://wiki.example.com/confluence`)
+- **Personal Access Token** — VSCode SecretStorage-ban (OS kulcstárban) tárolódik, restart után is megmarad
 
-## AI Review checkbox
-
-A futtatás előtt bekapcsolható az **AI Review** opció. Ha be van jelölve, az import végén automatikusan lefut egy cloud AI enrichment pass a `source.semantic.md`-n. Lásd: [6. AI Review](06-ai-review.md).
+A token a Settings panelen is beállítható, de a Document Import panelen közvetlenül is módosítható.
 
 ## Futtatás
 
-Az **Import into Semantic** gomb csak akkor aktív, ha legalább egy item a listában van. A gombra kattintva indul a [konverzió](02-conversion.md).
+**▶ Import Documents** gomb — csak akkor aktív, ha legalább egy item a listában van. A gombra kattintva indul a [konverzió](02-conversion.md).
+
+**✦ Analyze with AI** gomb — az importált `.md` fájlokat elemzi Claude-dal és megírja a `source.semantic.md`-t. Akkor is aktív, ha nincs item a listában (a korábban mentett imports fájlokon is futtatható). Lásd: [3. AI analízis](03-analysis.md).

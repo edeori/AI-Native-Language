@@ -30,10 +30,9 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 ARG JQA_VERSION=2.9.1
-ARG JQA_URL=https://repo1.maven.org/maven2/com/buschmais/jqassistant/cli/jqassistant-commandline-neo4jv5/${JQA_VERSION}/jqassistant-commandline-neo4jv5-${JQA_VERSION}-distribution.zip
 
-RUN curl -fsSL "${JQA_URL}" -o /tmp/jqa.zip \
-  && unzip /tmp/jqa.zip -d /opt \
+COPY docker/jqassistant.zip /tmp/jqa.zip
+RUN unzip /tmp/jqa.zip -d /opt \
   && mv /opt/jqassistant-commandline-neo4jv5-${JQA_VERSION} /opt/jqassistant \
   && ln -s /opt/jqassistant/bin/jqassistant.sh /usr/local/bin/jqassistant \
   && rm /tmp/jqa.zip

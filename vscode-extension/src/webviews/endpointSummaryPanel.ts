@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
 
 export interface DetectedEndpoint {
   kind: 'REST' | 'SOAP' | 'GraphQL' | 'Event' | 'gRPC';
@@ -7,8 +8,10 @@ export interface DetectedEndpoint {
   path?: string;
   className?: string;
   methodName?: string;
+  description?: string;
   file: string;
   line: number;
+  source?: 'code' | 'semantic' | 'document';
 }
 
 // ─── Scanner ───────────────────────────────────────────────────────────────
@@ -151,7 +154,159 @@ function findNearbyAnnotation(lines: string[], from: number, re: RegExp): string
   return undefined;
 }
 
+// ─── Document import scanner ───────────────────────────────────────────────
+
+const DOC_METHOD_PATH_LINE    = /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/\S*)/;
+const DOC_METHOD_PATH_HEADING = /^#+.*\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/\S+)/;
+const DOC_METHOD_PATH_TABLE   = /^\|\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/[^\s|]*)/;
+
+export async function scanImportedDocEndpoints(workspaceRoot: string): Promise<DetectedEndpoint[]> {
+  const importsDir = path.join(workspaceRoot, '.ai-native', 'imports');
+  let mdFiles: string[];
+  try {
+    mdFiles = (await fs.readdir(importsDir)).filter((f) => f.endsWith('.md'));
+  } catch {
+    return [];
+  }
+
+  const results: DetectedEndpoint[] = [];
+  const seen = new Set<string>();
+
+  for (const mdFile of mdFiles) {
+    const filePath = path.join(importsDir, mdFile);
+    let content: string;
+    try {
+      content = await fs.readFile(filePath, 'utf8');
+    } catch {
+      continue;
+    }
+
+    const relFile = path.join('.ai-native', 'imports', mdFile).replace(/\\/g, '/');
+    const lines = content.split(/\r?\n/);
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      const lineMatch = DOC_METHOD_PATH_LINE.exec(line);
+      if (lineMatch) {
+        const normPath = lineMatch[2].replace(/\/$/, '') || '/';
+        const key = `${lineMatch[1]}:${normPath}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          const desc = line.slice(lineMatch[0].length).replace(/^[\s—–\-]+/, '').trim();
+          results.push({ kind: 'REST', method: lineMatch[1], path: lineMatch[2], description: desc || undefined, file: relFile, line: i + 1, source: 'document' });
+        }
+        continue;
+      }
+
+      const headingMatch = DOC_METHOD_PATH_HEADING.exec(line);
+      if (headingMatch) {
+        const normPath = headingMatch[2].replace(/\/$/, '') || '/';
+        const key = `${headingMatch[1]}:${normPath}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push({ kind: 'REST', method: headingMatch[1], path: headingMatch[2], file: relFile, line: i + 1, source: 'document' });
+        }
+        continue;
+      }
+
+      const tableMatch = DOC_METHOD_PATH_TABLE.exec(line);
+      if (tableMatch) {
+        const rawPath = tableMatch[2].trim();
+        const normPath = rawPath.replace(/\/$/, '') || '/';
+        const key = `${tableMatch[1]}:${normPath}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push({ kind: 'REST', method: tableMatch[1], path: rawPath, file: relFile, line: i + 1, source: 'document' });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+function deduplicateEndpoints(
+  semanticEndpoints: DetectedEndpoint[],
+  docEndpoints: DetectedEndpoint[],
+  codeEndpoints: DetectedEndpoint[],
+): DetectedEndpoint[] {
+  const seenKeys = new Set<string>();
+  const normalizeKey = (ep: DetectedEndpoint) =>
+    ep.kind === 'REST' && ep.method && ep.path
+      ? `${ep.kind}:${ep.method}:${ep.path.replace(/\/$/, '')}`
+      : `${ep.kind}:${ep.path ?? ep.methodName ?? ''}`;
+
+  const merged: DetectedEndpoint[] = [];
+  for (const ep of semanticEndpoints) {
+    const k = normalizeKey(ep);
+    seenKeys.add(k);
+    merged.push(ep);
+  }
+  for (const ep of docEndpoints) {
+    const k = normalizeKey(ep);
+    if (!seenKeys.has(k)) { seenKeys.add(k); merged.push(ep); }
+  }
+  for (const ep of codeEndpoints) {
+    const k = normalizeKey(ep);
+    if (!seenKeys.has(k)) { seenKeys.add(k); merged.push(ep); }
+  }
+  return merged;
+}
+
 // ─── Panel ─────────────────────────────────────────────────────────────────
+
+async function scanSemanticEndpoints(workspaceRoot: string): Promise<DetectedEndpoint[]> {
+  const semanticPath = path.join(workspaceRoot, '.ai-native', 'source.semantic.md');
+  let content: string;
+  try {
+    content = await fs.readFile(semanticPath, 'utf8');
+  } catch {
+    return [];
+  }
+
+  const lines = content.split(/\r?\n/);
+  const results: DetectedEndpoint[] = [];
+  let inInterfaces = false;
+  let sectionDepth = 0; // depth of the # interfaces heading (1 or 2)
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const headingMatch = /^(#{1,2})\s+interfaces\s*$/i.exec(line.trim());
+    if (headingMatch) {
+      inInterfaces = true;
+      sectionDepth = headingMatch[1].length;
+      continue;
+    }
+    // Stop at the next heading of the same or lower depth
+    if (inInterfaces && new RegExp(`^#{1,${sectionDepth}}\\s+\\w`).test(line.trim())) break;
+    if (!inInterfaces) continue;
+
+    const item = line.trim().replace(/^[-*]\s+/, '');
+    if (!item) continue;
+
+    const apiMatch = item.match(/^api:\s*`([A-Z]+)\s+([^`]+)`(?:\s*[—–-]+\s*(.*))?/);
+    if (apiMatch) {
+      results.push({ kind: 'REST', method: apiMatch[1], path: apiMatch[2].trim(), description: apiMatch[3]?.trim(), file: '.ai-native/source.semantic.md', line: i + 1, source: 'semantic' });
+      continue;
+    }
+    const eventMatch = item.match(/^event:\s*(\S+)(?:\s*[—–-]+\s*(.*))?/);
+    if (eventMatch) {
+      results.push({ kind: 'Event', path: eventMatch[1].trim(), description: eventMatch[2]?.trim(), file: '.ai-native/source.semantic.md', line: i + 1, source: 'semantic' });
+      continue;
+    }
+    const gqlMatch = item.match(/^graphql:\s*(\S+)(?:\s*[—–-]+\s*(.*))?/);
+    if (gqlMatch) {
+      results.push({ kind: 'GraphQL', path: gqlMatch[1].trim(), description: gqlMatch[2]?.trim(), file: '.ai-native/source.semantic.md', line: i + 1, source: 'semantic' });
+      continue;
+    }
+    const grpcMatch = item.match(/^grpc:\s*(\S+)(?:\s*[—–-]+\s*(.*))?/);
+    if (grpcMatch) {
+      results.push({ kind: 'gRPC', path: grpcMatch[1].trim(), description: grpcMatch[2]?.trim(), file: '.ai-native/source.semantic.md', line: i + 1, source: 'semantic' });
+    }
+  }
+  return results;
+}
 
 export class EndpointSummaryPanel {
   private static currentPanel: EndpointSummaryPanel | undefined;
@@ -166,9 +321,12 @@ export class EndpointSummaryPanel {
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: 'Scanning endpoints…', cancellable: false },
       async () => {
-        const endpoints = (
-          await Promise.all(workspaceFolders.map((wf) => scanEndpoints(wf.uri.fsPath)))
-        ).flat();
+        const [codeEndpoints, semanticEndpoints, docEndpoints] = await Promise.all([
+          Promise.all(workspaceFolders.map((wf) => scanEndpoints(wf.uri.fsPath))).then((r) => r.flat()),
+          Promise.all(workspaceFolders.map((wf) => scanSemanticEndpoints(wf.uri.fsPath))).then((r) => r.flat()),
+          Promise.all(workspaceFolders.map((wf) => scanImportedDocEndpoints(wf.uri.fsPath))).then((r) => r.flat()),
+        ]);
+        const endpoints = deduplicateEndpoints(semanticEndpoints, docEndpoints, codeEndpoints);
 
         if (EndpointSummaryPanel.currentPanel) {
           EndpointSummaryPanel.currentPanel.panel.reveal(vscode.ViewColumn.Two);
@@ -256,8 +414,16 @@ function buildHtml(endpoints: DetectedEndpoint[], webview: vscode.Webview): stri
     const rows = items.map((ep) => {
       const badge = ep.method ? `<span class="method-badge" style="background:${KIND_COLOR[kind]}22;color:${KIND_COLOR[kind]};border-color:${KIND_COLOR[kind]}44">${esc(ep.method)}</span>` : '';
       const pathCell = ep.path ? `<span class="ep-path">${esc(ep.path)}</span>` : '<span class="ep-path muted">—</span>';
-      const classCell = ep.className ? `<span class="ep-class">${esc(ep.className)}</span>${ep.methodName ? `<span class="muted">::${esc(ep.methodName)}</span>` : ''}` : '';
-      const fileCell = `<a class="ep-file" href="#" data-file="${esc(ep.file)}" data-line="${ep.line}">${esc(ep.file)}:${ep.line}</a>`;
+      const isSemantic = ep.source === 'semantic';
+      const isDocument = ep.source === 'document';
+      const classCell = (isSemantic || isDocument)
+        ? `<span class="muted">${esc(ep.description ?? '')}</span>`
+        : (ep.className ? `<span class="ep-class">${esc(ep.className)}</span>${ep.methodName ? `<span class="muted">::${esc(ep.methodName)}</span>` : ''}` : '');
+      const fileCell = isSemantic
+        ? `<span class="semantic-badge" title="From source.semantic.md">S</span>`
+        : isDocument
+          ? `<span class="document-badge" title="${esc(ep.file)}">D</span><span class="muted doc-file">${esc(ep.file.replace('.ai-native/imports/', ''))}</span>`
+          : `<a class="ep-file" href="#" data-file="${esc(ep.file)}" data-line="${ep.line}">${esc(ep.file)}:${ep.line}</a>`;
       return `<tr>${[badge ? `<td>${badge}</td>` : '<td></td>', `<td>${pathCell}</td>`, `<td>${classCell}</td>`, `<td>${fileCell}</td>`].join('')}</tr>`;
     }).join('');
 
@@ -275,8 +441,17 @@ function buildHtml(endpoints: DetectedEndpoint[], webview: vscode.Webview): stri
       </section>`;
   }).join('');
 
+  const semanticCount = endpoints.filter((e) => e.source === 'semantic').length;
+  const docCount = endpoints.filter((e) => e.source === 'document').length;
+  const codeCount = endpoints.filter((e) => e.source !== 'semantic' && e.source !== 'document').length;
+  const parts: string[] = [];
+  if (codeCount > 0) parts.push(`${codeCount} code`);
+  if (semanticCount > 0) parts.push(`${semanticCount} semantic`);
+  if (docCount > 0) parts.push(`${docCount} document`);
+  const sourceSummary = parts.length > 1 ? ` (${parts.join(' + ')})` : parts.length === 1 ? ` (${parts[0]})` : '';
+
   const emptyHtml = totalCount === 0
-    ? `<div class="empty">No endpoints detected. Run Source Import first, or check that your project uses supported frameworks (Spring MVC, JAX-RS, JAX-WS, GraphQL, Kafka, gRPC).</div>`
+    ? `<div class="empty">No endpoints detected. Run Source Import or "Analyze with AI" from Document Import first.</div>`
     : '';
 
   return /* html */`<!doctype html>
@@ -321,13 +496,16 @@ function buildHtml(endpoints: DetectedEndpoint[], webview: vscode.Webview): stri
     .ep-file { font-size: 11px; font-family: monospace; color: var(--vscode-textLink-foreground); text-decoration: none; }
     .ep-file:hover { text-decoration: underline; }
     .muted { color: var(--vscode-descriptionForeground); font-size: 11px; }
+    .semantic-badge { display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; background: #7c3aed22; color: #a78bfa; border: 1px solid #7c3aed44; cursor: default; }
+    .document-badge { display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; background: #d9770622; color: #fb923c; border: 1px solid #d9770644; cursor: default; margin-right: 4px; }
+    .doc-file { font-family: monospace; font-size: 10px; }
     .empty { padding: 40px 0; text-align: center; color: var(--vscode-descriptionForeground); font-size: 13px; }
   </style>
 </head>
 <body>
   <div class="toolbar">
     <h1>Endpoint Summary</h1>
-    <span class="total">${totalCount} endpoint${totalCount !== 1 ? 's' : ''} detected</span>
+    <span class="total">${totalCount} endpoint${totalCount !== 1 ? 's' : ''} detected${sourceSummary}</span>
     <input class="filter-input" id="filter" type="search" placeholder="Filter by path, class, file…" />
   </div>
   ${emptyHtml}

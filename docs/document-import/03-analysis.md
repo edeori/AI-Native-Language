@@ -1,125 +1,53 @@
-# 3. Heurisztikus elemzés
+# 3. AI analízis — Analyze with AI
 
-**Hol:** `document-import` MCP szerver — `analyze_document_for_semantic`
+**Hol:** `extension.ts` — `runAnalyzeDocImports()` → `commandIds.analyzeDocImports`
 
-A konvertált Markdownból determinisztikusan (AI nélkül) vonja ki a semantic releváns entitásokat, majd ezekből semantic.md patche-t vagy teljes semantic.md draft-ot generál.
+Az import lépés (▶ Import Documents) után az **✦ Analyze with AI** gombra kattintva fut le. Command Palette-ből is elérhető: `AI Native: Analyze Imported Documents with AI`.
 
-## 3a. Szekciók parse-olása
+## Mit csinál
 
-`parseSections` — H1–H6 fejlécek alapján szekció-fa: `{ level, title, content }`.
+1. Beolvassa az összes `.md` fájlt a `.ai-native/imports/` mappából
+2. Beolvassa a meglévő `source.semantic.md`-t (ha van)
+3. Felépít egy részletes promptot az összes dokumentum tartalmával
+4. Claude-ot hív a konfigurált review provider-en keresztül (`runCloudRawPrompt`)
+5. A Claude válaszát közvetlenül a `source.semantic.md`-be írja
 
-## 3b. Entitás-kinyerés
+## Prompt stratégia
 
-### components
-Két forrásból:
-- Szekciófejlécek ahol a cím tartalmaz valamelyik suffixet (45+ minta): `Service`, `Module`, `Component`, `Controller`, `Repository`, `Gateway`, `Handler`, `Manager`, `Adapter`, `Engine`, `Processor`, `Worker`, `Scheduler`, `Cache`, `Store`, `Bus`, `Broker`, `Queue`, `Connector`, `Proxy`, stb.
-- Szövegben előforduló `XService`, `XController`, `XRepository` stb. CamelCase nevek regex-szel
+A prompt explicit módon tiltja az eszközhasználatot — Claude csak szöveget ad vissza, nem autonóm ágensként viselkedik:
 
-Max 40 eredmény, 3–80 karakter között.
+```
+CRITICAL INSTRUCTIONS:
+- Output ONLY the raw markdown content. Do NOT use any tools.
+  Do NOT write to files. Do NOT explain or summarize anything.
+- Extract EVERYTHING: every API, data model, database table, flow,
+  migration step, integration, business rule.
+- Be exhaustive, not concise.
+```
 
-### flows
-- Szekciófejlécek ahol flow-kulcsszó van: `flow`, `process`, `sequence`, `workflow`, `pipeline`, `lifecycle`, `authentication`, `authorization`, `checkout`, `payment`, `onboarding`, `notification`, `event processing`, `batch`, `migration`, stb.
-- Tartalom alapján: ha numbered list vagy Step/First/Then/Finally kezdetű sorok vannak → az adott szekció egy flow
-- Tartalom alapján: ha `→`, `->`, `=>`, `>>` nyíl-minták vannak → flow-leíró szekció
+A prompt tartalmazza az összes dokumentum szövegét, és ha már létezik `source.semantic.md`, azt is átadja enrichment-re.
 
-Max 20 eredmény.
+Ha a teljes prompt mérete meghaladja a 180,000 karaktert, csonkítva kerül elküldésre.
 
-### apis
-- REST endpoint minták: `GET /path`, `POST /path`, `PUT`, `DELETE`, `PATCH`, stb.
-- Backtick-es útvonalak: `` `/api/users/{id}` ``, `` `/v2/orders` ``
+## Kimenet formátuma
 
-Max 30 eredmény.
-
-### dataModels
-- Markdown táblát tartalmazó szekciók (szekciócím = entitásnév)
-- `CREATE TABLE IF NOT EXISTS X` SQL minták
-- `Entity: X`, `Table: X`, `Model: X` inline minták
-
-Max 20 eredmény.
-
-### techStack
-~80 technológia hardcoded névsora elleni case-insensitive egyezés. Néhány példa: Spring Boot, Spring Security, Hibernate, JPA, Flyway, Kafka, RabbitMQ, Redis, PostgreSQL, MySQL, MongoDB, Docker, Kubernetes, AWS, gRPC, GraphQL, OAuth2, JWT, React, Vue, Gradle, Maven, Java, Kotlin, Go, Python, TypeScript.
-
-## 3c. Dokumentum-típus felismerés
-
-`detectDocKind` — az entitások arányából:
-
-| Típus | Feltétel |
-|---|---|
-| `api-spec` | sok API (>5), kevés komponens (<3) |
-| `lld` | részletes szekciók (`detail`, `implementation`, `class`, `method`, `algorithm`) + komponensek |
-| `architecture` | sok komponens (>3) + flows (>1) |
-| `mixed` | components + flows + apis összesen >2 |
-| `technical-description` | alapértelmezett |
-
-## 3d. Semantic patch generálás
-
-`buildSemanticPatch` — strukturált Markdown szekciót épít:
+Claude a következő szekciókat tölti ki a dokumentumok tartalmából:
 
 ```markdown
-## Imported: <docTitle>
-
-<overview szekció első 6 sora, ha van>
-
-### Components & Modules
-- **UserService**
-- **OrderController**
-
-### Flows & Processes
-- **checkout flow** — User selects items and proceeds to payment...
-
-### API Endpoints
-- `POST /api/orders`
-- `GET /api/users/{id}`
-
-### Data Models
-- **Order**
-- **User**
-
-### Tech Stack
-Spring Boot, PostgreSQL, Kafka
-```
-
-## 3e. Merge meglévő semantic.md-be (vagy új létrehozása)
-
-**Ha van meglévő `source.semantic.md`:**
-
-`mergeIntoExisting` — a patch-et a `# dependencies` szekció elé szúrja be, vagy a fájl végére fűzi. Ha az adott dokumentum már importálva volt (az `## Imported: <cím>` marker megvan), újra nem kerül be — idempotens.
-
-**Ha nincs meglévő `source.semantic.md`:**
-
-`buildNewSemanticMd` — teljes semantic.md-t épít a standard sémával:
-
-```
 # system
 # intent
-# context
-# interfaces
-# processes
-# data_flows
-# dependencies
+# context         ← komponensek, tech stack
+# interfaces      ← REST API-k, event topicok
+# processes       ← flowk, folyamatok, migrációs lépések
+# data_flows      ← adatok mozgása a rendszerben
+# data_models     ← adatbázis táblák, entitások
+# dependencies    ← külső rendszerek, tech függőségek
 ```
 
-Az overview szekció tartalmából tölti fel az `# intent`-et és a `# context`-et.
+## Heurisztikus elemzés (háttér)
 
-## Kimenet
+Az MCP szerver `analyze_document_for_semantic` eszköze (regex-alapú heurisztika) megmarad a szerveren, de az import flow már **nem hívja**. Célja: programmatic entity extraction tesztelési vagy integrációs célokra.
 
-```json
-{
-  "ok": true,
-  "docTitle": "...",
-  "docKind": "architecture",
-  "mode": "enrich",
-  "entities": {
-    "components": [...],
-    "flows": [...],
-    "apis": [...],
-    "dataModels": [...],
-    "techStack": [...]
-  },
-  "semanticPatch": "## Imported: ...",
-  "mergedSemanticMd": "# system\n..."
-}
-```
+## Konfiguráció
 
-Az extension a `mergedSemanticMd` mezőt veszi át, és ezt adja be a következő dokumentum elemzésébe mint `existingSemanticMd` — tehát minden dokumentum a már merge-elt állapotra épít.
+Ugyanaz az AI provider és modell, amit a Settings panelen az **AI Review Provider** konfigurál. A parancs csak akkor működik, ha a provider be van állítva (pl. Claude CLI elérhető).

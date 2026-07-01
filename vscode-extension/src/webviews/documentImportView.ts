@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { commandIds } from '../constants.js';
 import type { McpRegistry } from '../mcpRegistry.js';
+import { analyzeDocImports } from '../docImportAnalysis.js';
 
 type ImportItem =
   | { kind: 'file'; name: string; fsPath: string; ext: string }
@@ -31,6 +31,34 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
         case 'runImport':
           await this.handleRunImport(message);
           break;
+        case 'runDocImportAnalysis': {
+          const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+          if (!workspaceRoot) {
+            this.post({ type: 'progress', message: 'Open a workspace first.' });
+            this.post({ type: 'analysisDone', error: true });
+            break;
+          }
+          await analyzeDocImports({
+            workspaceRoot,
+            outputChannel: this.outputChannel,
+            postFn: (msg) => this.post(msg),
+            registry: this.registry,
+          });
+          break;
+        }
+        case 'getConfluenceCredentials': {
+          const url = vscode.workspace.getConfiguration('aiNative').get<string>('confluence.url', '');
+          const hasToken = !!(await this.context.secrets.get('confluencePersonalToken'));
+          this.post({ type: 'confluenceCredentials', url, hasToken });
+          break;
+        }
+        case 'saveConfluenceCredentials': {
+          await vscode.workspace.getConfiguration('aiNative').update('confluence.url', message.url ?? '', vscode.ConfigurationTarget.Global);
+          if (message.token) await this.context.secrets.store('confluencePersonalToken', message.token);
+          else if (message.clearToken) await this.context.secrets.delete('confluencePersonalToken');
+          this.post({ type: 'confluenceCredentialsSaved', hasToken: !!(await this.context.secrets.get('confluencePersonalToken')) });
+          break;
+        }
       }
     });
     webviewView.webview.html = this.render(webviewView.webview);
@@ -58,7 +86,6 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
 
   private async handleRunImport(message: {
     items: ImportItem[];
-    aiReviewEnabled: boolean;
   }): Promise<void> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
@@ -67,79 +94,53 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
     }
 
     const outputDir = path.join(workspaceFolder.uri.fsPath, '.ai-native');
-    const semanticPath = path.join(outputDir, 'source.semantic.md');
+    const importsDir = path.join(outputDir, 'imports');
+    await fs.mkdir(importsDir, { recursive: true });
 
     this.post({ type: 'progress', message: 'Starting document import…' });
     this.outputChannel.show(true);
 
-    let existingSemanticMd: string | undefined;
-    try {
-      existingSemanticMd = await fs.readFile(semanticPath, 'utf8');
-      this.post({ type: 'progress', message: `Existing source.semantic.md found — enriching (${existingSemanticMd.length} chars)` });
-    } catch {
-      this.post({ type: 'progress', message: 'No source.semantic.md found — will create new' });
-    }
-
-    let mergedMd = existingSemanticMd ?? '';
-    const results: Array<{ name: string; ok: boolean; docKind?: string; error?: string }> = [];
-    const accumulatedEntities: Record<string, Set<string>> = {
-      components: new Set(), flows: new Set(), apis: new Set(),
-      dataModels: new Set(), techStack: new Set(), processes: new Set(),
-    };
+    const results: Array<{ name: string; ok: boolean; error?: string }> = [];
 
     for (const item of message.items) {
-      this.post({ type: 'progress', message: `Processing: ${item.name}…` });
-      this.outputChannel.appendLine(`[document-import] processing: ${item.kind === 'file' ? item.fsPath : item.url}`);
+      this.post({ type: 'progress', message: `Fetching: ${item.name}…` });
+      this.outputChannel.appendLine(`[document-import] fetching: ${item.kind === 'file' ? item.fsPath : item.url}`);
 
       try {
         let markdown: string;
+        let safeName: string;
 
         if (item.kind === 'file') {
+          const fileBuffer = await fs.readFile(item.fsPath);
           const convertResult = await this.registry.callTool('documentImport', 'convert_document_to_markdown', {
-            sourcePath: item.fsPath,
-            outputDir: path.join(outputDir, 'imports'),
-            persist: true,
+            contentBase64: fileBuffer.toString('base64'),
+            fileName: path.basename(item.fsPath),
+            persist: false,
           });
           const converted = convertResult.json as Record<string, unknown> | undefined;
           if (!converted?.ok) throw new Error(String((converted as Record<string, unknown> | undefined)?.['error'] ?? 'Conversion failed'));
           markdown = String(converted.markdown ?? converted.markdownPreview ?? '');
-          this.post({ type: 'progress', message: `Converted to Markdown (${markdown.length} chars)` });
+          safeName = path.basename(item.fsPath, path.extname(item.fsPath));
+          this.post({ type: 'progress', message: `Converted "${item.name}" (${markdown.length} chars)` });
         } else {
+          const confluenceToken = await this.context.secrets.get('confluencePersonalToken') ?? item.token;
           const fetchResult = await this.registry.callTool('documentImport', 'fetch_confluence_page', {
             pageUrl: item.url,
             ...(item.user ? { user: item.user } : {}),
-            ...(item.token ? { token: item.token } : {}),
-            persist: true,
+            ...(confluenceToken ? { token: confluenceToken } : {}),
+            persist: false,
           });
           const fetched = fetchResult.json as Record<string, unknown> | undefined;
-          if (!fetched?.ok) throw new Error('Confluence fetch failed');
+          if (!fetched?.ok) throw new Error(String((fetched as Record<string, unknown> | undefined)?.['error'] ?? 'Confluence fetch failed'));
           markdown = String(fetched.markdown ?? fetched.markdownPreview ?? '');
-          this.post({ type: 'progress', message: `Fetched Confluence page "${fetched.title ?? item.url}" (${markdown.length} chars)` });
+          safeName = String(fetched.title ?? item.name).replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+          this.post({ type: 'progress', message: `Fetched "${fetched.title ?? item.url}" (${markdown.length} chars)` });
         }
 
-        this.post({ type: 'progress', message: `Analyzing ${item.name}…` });
-        const analyzeResult = await this.registry.callTool('documentImport', 'analyze_document_for_semantic', {
-          markdown,
-          existingSemanticMd: mergedMd || undefined,
-          projectName: item.name,
-          persist: false,
-        });
-        const analyzed = analyzeResult.json as Record<string, unknown> | undefined;
-        if (!analyzed?.ok) throw new Error('Analysis failed');
-
-        mergedMd = String(analyzed.mergedSemanticMd ?? mergedMd);
-        results.push({ name: item.name, ok: true, docKind: String(analyzed.docKind ?? '') });
-
-        // Accumulate entities across all documents for doc-entities.json
-        const entities = analyzed.entities as Record<string, unknown> | undefined;
-        if (entities) {
-          for (const key of Object.keys(accumulatedEntities)) {
-            const arr = entities[key];
-            if (Array.isArray(arr)) arr.forEach((v: unknown) => { if (typeof v === 'string') accumulatedEntities[key].add(v); });
-          }
-        }
-
-        this.post({ type: 'progress', message: `Done: ${analyzed.docKind} — components: ${countArr(analyzed.entities, 'components')}, flows: ${countArr(analyzed.entities, 'flows')}, apis: ${countArr(analyzed.entities, 'apis')}` });
+        const mdPath = path.join(importsDir, `${safeName}.md`);
+        await fs.writeFile(mdPath, markdown, 'utf8');
+        this.outputChannel.appendLine(`[document-import] saved ${mdPath}`);
+        results.push({ name: item.name, ok: true });
 
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -149,39 +150,12 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
       }
     }
 
-    if (mergedMd && results.some((r) => r.ok)) {
-      await fs.mkdir(outputDir, { recursive: true });
-      await fs.writeFile(semanticPath, mergedMd, 'utf8');
-      this.outputChannel.appendLine(`[document-import] wrote ${semanticPath}`);
-      this.post({ type: 'progress', message: `Wrote source.semantic.md (${mergedMd.length} chars)` });
-
-      // Persist doc-entities.json — enables alignment check and flow extraction
-      const docEntities = Object.fromEntries(
-        Object.entries(accumulatedEntities).map(([k, s]) => [k, [...s]]),
-      );
-      const docEntitiesPath = path.join(outputDir, 'doc-entities.json');
-      await fs.writeFile(docEntitiesPath, JSON.stringify(docEntities, null, 2) + '\n', 'utf8');
-      this.outputChannel.appendLine(`[document-import] wrote ${docEntitiesPath}`);
-      this.post({ type: 'progress', message: `Wrote doc-entities.json (${Object.values(docEntities).flat().length} entities)` });
-
-      if (message.aiReviewEnabled) {
-        this.post({ type: 'progress', message: 'Running AI Review enrichment…' });
-        await vscode.commands.executeCommand(commandIds.runAiEnrichment);
-      }
-    }
-
-    this.post({ type: 'done', results, semanticPath: mergedMd ? semanticPath : undefined });
-
     const okCount = results.filter((r) => r.ok).length;
     if (okCount > 0) {
-      const choice = await vscode.window.showInformationMessage(
-        `Document import complete: ${okCount}/${results.length} file(s) processed`,
-        'Open semantic.md',
-      );
-      if (choice === 'Open semantic.md') {
-        await vscode.window.showTextDocument(vscode.Uri.file(semanticPath));
-      }
+      this.post({ type: 'progress', message: `Saved ${okCount} document(s) to .ai-native/imports/ — run "Analyze with AI" to update semantic.md` });
     }
+
+    this.post({ type: 'done', results, importsDir: okCount > 0 ? importsDir : undefined });
   }
 
   private render(webview: vscode.Webview): string {
@@ -224,6 +198,44 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
       .drop-zone-icon { font-size: 18px; margin-bottom: 2px; }
       .drop-zone-label { font-size: 12px; font-weight: 600; }
       .drop-zone-sub { font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 2px; }
+
+      /* Confluence credentials panel */
+      .cred-panel {
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px; padding: 8px 10px; margin-bottom: 8px;
+      }
+      .cred-panel summary {
+        font-size: 10px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.5px; color: var(--vscode-descriptionForeground);
+        cursor: pointer; user-select: none; list-style: none;
+        display: flex; align-items: center; gap: 5px;
+      }
+      .cred-panel summary::before { content: '⚙'; }
+      .cred-row { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+      .cred-field { display: flex; flex-direction: column; gap: 2px; }
+      .cred-label { font-size: 10px; color: var(--vscode-descriptionForeground); }
+      .cred-input {
+        padding: 5px 7px; font-size: 11px; font-family: var(--vscode-font-family);
+        background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+        border-radius: 4px;
+      }
+      .cred-input::placeholder { color: var(--vscode-input-placeholderForeground); }
+      .cred-status { font-size: 10px; color: var(--vscode-terminal-ansiGreen); }
+      .cred-actions { display: flex; gap: 5px; margin-top: 4px; }
+      .cred-save-btn {
+        padding: 4px 10px; font-size: 10px; font-weight: 600; cursor: pointer;
+        background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+        border: none; border-radius: 4px;
+      }
+      .cred-save-btn:hover { background: var(--vscode-button-hoverBackground); }
+      .cred-clear-btn {
+        padding: 4px 8px; font-size: 10px; cursor: pointer;
+        background: none; color: var(--vscode-descriptionForeground);
+        border: 1px solid var(--vscode-panel-border); border-radius: 4px;
+      }
+      .cred-clear-btn:hover { color: var(--vscode-errorForeground); }
 
       /* Confluence URL input */
       .conf-input-row {
@@ -306,6 +318,21 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
         display: none;
       }
       .log-area.visible { display: block; }
+      .credit-error-banner {
+        display: none; margin-top: 8px; padding: 10px 12px;
+        background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+        border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+        border-radius: 5px; font-size: 11px; color: var(--vscode-errorForeground, #f48771);
+        font-weight: 600; line-height: 1.5;
+      }
+      .credit-error-banner.visible { display: block; }
+      .credit-error-banner .credit-title {
+        font-size: 12px; margin-bottom: 4px; letter-spacing: 0.02em;
+      }
+      .credit-error-banner .credit-detail {
+        font-weight: 400; font-size: 10px; opacity: 0.85; font-family: monospace;
+        white-space: pre-wrap; word-break: break-all;
+      }
 
       .divider { border: none; border-top: 1px solid var(--vscode-panel-border); margin: 10px 0; }
     </style>
@@ -320,12 +347,6 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
         <div class="drop-zone-label">Add documents</div>
         <div class="drop-zone-sub">PDF · DOCX · MD · HTML · TXT</div>
       </div>
-      <label class="sub-option" style="margin-top:7px;">
-        <input type="checkbox" class="sub-check" id="checkAiReview" />
-        <span class="sub-label">AI Review</span>
-        <span class="badge-ai">AI</span>
-      </label>
-      <div class="sub-desc">Optional — Semantic Enrichment via the configured AI Review provider after heuristic analysis</div>
     </div>
 
     <hr class="divider" />
@@ -333,11 +354,30 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
     <!-- Confluence URLs -->
     <div class="source-section">
       <div class="source-label">Confluence pages <span class="badge-ai" style="vertical-align:middle;margin-left:4px;">AI</span></div>
+
+      <details class="cred-panel" id="credPanel">
+        <summary>Confluence credentials</summary>
+        <div class="cred-row">
+          <div class="cred-field">
+            <span class="cred-label">Instance URL</span>
+            <input class="cred-input" id="credUrl" type="url" placeholder="https://wiki.example.com/confluence" />
+          </div>
+          <div class="cred-field">
+            <span class="cred-label">Personal Access Token</span>
+            <input class="cred-input" id="credToken" type="password" placeholder="Leave blank to keep existing" />
+            <span class="cred-status" id="credStatus"></span>
+          </div>
+          <div class="cred-actions">
+            <button class="cred-save-btn" id="credSaveBtn">Save</button>
+            <button class="cred-clear-btn" id="credClearBtn">Clear token</button>
+          </div>
+        </div>
+      </details>
+
       <div class="conf-input-row">
-        <input class="conf-input" id="confUrl" type="url" placeholder="https://your-domain.atlassian.net/wiki/…" />
+        <input class="conf-input" id="confUrl" type="url" placeholder="https://wiki.example.com/confluence/spaces/TEAM/pages/…" />
         <button class="conf-add-btn" id="confAddBtn">Add</button>
       </div>
-      <div class="conf-note">Claude reads pages via configured Atlassian skill or public URL — no credentials needed here</div>
     </div>
 
     <hr class="divider" />
@@ -347,8 +387,13 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
       <div class="empty-hint" id="emptyHint">No documents or pages added yet.</div>
     </div>
 
-    <button class="run-btn" id="runBtn" disabled>▶ Import into Semantic</button>
+    <button class="run-btn" id="runBtn" disabled>▶ Import Documents</button>
+    <button class="run-btn" id="analyzeBtn" style="margin-top:6px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);">✦ Analyze with AI</button>
     <div class="log-area" id="logArea"></div>
+    <div class="credit-error-banner" id="creditErrorBanner">
+      <div class="credit-title">⛔ API credit / usage limit reached</div>
+      <div class="credit-detail" id="creditErrorDetail"></div>
+    </div>
 
     <script nonce="${n}">
       const vscode = acquireVsCodeApi();
@@ -359,6 +404,20 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
       const emptyHint  = document.getElementById('emptyHint');
       const runBtn     = document.getElementById('runBtn');
       const logArea    = document.getElementById('logArea');
+
+      // ── Confluence credentials ───────────────────────────────
+      vscode.postMessage({ type: 'getConfluenceCredentials' });
+
+      document.getElementById('credSaveBtn').addEventListener('click', () => {
+        const url   = document.getElementById('credUrl').value.trim();
+        const token = document.getElementById('credToken').value.trim();
+        vscode.postMessage({ type: 'saveConfluenceCredentials', url, token: token || undefined });
+        document.getElementById('credToken').value = '';
+      });
+
+      document.getElementById('credClearBtn').addEventListener('click', () => {
+        vscode.postMessage({ type: 'saveConfluenceCredentials', url: document.getElementById('credUrl').value.trim(), clearToken: true });
+      });
 
       // ── Drop zone (local files) ──────────────────────────────
       document.getElementById('dropZone').addEventListener('click', () =>
@@ -412,12 +471,25 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
         if (!items.length) return;
         logArea.textContent = '';
         logArea.classList.add('visible');
+        creditErrorBanner.classList.remove('visible');
+        creditErrorDetail.textContent = '';
         runBtn.disabled = true;
         vscode.postMessage({
           type: 'runImport',
           items,
-          aiReviewEnabled: document.getElementById('checkAiReview').checked,
         });
+      });
+
+      const analyzeBtn = document.getElementById('analyzeBtn');
+      const creditErrorBanner = document.getElementById('creditErrorBanner');
+      const creditErrorDetail = document.getElementById('creditErrorDetail');
+      analyzeBtn.addEventListener('click', () => {
+        analyzeBtn.disabled = true;
+        logArea.textContent = '';
+        logArea.classList.add('visible');
+        creditErrorBanner.classList.remove('visible');
+        creditErrorDetail.textContent = '';
+        vscode.postMessage({ type: 'runDocImportAnalysis' });
       });
 
       // ── Messages from extension ──────────────────────────────
@@ -430,12 +502,31 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
         } else if (msg.type === 'progress') {
           logArea.textContent += msg.message + '\\n';
           logArea.scrollTop = logArea.scrollHeight;
+        } else if (msg.type === 'confluenceCredentials') {
+          document.getElementById('credUrl').value = msg.url || '';
+          document.getElementById('credStatus').textContent = msg.hasToken ? '● Token configured' : '';
+          if (msg.url || msg.hasToken) document.getElementById('credPanel').open = false;
+        } else if (msg.type === 'confluenceCredentialsSaved') {
+          document.getElementById('credStatus').textContent = msg.hasToken ? '● Token configured' : '';
+          document.getElementById('credPanel').open = false;
+        } else if (msg.type === 'creditExhausted') {
+          analyzeBtn.disabled = false;
+          logArea.textContent += '⛔ Credit limit reached — analysis stopped.\\n';
+          logArea.scrollTop = logArea.scrollHeight;
+          creditErrorBanner.classList.add('visible');
+          creditErrorDetail.textContent = msg.message || 'API credit or usage limit reached.';
+        } else if (msg.type === 'analysisDone') {
+          analyzeBtn.disabled = false;
         } else if (msg.type === 'done') {
           runBtn.disabled = items.length === 0;
           for (const r of (msg.results ?? [])) {
             logArea.textContent += (r.ok ? '✓' : '✗') + ' ' + r.name + (r.error ? ': ' + r.error : '') + '\\n';
           }
-          if (msg.semanticPath) logArea.textContent += '→ ' + msg.semanticPath + '\\n';
+          if (msg.importsDir) logArea.textContent += '→ ' + msg.importsDir + '\\n';
+          const okCount = (msg.results ?? []).filter(r => r.ok).length;
+          const failCount = (msg.results ?? []).length - okCount;
+          const summary = failCount > 0 ? 'Import finished — ' + okCount + ' ok, ' + failCount + ' failed.' : 'Import finished — ' + okCount + ' document(s) saved.';
+          logArea.textContent += summary + '\\n';
           logArea.scrollTop = logArea.scrollHeight;
         }
       });
@@ -452,10 +543,4 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
 
 function nonce(): string {
   return Math.random().toString(36).slice(2);
-}
-
-function countArr(entities: unknown, key: string): number {
-  if (!entities || typeof entities !== 'object') return 0;
-  const arr = (entities as Record<string, unknown>)[key];
-  return Array.isArray(arr) ? arr.length : 0;
 }

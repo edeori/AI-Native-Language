@@ -359,6 +359,7 @@ async function runCliReview(context: AgenticReviewContext, prompt: string): Prom
       rawOutput: normalized,
     };
   } catch (error) {
+    if (error instanceof CreditExhaustedError) throw error;
     return {
       provider: context.provider,
       mode: 'cli',
@@ -684,6 +685,11 @@ function executeCli(command: string, args: string[], prompt: string, cwd?: strin
     });
     child.on('close', (code) => {
       clearTimeout(timeout);
+      const creditMsg = detectCreditExhaustion(stdout, stderr);
+      if (creditMsg) {
+        reject(new CreditExhaustedError(creditMsg));
+        return;
+      }
       // Resolve if stdout has content — some CLI versions exit non-zero even on success
       // (e.g. Claude with --verbose emits warnings, Codex on partial tool failures).
       // Only hard-fail when stdout is empty AND exit code is non-zero.
@@ -1054,6 +1060,56 @@ function stringifyError(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+export class CreditExhaustedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CreditExhaustedError';
+  }
+}
+
+// Scans CLI stdout/stderr for credit/quota exhaustion signals from the Claude CLI stream-json format.
+// Returns the user-facing message if found, otherwise null.
+export function detectCreditExhaustion(stdout: string, stderr: string): string | null {
+  const CREDIT_PATTERNS = [
+    /credit/i,
+    /usage.?limit/i,
+    /billing/i,
+    /insufficient.?funds/i,
+    /quota.?exceeded/i,
+    /payment.?required/i,
+    /overdue/i,
+  ];
+
+  // Scan NDJSON stream-json lines for error events
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      if (parsed.type === 'error' || parsed.type === 'api_error') {
+        const errObj = (parsed.error ?? parsed) as Record<string, unknown>;
+        const msg = typeof errObj.message === 'string' ? errObj.message : '';
+        const errType = typeof errObj.type === 'string' ? errObj.type : '';
+        if (CREDIT_PATTERNS.some((re) => re.test(msg) || re.test(errType))) {
+          return msg || 'API credit or usage limit reached.';
+        }
+      }
+    } catch {
+      // not JSON
+    }
+  }
+
+  // Also check raw stderr (some CLI versions print plain text errors there)
+  const combined = `${stdout}\n${stderr}`;
+  if (CREDIT_PATTERNS.some((re) => re.test(combined))) {
+    // Extract a one-liner from the first matching line
+    const line = combined.split(/\r?\n/).find((l) => CREDIT_PATTERNS.some((re) => re.test(l)));
+    return line?.trim() || 'API credit or usage limit reached.';
+  }
+
+  return null;
 }
 
 export function resolveExecutablePath(command: string): string | undefined {

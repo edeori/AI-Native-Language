@@ -2,7 +2,7 @@
   "name": "ai-native-semantic-workflow",
   "displayName": "AI Native Semantic Workflow",
   "description": "Developer-facing VSCode extension for the AI-native semantic workflow.",
-  "version": "0.2.3",
+  "version": "0.2.15",
   "private": true,
   "icon": "media/ai-native.png",
   "main": "./out/extension.js",
@@ -85,6 +85,14 @@
         "title": "AI Native: Show Endpoint Summary"
       },
       {
+        "command": "aiNative.runAiEnrichment",
+        "title": "AI Native: Run AI Review Enrichment"
+      },
+      {
+        "command": "aiNative.analyzeDocImports",
+        "title": "AI Native: Analyze Imported Documents with AI"
+      },
+      {
         "command": "aiNative.runFlowExtraction",
         "title": "AI Native: Run Flow Extraction"
       },
@@ -159,6 +167,11 @@
           "type": "string",
           "default": "com.example.generated",
           "description": "Default Java base package used by the compiler scaffold."
+        },
+        "aiNative.confluence.url": {
+          "type": "string",
+          "default": "",
+          "description": "Confluence base URL (e.g. https://wiki.example.com/confluence). Required for document import from Confluence."
         }
       }
     },

@@ -69,6 +69,8 @@ export interface EnrichmentModelCatalogItem {
   capabilities: EnrichmentCapability[];
 }
 
+export type CloudAgentKind = 'claude' | 'codex';
+
 export interface LocalAgentConfig {
   enabled: boolean;
   provider: EnrichmentProviderKind;
@@ -78,6 +80,8 @@ export interface LocalAgentConfig {
   timeoutMs: number;
   maxInputSize: number;
   minConfidence: number;
+  cloudAgent?: CloudAgentKind;
+  autoMerge?: boolean;
 }
 
 export interface LocalAgentDefinition {
