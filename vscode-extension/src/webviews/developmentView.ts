@@ -15,6 +15,8 @@ export interface TaskEntry {
   createdAt: string;
   result?: TaskResult;
   docDrift?: boolean;
+  failureReason?: string;
+  failedAt?: string;
 }
 
 export interface ContextSources {
@@ -249,6 +251,9 @@ export class DevelopmentWebviewProvider implements vscode.WebviewViewProvider {
     .badge-running  { background: color-mix(in srgb, var(--vscode-progressBar-background) 20%, transparent); color: var(--vscode-progressBar-background); border: 1px solid color-mix(in srgb, var(--vscode-progressBar-background) 45%, transparent); }
     .badge-done     { background: color-mix(in srgb, var(--vscode-testing-iconPassed) 18%, transparent); color: var(--vscode-testing-iconPassed); border: 1px solid color-mix(in srgb, var(--vscode-testing-iconPassed) 35%, transparent); }
     .badge-drift    { background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 15%, transparent); color: var(--vscode-editorWarning-foreground); border: 1px solid color-mix(in srgb, var(--vscode-editorWarning-foreground) 35%, transparent); }
+    .badge-failed   { background: color-mix(in srgb, var(--vscode-editorError-foreground) 15%, transparent); color: var(--vscode-editorError-foreground); border: 1px solid color-mix(in srgb, var(--vscode-editorError-foreground) 40%, transparent); }
+    .result-card.failed { border-color: color-mix(in srgb, var(--vscode-editorError-foreground) 40%, transparent); }
+    .result-reason { font-size: 12px; line-height: 1.5; white-space: pre-wrap; color: var(--vscode-editorError-foreground); }
 
     /* ── Running animation ───────────────────── */
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -350,6 +355,23 @@ export class DevelopmentWebviewProvider implements vscode.WebviewViewProvider {
 
     // ── Last Result ──────────────────────────────────────────────
     function resultHtml(task) {
+      // A failed run is re-queued but keeps its failure reason — surface it here
+      // so clicking the task explains what went wrong (takes precedence, since it
+      // is the most recent outcome).
+      if (task && task.failureReason) {
+        return \`<div class="result-card failed">
+          <div class="result-header">
+            <span class="result-task-id">\${esc(task.taskId)}</span>
+            <span class="badge badge-failed">✗ failed</span>
+            \${task.failedAt ? '<span style="font-size:10px;color:var(--vscode-descriptionForeground)">' + fmtTime(task.failedAt) + '</span>' : ''}
+          </div>
+          <div class="result-reason">\${esc(task.failureReason)}</div>
+          <div class="result-meta">
+            <span class="result-stat warn">re-queued for retry</span>
+            <button class="btn-link" data-cmd="${commandIds.openImplementationReport}" data-payload-task="\${task.taskId}">view full report</button>
+          </div>
+        </div>\`;
+      }
       if (!task || !task.result) {
         return '<div class="result-empty">No result yet — run a task to see output here.</div>';
       }
@@ -402,6 +424,7 @@ export class DevelopmentWebviewProvider implements vscode.WebviewViewProvider {
           </div>
           <div class="task-row-right">
             \${badge(t.status, t.docDrift)}
+            \${t.failureReason ? '<span class="badge badge-failed">✗ failed</span>' : ''}
             <span class="load-hint">↑ load</span>
             \${t.status === 'queued' ? \`<button class="delete-hint" data-delete-task="\${esc(t.taskId)}">✕ delete</button>\` : ''}
           </div>
@@ -435,11 +458,28 @@ export class DevelopmentWebviewProvider implements vscode.WebviewViewProvider {
         ? \`<button class="btn-run-queue" id="btn-run-queue" \${isRunning ? 'disabled title="A task is already running"' : ''}>▶ Run Queue (\${queuedCount})</button>\`
         : '';
 
+      // Preserve an in-progress draft (+ focus/caret) across re-renders — a live
+      // task-log / stream update must not wipe what the user is typing.
+      const priorInput = document.getElementById('direction-input');
+      const priorDraft = priorInput ? priorInput.value : null;
+      const wasFocused = priorInput != null && document.activeElement === priorInput;
+      const caretStart = wasFocused ? priorInput.selectionStart : null;
+      const caretEnd = wasFocused ? priorInput.selectionEnd : null;
+
       const showLive = isRunning && state.streamOutput;
       document.getElementById('root').innerHTML =
         section('result', showLive ? 'Live Output' : 'Last Result', '', showLive ? liveOutputHtml(state.streamOutput) : resultHtml(selectedTask)) +
         section('newTask', 'New Task', '', newTaskHtml(isRunning)) +
         section('log', 'Task Log', runQueueBtn, taskLogHtml(state.tasks));
+
+      const newInput = document.getElementById('direction-input');
+      if (newInput && priorDraft) {
+        newInput.value = priorDraft;
+        if (wasFocused) {
+          newInput.focus();
+          try { newInput.setSelectionRange(caretStart ?? priorDraft.length, caretEnd ?? priorDraft.length); } catch (e) { /* ignore */ }
+        }
+      }
 
       if (showLive) {
         const pre = document.getElementById('live-pre');

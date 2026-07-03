@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { DatabaseSchema } from './models.js';
 import { parseSemanticMarkdown } from './semantic-markdown.js';
+import { reconcileSemanticMarkdown } from './semantic-reconcile.js';
 import { generateCanonicalGraph } from './graph.js';
 import { generateDatabaseSchema } from './database-schema.js';
 import { buildCodeKnowledgeGraph, renderCodeKnowledgeGraphMarkdown, type CodeKnowledgeGraph } from './code-graph.js';
@@ -78,6 +79,8 @@ export interface SourceLearningResult {
   snapshotPath: string;
   suggestedSemanticPath: string;
   semanticPath: string;
+  proposedSemanticPath?: string;
+  reconcile?: { addCount: number; conflictCount: number };
   graphPath: string;
   statePath: string;
   readmePath: string;
@@ -1067,15 +1070,36 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
 
   let createdSemantic = false;
   let semanticSourceText: string;
+  let semanticExisted = false;
+  let proposedSemanticPath: string | undefined;
+  let reconcile: { addCount: number; conflictCount: number } | undefined;
   try {
     if (options.force) {
       throw new Error('force refresh requested');
     }
     semanticSourceText = await readFile(semanticPath, 'utf8');
+    semanticExisted = true;
   } catch {
     semanticSourceText = suggestedSemantic;
     await writeFile(semanticPath, semanticSourceText);
     createdSemantic = true;
+  }
+
+  // semantic.md already existed → do NOT overwrite. Reconcile the code-derived
+  // suggestion against the source of truth and, if anything differs, write a
+  // reviewable proposal with git-style conflict markers. Best-effort: a reconcile
+  // failure must never clobber the canonical file (which is left untouched here).
+  if (semanticExisted) {
+    try {
+      const result = reconcileSemanticMarkdown(semanticSourceText, suggestedSemantic, { authority: 'code' });
+      if (result.changes.length > 0) {
+        proposedSemanticPath = join(outputDir, 'source.semantic.proposed.md');
+        await writeFile(proposedSemanticPath, result.merged);
+        reconcile = { addCount: result.addCount, conflictCount: result.conflictCount };
+      }
+    } catch {
+      /* reconcile is best-effort — never block or clobber the source of truth */
+    }
   }
 
   const document = parseSemanticMarkdown(semanticSourceText, semanticPath);
@@ -1179,6 +1203,8 @@ export async function importSourceProjectState(options: SourceLearningImportOpti
     astIndexPath,
     suggestedSemanticPath,
     semanticPath,
+    proposedSemanticPath,
+    reconcile,
     graphPath,
     databaseSchemaPath,
     databaseSchemaMdPath,
@@ -2400,13 +2426,21 @@ function shouldSkipFile(path: string): boolean {
   return false;
 }
 
+// Match a keyword only as a delimited token, not as a bare substring. This
+// avoids false positives like `s3` matching inside an unrelated word or `mail`
+// matching inside `email`, which previously injected e.g. MinIO/object-storage
+// into projects that never used it.
+function containsKeywordToken(text: string, keyword: string): boolean {
+  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(keyword)}([^a-z0-9]|$)`, 'i').test(text);
+}
+
 async function collectPomKeywords(files: string[]): Promise<string[]> {
   const keywords: string[] = [];
   await Promise.all(
     files.map(async (file) => {
       const text = (await readFile(file, 'utf8')).toLowerCase();
       for (const keyword of ['spring-boot', 'spring-security', 'jwt', 'postgresql', 'redis', 'flyway', 'websocket', 'openapi', 'minio', 'mail', 'lombok', 's3']) {
-        if (text.includes(keyword)) keywords.push(keyword);
+        if (containsKeywordToken(text, keyword)) keywords.push(keyword);
       }
     }),
   );
@@ -2419,7 +2453,7 @@ async function collectYamlKeywords(files: string[]): Promise<string[]> {
     files.map(async (file) => {
       const text = (await readFile(file, 'utf8')).toLowerCase();
       for (const keyword of ['spring', 'datasource', 'redis', 'flyway', 'jwt', 'turnstile', 'mail', 'minio', 'cors', 'security']) {
-        if (text.includes(keyword)) keywords.push(keyword);
+        if (containsKeywordToken(text, keyword)) keywords.push(keyword);
       }
     }),
   );
@@ -2762,12 +2796,24 @@ function extractPackageName(text: string): string | undefined {
   return match?.[1];
 }
 
+// Strip the conventional HTTP-surface type suffixes so a family name can be
+// derived from either an OpenAPI `*Api` interface or a plain Spring controller.
+function stripApiSuffix(name: string): string {
+  return name.replace(/(ApiImpl|Api|RestController|Controller|Resource|Endpoint)$/, '');
+}
+
 function isHttpContractAstFile(astFile: JavaAstFile): boolean {
   const packageName = astFile.packageName ?? '';
-  if (!/\.api(?:\.|$)/i.test(packageName) && !/\/api\//i.test(astFile.file)) {
-    return false;
-  }
-  return astFile.types.some((type) => /Api$/.test(type.name));
+  const inApiLocation = /\.api(?:\.|$)/i.test(packageName) || /\/api\//i.test(astFile.file);
+  const inWebLocation = /\.(?:web|controller)(?:\.|$)/i.test(packageName) || /\/web\/|\/controller\//i.test(astFile.file);
+  // OpenAPI-style `*Api` contract interfaces are recognized anywhere; plain
+  // Spring `*Controller` / `*Resource` / `*Endpoint` classes count when they
+  // live in an api/web/controller location. This lets @RestController-based
+  // projects (no generated `*Api`) still report their API families.
+  return astFile.types.some((type) =>
+    /Api$/.test(type.name) ||
+    (/(Controller|Resource|Endpoint)$/.test(type.name) && (inApiLocation || inWebLocation)),
+  );
 }
 
 function isEntityLikeSource(
@@ -3303,6 +3349,13 @@ function parseSqlTables(text: string): SqlArtifactSummary['tables'] {
         continue;
       }
 
+      // Table-level constraint / index / key clauses are not columns. Without
+      // this skip, their leading keyword (constraint, unique, check, key…) was
+      // captured as a bogus column name.
+      if (/^(constraint|unique|check|exclude|primary\s+key|foreign\s+key|key|index|like|partition|using)\b/i.test(line)) {
+        continue;
+      }
+
       const columnMatch = line.match(/^([a-zA-Z0-9_."`]+)\s+([a-zA-Z0-9_()'"\[\]\-+/.<>,\s]+?)(?:\s+constraint\b|\s+primary\s+key\b|\s+references\b|\s+not\s+null\b|,|$)/i);
       if (columnMatch) {
         const columnName = normalizeSqlIdentifier(columnMatch[1]);
@@ -3630,9 +3683,6 @@ function renderSuggestedSemanticMarkdown(
   const verificationWarnings = verification.checks
     .filter((check) => check.status !== 'ok')
     .map((check) => `- ${check.category}: ${check.message}`);
-  const applicationSupport = supportGraph.nodes
-    .filter((node) => node.type === 'application')
-    .map((node) => `- \`${node.name}\`: ${node.description ?? 'application boundary'}; items: ${node.items.slice(0, 8).join(', ') || 'none'}`);
   const topLevelProjects = analysis.repositoryStructure.topLevelProjects.map((item) => `- \`${item.name}\`: ${item.role}`);
   const backendRuntimeLayers = analysis.repositoryStructure.backendRuntimeLayers.map((item) => `- \`${item.name.replace(/^event-backend\//, '')}\`: ${item.role}`);
   const backendSupportModules = analysis.repositoryStructure.backendSupportModules.map((item) => `- \`${item.name.replace(/^event-backend\//, '')}\`: ${item.role}`);
@@ -3710,16 +3760,14 @@ function renderSuggestedSemanticMarkdown(
     : '';
 
   const interfaceSection = [
-    'The repository is split into explicit runtime surfaces.',
-    ...(apiFamilies.length ? ['### API families', ...apiFamilies] : ['- No API families were inferred.']),
-    ...(webBoundaries.length ? ['### Web boundaries', ...webBoundaries] : ['- No explicit web boundaries were inferred.']),
+    ...(apiFamilies.length ? ['### API families', ...apiFamilies] : []),
+    ...(webBoundaries.length ? ['### Web boundaries', ...webBoundaries] : []),
     ...(commonComponents.length ? ['### Common components', ...commonComponents] : []),
     ...(persistenceStyles.length ? ['### Persistence styles', ...persistenceStyles] : []),
     ...(serviceCatalog.length ? ['### Services', ...serviceCatalog] : []),
   ];
 
   const dataFlowSection = [
-    'The main flows are request-driven, scheduled, or event-driven.',
     ...analysis.flowSummary.flows.flatMap((flow) => [
       `### ${flow.name}`,
       `${flow.summary}`,
@@ -3735,7 +3783,6 @@ function renderSuggestedSemanticMarkdown(
   ];
 
   const processSection = [
-    'Operationally, the system boots from the app module, applies incremental migrations, exposes actuator endpoints, and then serves HTTP, scheduled, and async event-driven work.',
     ...(jobsAndListeners.length ? ['### Scheduling and listeners', ...jobsAndListeners] : []),
     ...(analysis.serviceSummary.mailCapabilities.operations.length
       ? ['### Mail processing', ...analysis.serviceSummary.mailCapabilities.operations.map((item) => `- \`${item.name}\`: ${item.purpose}. ${item.flow}${item.issue ? ` Issue: ${item.issue}.` : ''}`)]
@@ -3753,11 +3800,6 @@ function renderSuggestedSemanticMarkdown(
     '- use runtime exceptions in the service layer and translate them in web/controller advice',
   ];
 
-  const examplesSection = [
-    '- a user registration request enters through the API contract and is validated at the web boundary before reaching the auth service',
-    '- a scheduled job may refresh derived read models or archive stale domain data without a request path',
-    '- an async notification event may be published by the backend, persisted by the notification app, and delivered over websocket',
-  ];
   const schemaLines = buildSchemaLines(analysis, codeGraph);
 
   return [
@@ -3770,7 +3812,6 @@ function renderSuggestedSemanticMarkdown(
     `${analysis.projectName} source-derived system slice.`,
     '',
     '## intent',
-    'Capture the current architecture shape, runtime responsibilities, persistence boundaries, and important flows in a way that remains readable for humans and stable enough for graph/schema derivation.',
     '',
     '## context',
     `- source root: ${analysis.projectRoot}`,
@@ -3783,12 +3824,8 @@ function renderSuggestedSemanticMarkdown(
     `- jqassistant packages indexed: ${jqassistantSupport.summary.packageCount ?? 0}`,
     `- support graph nodes: ${supportGraph.nodes.length}`,
     '',
-    '## Overview',
-    `${analysis.projectName} is a source-derived architectural summary focused on the backend application. The repository is organized as a multi-module Maven codebase with explicit separation between build support, runtime modules, and a separate notification application. The goal of this semantic file is to explain the system in human terms, while graph-preview and flow helper artifacts are kept in separate machine-oriented files.`,
-    '',
     '## Repository structure',
     ...topLevelProjects,
-    ...(applicationSupport.length ? ['', '### Application boundaries from support graph', ...applicationSupport] : []),
     ...(backendSupportModules.length ? ['', '### Build support modules', ...backendSupportModules] : []),
     ...(backendRuntimeLayers.length ? ['', '### Event-backend runtime modules', ...backendRuntimeLayers] : []),
     '',
@@ -3796,18 +3833,17 @@ function renderSuggestedSemanticMarkdown(
     apiSurface.contractSource === 'openapi-generated'
       ? 'The API layer is contract-first. OpenAPI YAML and generated Java contracts define the DTOs, enums, and interface signatures, while the web module provides the controller implementations.'
       : 'The API layer is inferred from Java contracts and controller implementations.',
-    ...(apiFamilies.length ? apiFamilies : ['- No API families were inferred.']),
+    ...apiFamilies,
     ...(apiSurface.clientImplementations.length ? ['', '### API client implementations', ...apiSurface.clientImplementations.map((item) => `- \`${item.name}\`: ${item.purpose}`)] : []),
     ...(apiSurface.enumTypes.length ? ['', '### API enums', ...apiSurface.enumTypes.map((item) => `- \`${item.name}\`: ${item.purpose}`)] : []),
     '',
     '## Application runtime',
     ...(analysis.appRuntime.applicationEntryPoint ? [`- Entry point: \`${analysis.appRuntime.applicationEntryPoint}\``] : []),
-    ...analysis.appRuntime.importedConfigFiles.map((item) => `- Config file \`${item.name}\`: ${item.purpose}`),
+    ...analysis.appRuntime.importedConfigFiles.map((item) => `- Config file \`${item.name}\`${item.purpose ? `: ${item.purpose}` : ''}`),
     ...analysis.appRuntime.configurationBeans.map((item) => `- Bean configuration \`${item.name}\`: ${item.purpose}`),
     ...analysis.appRuntime.runtimeFeatures.map((item) => `- ${item}`),
     '',
     '## Common cross-cutting layer',
-    'The common module contains shared infrastructure, security helpers, reusable utility code, and notification event contracts used across runtime modules.',
     ...commonComponents,
     ...analysis.commonSummary.utilityComponents.map((item) => `- Utility: \`${item}\``),
     ...analysis.commonSummary.stateCarrierComponents.map((item) => `- State carrier / shared object: \`${item}\``),
@@ -3817,39 +3853,36 @@ function renderSuggestedSemanticMarkdown(
     ...interfaceSection,
     '',
     '## Web layer',
-    'The web module hosts the runtime HTTP ingress. It implements the API contracts, validates inbound requests, applies web configuration, and translates domain errors into stable HTTP responses.',
-    ...(webBoundaries.length ? webBoundaries : ['- No explicit web boundaries were inferred.']),
+    ...(webBoundaries.length ? webBoundaries : []),
     '',
     '## Persistence layer',
-    'The persistence module is the dedicated database-facing layer. It owns repositories, entities, and mapping infrastructure. The codebase deliberately mixes Spring Data JPA and SQL-first JDBC repositories depending on which approach keeps the query or mutation simpler to maintain.',
     ...(persistenceStyles.length ? persistenceStyles : []),
     ...(persistenceRepositories.length ? ['', '### Repositories', ...persistenceRepositories] : []),
     ...(persistenceMappers.length ? ['', '### Mappers', ...persistenceMappers] : []),
     ...(analysis.persistenceSummary.entityNames.length ? ['', '### Entities', ...analysis.persistenceSummary.entityNames.map((item) => `- \`${item}\``)] : []),
     '',
     '## Service layer',
-    'The service module contains the executable business use cases and orchestration logic. It coordinates repositories, outbound integrations, mail delivery, storage processing, scheduled jobs, and event-driven work.',
-    ...(serviceCatalog.length ? serviceCatalog : ['- No execution services were inferred.']),
+    ...(serviceCatalog.length ? serviceCatalog : []),
     ...(jobsAndListeners.length ? ['', '### Scheduled and async behavior', ...jobsAndListeners] : []),
     ...(analysis.serviceSummary.mailCapabilities.operations.length ? ['', '### Mail capabilities', ...analysis.serviceSummary.mailCapabilities.operations.map((item) => `- \`${item.name}\`: ${item.purpose}. ${item.flow}${item.issue ? ` Issue: ${item.issue}.` : ''}`)] : []),
     ...(analysis.serviceSummary.storageCapabilities.summary.length ? ['', '### Storage capabilities', ...analysis.serviceSummary.storageCapabilities.summary.map((item) => `- ${item}`)] : []),
     ...(analysis.serviceSummary.violations.length ? ['', '### Layering concerns', ...analysis.serviceSummary.violations.map((item) => `- ${item}`)] : []),
     '',
     '## data_flows',
-    ...(dataFlowSection.length ? dataFlowSection : ['- Concrete flow descriptions still need refinement from the source.']),
+    ...dataFlowSection,
     '',
     '## Security',
     ...securitySection,
     ...(verificationWarnings.length ? ['', '## verification_warnings', ...verificationWarnings] : []),
     '',
     '## processes',
-    ...(processSection.length ? processSection : ['- Processes still need to be refined from the source.']),
+    ...processSection,
     '',
     '## rules',
     ...rulesSection,
     '',
     '## dependencies',
-    ...(unique(dependencySection).length ? unique(dependencySection) : ['- No external dependency was inferred.']),
+    ...unique(dependencySection),
     '',
     '## database_schema',
     schemaLines,
@@ -3859,14 +3892,6 @@ function renderSuggestedSemanticMarkdown(
     `- SQL migration files detected: ${analysis.counts.sqlFiles}`,
     ...(analysis.sqlCatalog.slice(0, 8).map((item) => `- SQL artifact: \`${relativePath(item.file, analysis.projectRoot)}\``)),
     ...(notificationNote ? ['', notificationNote] : []),
-    '',
-    '## examples',
-    ...examplesSection,
-    '',
-    '## Refinement targets',
-    '- Tighten service descriptions where method names are generic and business intent is only visible in the method body.',
-    '- Review ownership of DTOs, client adapters, and event contracts where the current module placement conflicts with the intended architecture.',
-    '- Keep this document human-readable; use the generated preview/component/flow support artifacts for graph rendering and machine-oriented assembly.',
     '',
   ].join('\n');
 }
@@ -4453,9 +4478,9 @@ async function collectApiSurfaceSummary(
     swaggerConfigPresent ||= /io\.swagger|swagger-ui|OpenAPI/i.test(text) || /OpenApiConfig/.test(astFile.file);
     generatedContracts ||= /openapi generator|org\.openapitools\.codegen/i.test(text);
     validationEnabled ||= /@Validated\b|@Valid\b|jakarta\.validation/i.test(text);
-    const type = astFile.types.find((entry) => /Api$/.test(entry.name));
+    const type = astFile.types.find((entry) => /(Api|Controller|Resource|Endpoint)$/.test(entry.name)) ?? astFile.types[0];
     const family = extractApiFamilyName(text, type?.name);
-    const familyEndpoints = endpointCatalog.filter((entry) => (entry.typeName ?? '').replace(/Api$/, '') === family);
+    const familyEndpoints = endpointCatalog.filter((entry) => stripApiSuffix(entry.typeName ?? '') === family);
     const authProtectedCount = countSecurityProtectedEndpoints(text);
     const authMode = authProtectedCount === 0
       ? 'public'
@@ -4509,7 +4534,7 @@ async function collectApiSurfaceSummary(
 function extractApiFamilyName(text: string, fallbackTypeName?: string): string {
   const tagName = text.match(/@Tag\s*\(\s*name\s*=\s*"([^"]+)"/)?.[1]?.trim();
   if (tagName) return tagName;
-  if (fallbackTypeName) return fallbackTypeName.replace(/Api$/, '');
+  if (fallbackTypeName) return stripApiSuffix(fallbackTypeName) || fallbackTypeName;
   return 'API';
 }
 
@@ -4657,14 +4682,17 @@ function inferExternalDependenciesFromConfig(name: string, text: string): string
   return [...dependencies];
 }
 
+// Describe a config file only by what its filename literally implies — never
+// invent specific technologies (e.g. redis/flyway/turnstile) that aren't
+// actually parsed from the file. Empty string = list the file name without a
+// fabricated descriptor.
 function inferConfigFilePurpose(name: string): string {
   const lower = name.toLowerCase();
-  if (lower === 'application.yaml' || lower === 'application.yml') return 'application bootstrap, datasource, redis, flyway, server runtime';
-  if (lower.includes('security')) return 'security, JWT, turnstile, auth runtime settings';
-  if (lower.includes('mail')) return 'mail service runtime configuration';
-  if (lower.includes('cors')) return 'web CORS configuration';
-  if (lower.includes('minio')) return 'object storage / MinIO configuration';
-  return 'application runtime configuration';
+  if (lower.includes('security')) return 'security configuration';
+  if (lower.includes('mail')) return 'mail configuration';
+  if (lower.includes('cors')) return 'CORS configuration';
+  if (lower.includes('minio')) return 'object storage configuration';
+  return '';
 }
 
 function inferConfigurationPurpose(typeName: string, file: string, text: string): string {
@@ -4768,39 +4796,57 @@ async function collectCommonSummary(projectRoot: string): Promise<CommonSummary>
   const securityConfigText = await readFile(securityConfigPath, 'utf8').catch(() => '');
   const authPropsText = await readFile(authPropsPath, 'utf8').catch(() => '');
   const publisherText = await readFile(notificationPublisherPath, 'utf8').catch(() => '');
+  const jwtIssuerText = await readFile(jwtIssuerPath, 'utf8').catch(() => '');
+  const currentUserProviderText = await readFile(currentUserProviderPath, 'utf8').catch(() => '');
+  const notificationEventText = await readFile(notificationEventPath, 'utf8').catch(() => '');
   const subscriberText = await readFile(subscriberPath, 'utf8').catch(() => '');
-  const redisConfigText = await readFile(redisConfigPath, 'utf8').catch(() => '');
 
   const eventTypes = await collectNotificationEventTypes(serviceRoot);
   const producerCallers = await collectNotificationPublisherCallers(serviceRoot);
   const channel = publisherText.match(/incoming-channel:([^}"']+)/)?.[1]?.trim() ?? 'notifications:incoming';
   const securityDetails = buildCommonSecurityDetails(securityConfigText, authPropsText);
 
+  // Only emit components we found real evidence for. Everything here used to be
+  // a hardcoded fixture from the Event-App-BE reference project, which leaked
+  // into every scanned repo. Undiscovered components are left out entirely
+  // rather than invented (utilities/state-carriers need an AST-backed scan that
+  // this collector does not have, so they stay empty until derived properly).
+  const crossCuttingComponents: Array<{ name: string; role: string }> = [];
+  if (publisherText) crossCuttingComponents.push({ name: 'NotificationPublisher', role: 'cross-module async notification publisher over Redis Pub/Sub' });
+  if (notificationEventText) crossCuttingComponents.push({ name: 'NotificationEvent', role: 'shared notification payload contract' });
+  if (securityConfigText) crossCuttingComponents.push({ name: 'SecurityConfig', role: 'shared Spring Security policy and route protection rules' });
+  if (jwtIssuerText) crossCuttingComponents.push({ name: 'JwtIssuer', role: 'shared JWT access token issuer' });
+  if (currentUserProviderText) crossCuttingComponents.push({ name: 'CurrentUserProvider', role: 'shared current-user resolution from Spring Security context' });
+
+  const securityComponents: string[] = [];
+  if (securityConfigText) securityComponents.push('SecurityConfig');
+  if (jwtIssuerText) securityComponents.push('JwtIssuer');
+  if (authPropsText) securityComponents.push('AuthProps');
+  if (currentUserProviderText) securityComponents.push('CurrentUserProvider');
+
+  const eventFlow = publisherText
+    ? {
+        publisher: 'NotificationPublisher.publish()',
+        transport: 'Redis Pub/Sub',
+        channel,
+        producerCallers,
+        subscriber: subscriberText ? 'event-notification.redis.NotificationSubscriber' : 'notification subscriber',
+        subscriberEffects: [
+          'deserialize NotificationEvent from JSON',
+          'persist notification via NotificationService',
+          'push saved notification to connected clients',
+        ],
+      }
+    : undefined;
+
   return {
-    crossCuttingComponents: [
-      { name: 'NotificationPublisher', role: 'cross-module async notification publisher over Redis Pub/Sub' },
-      { name: 'NotificationEvent', role: 'shared notification payload contract between backend and notification service' },
-      { name: 'SecurityConfig', role: 'shared Spring Security policy and route protection rules' },
-      { name: 'JwtIssuer', role: 'shared JWT access token issuer using RSA signing' },
-      { name: 'CurrentUserProvider', role: 'shared current-user resolution from Spring Security context' },
-    ],
-    utilityComponents: ['CookieUtil', 'DateTimeUtil', 'DisplayNameGenerator', 'EnumUtil', 'IpUtil', 'ListUtil', 'ObjectUtil', 'SlugUtil', 'StringUtil', 'UserDataValidator'],
-    stateCarrierComponents: ['AuthProps', 'MinioProperties', 'NotificationEvent', 'FeedbackType'],
-    securityComponents: ['SecurityConfig', 'JwtIssuer', 'JwtDecoderConfig', 'JwtKeyConfig', 'CookieOrHeaderBearerTokenResolver', 'AuthProps', 'CurrentUserProvider', 'IpUtil'],
+    crossCuttingComponents,
+    utilityComponents: [],
+    stateCarrierComponents: [],
+    securityComponents,
     securityDetails,
     eventTypes,
-    eventFlow: {
-      publisher: 'NotificationPublisher.publish()',
-      transport: 'Redis Pub/Sub',
-      channel,
-      producerCallers,
-      subscriber: 'event-notification.redis.NotificationSubscriber',
-      subscriberEffects: [
-        'deserialize NotificationEvent from JSON',
-        'persist notification via NotificationService',
-        'push saved notification to WsGateway for connected user',
-      ],
-    },
+    eventFlow,
   };
 }
 
@@ -5071,14 +5117,16 @@ async function collectMailCapabilities(projectRoot: string, serviceRoot: string)
       flow: 'PasswordResetService creates a one-time reset token with 2-hour expiry, stores it, then personalizes `password-reset.html` with a reset link',
     });
   }
-  operations.push({
-    name: 'sendInvite',
-    purpose: 'send invite emails for event invitation batches',
-    flow: 'InviteService persists invite rows, then InviteDispatchService asynchronously calls MailService.sendInvite(...) for each email',
-    issue: /UnsupportedOperationException\("Unimplemented method 'sendInvite'"\)/.test(implText)
-      ? 'invite delivery contract exists but MailServiceImpl.sendInvite is currently unimplemented'
-      : undefined,
-  });
+  if (/sendInvite/.test(implText)) {
+    operations.push({
+      name: 'sendInvite',
+      purpose: 'send invite emails for event invitation batches',
+      flow: 'InviteService persists invite rows, then InviteDispatchService asynchronously calls MailService.sendInvite(...) for each email',
+      issue: /UnsupportedOperationException\("Unimplemented method 'sendInvite'"\)/.test(implText)
+        ? 'invite delivery contract exists but MailServiceImpl.sendInvite is currently unimplemented'
+        : undefined,
+    });
+  }
 
   return { config, templates, operations };
 }
@@ -5144,33 +5192,10 @@ async function collectFlowSummary(
     });
   }
 
-  flows.push({
-    name: 'User registration flow',
-    trigger: 'POST /auth/register',
-    summary: 'Public registration request passes captcha validation, persists a new user, triggers verification email delivery, issues tokens, and returns auth response with refresh cookie.',
-    steps: [
-      'AuthApi contract exposes `POST /auth/register`; AuthApiImpl receives RegisterRequest.',
-      'AuthApiImpl validates the Cloudflare Turnstile token through TurnstileService using the caller IP; invalid captcha returns HTTP 400.',
-      'AuthService.register checks that terms were accepted and that the email is not already registered; either failure returns an error branch.',
-      'AuthService creates and saves the new user entity, encoding the password and recording TOS acceptance.',
-      'EmailVerificationService creates a verification token and sends a verification email to the saved user.',
-      'AuthService issues the access token and builds AuthResponse from the saved user profile.',
-      'AuthApiImpl creates the refresh cookie via RefreshTokenService and returns HTTP 201 with response body and Set-Cookie header.',
-    ],
-  });
-
-  flows.push({
-    name: 'Daily event auto-archive flow',
-    trigger: 'EventAutoArchiveJob daily 03:00 Europe/Budapest',
-    summary: 'A scheduled background job calls the auto-archive service, which archives published non-deleted events that are already over by end time or by a start-time-plus-8-hours fallback rule.',
-    steps: [
-      'EventAutoArchiveJob is triggered every day at 03:00 Europe/Budapest.',
-      'The job delegates execution to EventAutoArchiveService.archiveExpiredEventsAsync().',
-      'The service calls EventRepository.archiveExpiredEvents() inside an async transactional background execution.',
-      'The repository updates events to `archived` when status is `published`, `deleted_at` is null, and either `end_time < now()` or `end_time` is null while `start_time < now() - 8 hours`.',
-      'The flow completes without HTTP ingress; it is a scheduler-triggered lifecycle maintenance process.',
-    ],
-  });
+  // Concrete flow narratives are not derived deterministically here; the two
+  // fixtures that used to be pushed unconditionally (User registration / Daily
+  // event auto-archive) were Event-App-BE content that contaminated every scan.
+  // Leave `flows` to whatever real triggers/traces produce — empty is honest.
 
   return { triggers, flows };
 }
@@ -5696,44 +5721,49 @@ function filterPersistenceTargets(items: string[]): string[] {
   return items.filter((item) => !/^table\s+entitys?$/i.test(item));
 }
 
+// Reject names that are clearly not tables — misparsed Java artifacts
+// (getters/setters/builders), the generic `entity` fallback, or SQL clause
+// keywords that leaked through. Schema prefix (e.g. `maren.`) is ignored.
+function isLikelyTableName(name: string): boolean {
+  const bare = name.replace(/^[^.]*\./, '').trim();
+  return Boolean(bare) && !/^(getters?|setters?|builders?|entitys?|entities|examples?|tests?|constraints?|unique|check|indexe?s?|keys?|foreign|primary)$/i.test(bare);
+}
+
+// Render one table as a readable block: a header line with the primary key,
+// then columns and relationships on their own indented sub-bullets. The old
+// single-line "table X | pk | columns: …" format ran everything together.
+function renderTableBlock(name: string, primaryKey: string[] | undefined, columns: string, relationships?: string): string[] {
+  const block = [`- table \`${name}\`${primaryKey?.length ? ` (pk: ${primaryKey.join(', ')})` : ''}`];
+  if (columns) block.push(`  - columns: ${columns}`);
+  if (relationships) block.push(`  - relationships: ${relationships}`);
+  return block;
+}
+
 function buildSchemaLines(analysis: SourceProjectAnalysis, codeGraph?: CodeKnowledgeGraph): string {
   const lines: string[] = [];
   if (codeGraph?.summary.schemaTables?.length) {
-    for (const table of codeGraph.summary.schemaTables.slice(0, 24)) {
-      const columns = table.columns.length ? `columns: ${table.columns.join(', ')}` : '';
-      const primaryKey = table.primaryKey?.length ? `pk: ${table.primaryKey.join(', ')}` : '';
-      const parts = [primaryKey, columns].filter(Boolean).join(' | ');
-      lines.push(`- table ${table.name}${parts ? ` | ${parts}` : ''}`);
+    for (const table of codeGraph.summary.schemaTables.filter((table) => isLikelyTableName(table.name)).slice(0, 24)) {
+      lines.push(...renderTableBlock(table.name, table.primaryKey, table.columns.join(', ')));
     }
   } else {
     for (const sqlFile of analysis.sqlCatalog.slice(0, 20)) {
-      for (const table of sqlFile.tables) {
-        const columns = table.columns.length
-          ? `columns: ${table.columns.map((column) => `${column.name}${column.type ? `:${column.type}` : ''}${column.detail ? `(${column.detail})` : ''}`).join(', ')}`
-          : '';
-        const primaryKey = table.primaryKey?.length ? `pk: ${table.primaryKey.join(', ')}` : '';
-        const foreignKeys = table.foreignKeys.length
-          ? `relationships: ${table.foreignKeys.map((fk) => `${table.name}.${fk.column} -> ${fk.targetTable ?? '?'}.${fk.targetColumn ?? '?'}`).join('; ')}`
-          : '';
-        const parts = [primaryKey, columns, foreignKeys].filter(Boolean).join(' | ');
-        lines.push(`- table ${table.name}${parts ? ` | ${parts}` : ''} | source: ${relativePath(sqlFile.file, analysis.projectRoot)}`);
+      for (const table of sqlFile.tables.filter((table) => isLikelyTableName(table.name))) {
+        const columns = table.columns.map((column) => `${column.name}${column.type ? `:${column.type}` : ''}`).join(', ');
+        const relationships = table.foreignKeys.length
+          ? table.foreignKeys.map((fk) => `${fk.column} -> ${fk.targetTable ?? '?'}.${fk.targetColumn ?? '?'}`).join('; ')
+          : undefined;
+        lines.push(...renderTableBlock(table.name, table.primaryKey, columns, relationships));
       }
     }
     for (const hint of analysis.schemaHints.slice(0, 20)) {
       const tableName = hint.tableName ?? hint.typeName ?? pathBase(hint.file);
+      if (!isLikelyTableName(tableName)) continue;
       const columns = hint.fields?.length
-        ? `fields: ${hint.fields.map((field) => `${field.name}${field.type ? `:${field.type}` : ''}${field.relation ? ` -> ${field.relation}` : ''}`).join(', ')}`
-        : hint.columns.length
-          ? `columns: ${hint.columns.join(', ')}`
-          : '';
-      const primaryKey = hint.primaryKey?.length ? `pk: ${hint.primaryKey.join(', ')}` : '';
-      const relationships = hint.relationships.length ? `relationships: ${hint.relationships.join('; ')}` : '';
-      const parts = [columns, primaryKey, relationships].filter(Boolean).join(' | ');
-      lines.push(`- table ${tableName}${parts ? ` | ${parts}` : ''} | source: ${relativePath(hint.file, analysis.projectRoot)}`);
+        ? hint.fields.map((field) => `${field.name}${field.type ? `:${field.type}` : ''}${field.relation ? ` -> ${field.relation}` : ''}`).join(', ')
+        : hint.columns.join(', ');
+      const relationships = hint.relationships.length ? hint.relationships.join('; ') : undefined;
+      lines.push(...renderTableBlock(tableName, hint.primaryKey, columns, relationships));
     }
-  }
-  if (analysis.counts.sqlFiles > 0) {
-    lines.push(`- sql files detected: ${analysis.resourceFiles.sql.length}`);
   }
   return lines.length ? lines.join('\n') : '- database schema still needs to be inferred from the source';
 }
@@ -6107,14 +6137,21 @@ function buildGraphVerificationArtifact(
   });
 
   const jqassistantPackages = analysis.jqassistant?.graphs?.packageGraph.packages ?? [];
+  // jQAssistant only produces Java package nodes from compiled bytecode, so a
+  // source-only scan (no target/classes) legitimately yields none. Fall back to
+  // packages derived from the parsed Java AST instead of flagging a warning.
+  const astPackages = unique((analysis.javaAstCatalog ?? []).map((astFile) => astFile.packageName ?? '').filter(Boolean));
+  const capturedPackages = jqassistantPackages.length ? jqassistantPackages : astPackages;
   checks.push({
     id: 'jqassistant-package-capture',
-    status: jqassistantPackages.length ? 'ok' : 'warning',
+    status: capturedPackages.length ? 'ok' : 'warning',
     category: 'applications',
     message: jqassistantPackages.length
       ? `jQAssistant captured ${jqassistantPackages.length} Java packages for deterministic reuse`
-      : 'jQAssistant did not provide reusable package graph data',
-    evidence: jqassistantPackages.slice(0, 20),
+      : astPackages.length
+        ? `jQAssistant returned no package graph (it needs compiled bytecode; source-only scans have none) — using ${astPackages.length} packages derived from the Java AST instead`
+        : 'No package graph available from jQAssistant or the Java AST',
+    evidence: capturedPackages.slice(0, 20),
   });
 
   return {

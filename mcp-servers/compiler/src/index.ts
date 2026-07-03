@@ -36,51 +36,55 @@ function createServer() {
 ## Module layout
 
 \`\`\`
-{root-app}/                        ← parent POM (aggregator, groupId: {groupId})
-  versions/                        ← BUILD: Java + library version properties ONLY
-  bom/                             ← BUILD: spring-boot-dependencies import + extra dep pins
-  app/                             ← BUILD: plugin management + internal dep management (POM only, no src)
-  api/                             ← RUNTIME: OpenAPI YAML-first → generated interfaces + DTOs
-  common/                          ← RUNTIME: shared security / JWT / cross-cutting infra
-  persistence/                     ← RUNTIME: JPA entities + Spring Data repositories
-  service/                         ← RUNTIME: business logic services
-  web/                             ← RUNTIME: REST controllers implementing api interfaces
-  build/                           ← RUNTIME: @SpringBootApplication + application.yml + Flyway + spring-boot-maven-plugin → executable fat JAR
+{root-app}/                        ← aggregator POM (packaging=pom): lists all <modules>, groupId {groupId}
+  versions/                        ← BUILD: root parent POM. ONLY <properties> (Java + library + plugin versions). Has no parent.
+  bom/                             ← BUILD: parent=versions. <dependencyManagement> — imports spring-boot-dependencies + external pins (springdoc, postgres, jjwt…)
+  build/                           ← BUILD: parent=versions. POM-only build coordinator, NO source. <dependencyManagement> imports bom + declares internal module versions; <pluginManagement> holds ALL plugins incl. spring-boot-maven-plugin (<mainClass> + repackage)
+  api/                             ← RUNTIME: parent=build. OpenAPI YAML-first → generated interfaces + DTOs
+  common/                          ← RUNTIME: parent=build. shared security / JWT / cross-cutting infra
+  persistence/                     ← RUNTIME: parent=build. JDBC-first repositories (NamedParameterJdbcTemplate + explicit SQL); JPA/Spring Data only when every op is trivial CRUD
+  service/                         ← RUNTIME: parent=build. business logic services
+  web/                             ← RUNTIME: parent=build. REST controllers implementing api interfaces
+  app/                             ← RUNTIME: parent=build. @SpringBootApplication + application.yaml + Flyway migrations; depends on web (→ everything); applies spring-boot-maven-plugin → executable fat JAR in app/target
 \`\`\`
 
-**IMPORTANT: Do NOT add business logic to versions / bom / app.**
-The deployable artifact (fat JAR) is produced by the \`build\` module, NOT by \`app\`.
-\`app\` is a POM-only coordinator; \`build\` is what you deploy.
+**IMPORTANT: the runnable application is \`app\`; \`build\` is a POM-only build coordinator.**
+- \`app\` holds \`@SpringBootApplication\`, \`application.yaml\`, and the Flyway migrations, and depends on \`web\`. It applies \`spring-boot-maven-plugin\`, so the executable fat JAR is produced in \`app/target\`.
+- \`build\` has NO source. It centralises \`<pluginManagement>\` (compiler+Lombok, surefire, jacoco, spotless, openapi-generator, and spring-boot-maven-plugin with \`<mainClass>{groupId}.{Name}Application</mainClass>\` + \`repackage\`) plus the internal-module \`<dependencyManagement>\` (imports \`bom\`).
+- \`versions\` holds ONLY version \`<properties>\`; \`bom\` holds ONLY external \`<dependencyManagement>\`.
+- Do NOT put \`@SpringBootApplication\`, \`application.yaml\`, migrations, or business logic in \`versions\` / \`bom\` / \`build\`.
 
 ## POM parent chain
 
 \`\`\`
-versions  ← bom (imports spring-boot-dependencies)
-versions  ← app (plugin management, internal dep management)
-app       ← api, common, persistence, service, web, build
+versions                       (root parent: version <properties> only; no parent)
+  ├── bom                      (dependencyManagement: spring-boot-dependencies import + external pins)
+  └── build                    (dependencyManagement: imports bom + internal module versions; pluginManagement: all plugins + spring-boot repackage/mainClass)
+        └── api, common, persistence, service, web, app   (parent = build)
 \`\`\`
 
-When creating a new runtime module its \`<parent>\` must reference \`app\`.
-Add it to: root parent POM \`<modules>\` AND \`app\`'s \`<dependencyManagement>\`.
+When creating a new runtime module its \`<parent>\` must reference \`build\`.
+Add it to: aggregator POM \`<modules>\` AND \`build\`'s internal \`<dependencyManagement>\`.
 
 ## Dependency chain
 
 \`\`\`
-build → web → service → persistence → common
-                    ↘ api ↗
+app → web → service → persistence → common
+                 ↘ api ↗
 \`\`\`
 - \`api\` and \`common\` have no internal module dependencies
 - \`persistence\` depends on: api + common
 - \`service\` depends on: persistence + api + common
 - \`web\` depends on: api + service
-- \`build\` depends on: web (brings everything transitively)
+- \`app\` depends on: web (brings everything transitively); also adds spring-boot-starter, actuator, flyway-core, flyway-database-postgresql, postgresql
+- \`versions\` / \`bom\` / \`build\` are POM-only parents — they are inherited, never listed as \`<dependency>\`
 
 ## API-first (OpenAPI) pattern
 
 1. Define endpoint in \`api/src/main/resources/openapi/{name}.yaml\`
 2. \`mvn generate-sources\` → generates \`*Api\` Spring interfaces + DTOs into \`{groupId}.api\` / \`{groupId}.dto\`
 3. Implement in \`web\`: \`class FooApiImpl implements FooApi { ... }\` (delegate to service)
-4. Service interface lives in \`service\` or \`common\`; impl is \`*ServiceImpl\` in \`service\`
+4. Service class lives in \`service\`. Default to a single concrete \`@Service\` class (\`*Service\`) — most services back one API endpoint and have exactly one implementation, so an interface is unnecessary indirection. Only split into a \`*Service\` interface + \`*ServiceImpl\` when multiple implementations are genuinely expected (swappable strategies/backends, a seam needed for isolated testing, or a public contract shared across modules).
 
 ## Package naming per module
 
@@ -90,18 +94,19 @@ build → web → service → persistence → common
 |               | \`{groupId}.dto\`                        | OpenAPI-generated DTOs (Lombok + Jackson)         |
 | \`common\`      | \`{groupId}.common.security\`            | SecurityConfig, JWT classes                       |
 |               | \`{groupId}.common.{domain}\`            | Shared utilities, cross-cutting concerns          |
-| \`persistence\` | \`{groupId}.persistence.entity\`         | \`@Entity\` classes                                |
-|               | \`{groupId}.persistence.repository\`     | \`*Repository extends JpaRepository<T, ID>\`       |
-| \`service\`     | \`{groupId}.service.{domain}\`           | \`*Service\` interface + \`*ServiceImpl\`            |
+| \`persistence\` | \`{groupId}.persistence.row\`            | plain row/record types (Java \`record\` mapped by a \`RowMapper\`) — no \`@Entity\` unless JPA is used |
+|               | \`{groupId}.persistence.repository\`     | \`@Repository\` class using \`NamedParameterJdbcTemplate\` (JDBC-first, default); \`*Repository extends JpaRepository<T, ID>\` only when all ops are trivial CRUD |
+| \`service\`     | \`{groupId}.service.{domain}\`           | \`*Service\` concrete \`@Service\` class (add \`*Service\` interface + \`*ServiceImpl\` only when multiple impls are expected) |
 |               | \`{groupId}.service.jobs\`               | \`*Job\` (scheduled tasks)                         |
 | \`web\`         | \`{groupId}.web.controller\`             | \`*ApiImpl implements *Api\`                        |
 |               | \`{groupId}.web.config\`                 | \`*Config\`, \`*Properties\`                        |
-| \`build\`       | \`{groupId}\`                            | \`*Application\` (@SpringBootApplication main)     |
+| \`app\`         | \`{groupId}\`                            | \`*Application\` (@SpringBootApplication main)     |
 |               | \`{groupId}.config\`                     | App-level @Configuration beans                    |
+| \`build\`       | — (no source)                          | POM-only: \`<pluginManagement>\` (incl. spring-boot-maven-plugin repackage + \`<mainClass>\`) + internal \`<dependencyManagement>\` |
 
 ## DB migrations (Flyway)
 
-Location: \`build/src/main/resources/db/migration/V{n}__{description}.sql\`
+Location: \`app/src/main/resources/db/migration/V{n}__{description}.sql\`
 Naming: \`V1__init.sql\`, \`V2__add_user_table.sql\`
 
 ## Dependency versions — always use latest stable compatible with Spring Boot 3.x / Jakarta EE 10
@@ -127,8 +132,8 @@ Naming: \`V1__init.sql\`, \`V2__add_user_table.sql\`
 ## Class naming conventions
 
 - Controller: \`*ApiImpl\` (implements OpenAPI-generated interface)
-- Service interface: \`*Service\`; implementation: \`*ServiceImpl\`
-- Repository: \`*Repository\` (extends JpaRepository)
+- Service: concrete \`@Service\` class named \`*Service\` by default; only when multiple implementations are expected split into a \`*Service\` interface + \`*ServiceImpl\`
+- Repository: \`*Repository\` — default is a \`@Repository\` class backed by \`NamedParameterJdbcTemplate\` with explicit named-parameter SQL + a \`RowMapper\`. Use JPA/Spring Data (\`extends JpaRepository<T, ID>\` + \`@Entity\`) ONLY when every operation on the repo is trivial CRUD (find/save/delete by id, no hand-written joins or projections)
 - Entity: class name = table name in PascalCase (no \`Entity\` suffix needed)
 - Config: \`*Config\` or \`*Configuration\`
 - Scheduled task: \`*Job\`

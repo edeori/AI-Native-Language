@@ -57,7 +57,7 @@ export function defaultReviewModel(reviewProvider: ExtensionConfig['reviewProvid
     case 'codex':
       return 'gpt-5.5';
     case 'claude':
-      return 'sonnet';
+      return 'claude-sonnet-4-5';
   }
 }
 

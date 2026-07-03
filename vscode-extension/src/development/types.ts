@@ -14,5 +14,9 @@ export interface TaskEntry {
   createdAt: string;
   result?: TaskResult;
   docDrift?: boolean;
+  // Why the last run failed (e.g. a timeout or CLI error). A failed run is put
+  // back on the queue, so this lets the UI still explain what went wrong.
+  failureReason?: string;
+  failedAt?: string;
 }
 

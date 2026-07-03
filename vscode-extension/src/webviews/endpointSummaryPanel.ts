@@ -11,7 +11,9 @@ export interface DetectedEndpoint {
   description?: string;
   file: string;
   line: number;
-  source?: 'code' | 'semantic' | 'document';
+  source?: 'code' | 'semantic' | 'document' | 'actuator';
+  /** All sources that assert this endpoint (populated by deduplication). */
+  sources?: Array<'code' | 'semantic' | 'document' | 'actuator'>;
 }
 
 // ─── Scanner ───────────────────────────────────────────────────────────────
@@ -67,13 +69,18 @@ async function scanFile(filePath: string, rootPath: string, results: DetectedEnd
   const relPath = path.relative(rootPath, filePath);
   const lines = text.split('\n');
 
-  // Current class name — track as we scan
+  // Current class name + its class-level @RequestMapping base path — track as we scan
   let currentClass: string | undefined;
+  let currentClassBase = '';
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const classMatch = CLASS_NAME.exec(line);
-    if (classMatch) currentClass = classMatch[1];
+    if (classMatch) {
+      currentClass = classMatch[1];
+      // A class-level @RequestMapping ("/base") sits just above the declaration.
+      currentClassBase = findClassRequestMappingBase(lines, i);
+    }
 
     // gRPC: .proto files handled below; for Java look for stub method patterns
     if (filePath.endsWith('.proto')) {
@@ -87,10 +94,15 @@ async function scanFile(filePath: string, rootPath: string, results: DetectedEnd
     // REST — Spring
     const restMatch = /@(Get|Post|Put|Delete|Patch|Request)Mapping\s*(?:\(\s*(?:value\s*=\s*)?["']([^"']*?)["'])?/.exec(line);
     if (restMatch) {
+      // Skip a class-level @RequestMapping — it's the base path, not its own endpoint.
+      if (restMatch[1] === 'Request' && isClassDeclarationNearby(lines, i)) {
+        continue;
+      }
       const verb = restMatch[1] === 'Request' ? 'ANY' : restMatch[1].toUpperCase();
-      const p = restMatch[2] ?? '';
+      const methodPath = restMatch[2] ?? '';
+      const composed = composePath(currentClassBase, methodPath);
       const methodLine = lookAhead(lines, i, 3);
-      results.push({ kind: 'REST', method: verb, path: p || '/', className: currentClass, methodName: methodLine, file: relPath, line: i + 1 });
+      results.push({ kind: 'REST', method: verb, path: composed, className: currentClass, methodName: methodLine, file: relPath, line: i + 1, source: 'code' });
       continue;
     }
 
@@ -152,6 +164,31 @@ function findNearbyAnnotation(lines: string[], from: number, re: RegExp): string
     if (m) return m[1];
   }
   return undefined;
+}
+
+// A `@RequestMapping` is class-level when a class/interface declaration follows
+// within a few lines (annotations + modifiers may sit in between).
+function isClassDeclarationNearby(lines: string[], from: number): boolean {
+  for (let i = from + 1; i <= from + 4 && i < lines.length; i++) {
+    if (/\b(class|interface)\s+\w/.test(lines[i])) return true;
+    if (/[;{]\s*$/.test(lines[i]) && !/^\s*@/.test(lines[i])) break; // hit a method/statement
+  }
+  return false;
+}
+
+// Look back from a class declaration for its class-level @RequestMapping base path.
+function findClassRequestMappingBase(lines: string[], classLineIndex: number): string {
+  for (let i = classLineIndex; i >= Math.max(0, classLineIndex - 5); i--) {
+    const m = /@RequestMapping\s*\(\s*(?:value\s*=\s*)?["']([^"']*)["']/.exec(lines[i]);
+    if (m) return m[1];
+  }
+  return '';
+}
+
+// Join a class base path and a method path into a single normalized path.
+function composePath(base: string, method: string): string {
+  const joined = `/${base}/${method}`.replace(/\/{2,}/g, '/').replace(/\/+$/, '');
+  return joined || '/';
 }
 
 // ─── Document import scanner ───────────────────────────────────────────────
@@ -226,30 +263,110 @@ export async function scanImportedDocEndpoints(workspaceRoot: string): Promise<D
   return results;
 }
 
-function deduplicateEndpoints(
-  semanticEndpoints: DetectedEndpoint[],
-  docEndpoints: DetectedEndpoint[],
-  codeEndpoints: DetectedEndpoint[],
-): DetectedEndpoint[] {
-  const seenKeys = new Set<string>();
-  const normalizeKey = (ep: DetectedEndpoint) =>
-    ep.kind === 'REST' && ep.method && ep.path
-      ? `${ep.kind}:${ep.method}:${ep.path.replace(/\/$/, '')}`
-      : `${ep.kind}:${ep.path ?? ep.methodName ?? ''}`;
+// ─── Actuator endpoint synthesis ────────────────────────────────────────────
+// Spring Boot Actuator endpoints (/actuator/**) are registered by auto-configuration
+// at runtime — they have no @*Mapping in source, so the code scanner can't see them.
+// Synthesize them deterministically from the pom (dependency) + application config
+// (exposure + base-path). No AI, no network.
 
+const ACTUATOR_COMMON = [
+  'health', 'info', 'metrics', 'prometheus', 'env', 'beans', 'mappings',
+  'loggers', 'threaddump', 'heapdump', 'configprops', 'conditions', 'scheduledtasks', 'caches',
+];
+
+async function collectBuildFiles(
+  rootPath: string,
+  currentPath: string,
+  poms: Array<{ path: string; text: string }>,
+  configs: Array<{ path: string; text: string }>,
+  depth: number,
+): Promise<void> {
+  if (depth > 12) return;
+  let entries: [string, vscode.FileType][];
+  try {
+    entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(currentPath));
+  } catch {
+    return;
+  }
+  for (const [name, type] of entries) {
+    if (IGNORED_DIRS.has(name)) continue;
+    const full = path.join(currentPath, name);
+    if (type === vscode.FileType.Directory) {
+      await collectBuildFiles(rootPath, full, poms, configs, depth + 1);
+    } else if (name === 'pom.xml' || name === 'build.gradle' || name === 'build.gradle.kts') {
+      try { poms.push({ path: full, text: await fs.readFile(full, 'utf8') }); } catch { /* skip */ }
+    } else if (/^application(-[\w.]+)?\.(ya?ml|properties)$/i.test(name)) {
+      try { configs.push({ path: full, text: await fs.readFile(full, 'utf8') }); } catch { /* skip */ }
+    }
+  }
+}
+
+async function scanActuatorEndpoints(workspaceRoot: string): Promise<DetectedEndpoint[]> {
+  const poms: Array<{ path: string; text: string }> = [];
+  const configs: Array<{ path: string; text: string }> = [];
+  await collectBuildFiles(workspaceRoot, workspaceRoot, poms, configs, 0);
+
+  const actuatorPom = poms.find((p) => /spring-boot-starter-actuator/.test(p.text));
+  if (!actuatorPom) return [];
+
+  const hasPrometheus = poms.some((p) => /micrometer-registry-prometheus/.test(p.text));
+
+  let basePath = '/actuator';
+  const exposed = new Set<string>(['health', 'info']); // Spring Boot's web-exposed defaults
+  for (const c of configs) {
+    const bp = c.text.match(/base-path\s*[:=]\s*["']?([^\s"'#]+)/i);
+    if (bp) basePath = bp[1].startsWith('/') ? bp[1] : `/${bp[1]}`;
+    const inc = c.text.match(/exposure[\s\S]{0,60}?\binclude\s*[:=]\s*["']?([^\n"'#]+)/i);
+    if (inc) {
+      const val = inc[1].trim().replace(/["']/g, '');
+      if (val.includes('*')) ACTUATOR_COMMON.forEach((e) => exposed.add(e));
+      else val.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean).forEach((e) => exposed.add(e));
+    }
+  }
+  if (hasPrometheus) exposed.add('prometheus');
+
+  const relFile = path.relative(workspaceRoot, actuatorPom.path);
+  return [...exposed].map((id) => ({
+    kind: 'REST' as const,
+    method: 'GET',
+    path: `${basePath}/${id}`.replace(/\/{2,}/g, '/'),
+    description: `Spring Boot Actuator (${id})`,
+    file: relFile,
+    line: 1,
+    source: 'actuator' as const,
+  }));
+}
+
+// Path-param names differ across sources (/users/{id} vs /users/{userId}) and are
+// not part of an endpoint's identity — normalize them to `{}` positionally.
+function normalizeKey(ep: DetectedEndpoint): string {
+  const normPath = (ep.path ?? '').replace(/\{[^}]*\}/g, '{}').replace(/\/$/, '');
+  return ep.kind === 'REST' && ep.method && ep.path
+    ? `${ep.kind}:${ep.method}:${normPath}`
+    : `${ep.kind}:${normPath || ep.methodName || ''}`;
+}
+
+// Merge endpoint lists across sources by identity. The first source in argument
+// order wins the display fields (semantic → document → code → actuator), but ALL
+// contributing sources are recorded on `sources` so a doc+code endpoint shows once
+// with both badges instead of duplicating.
+function deduplicateEndpoints(...groups: DetectedEndpoint[][]): DetectedEndpoint[] {
+  const byKey = new Map<string, DetectedEndpoint>();
   const merged: DetectedEndpoint[] = [];
-  for (const ep of semanticEndpoints) {
-    const k = normalizeKey(ep);
-    seenKeys.add(k);
-    merged.push(ep);
-  }
-  for (const ep of docEndpoints) {
-    const k = normalizeKey(ep);
-    if (!seenKeys.has(k)) { seenKeys.add(k); merged.push(ep); }
-  }
-  for (const ep of codeEndpoints) {
-    const k = normalizeKey(ep);
-    if (!seenKeys.has(k)) { seenKeys.add(k); merged.push(ep); }
+  for (const group of groups) {
+    for (const ep of group) {
+      const k = normalizeKey(ep);
+      const src = ep.source ?? 'code';
+      const existing = byKey.get(k);
+      if (existing) {
+        existing.sources = existing.sources ?? [existing.source ?? 'code'];
+        if (!existing.sources.includes(src)) existing.sources.push(src);
+      } else {
+        const record: DetectedEndpoint = { ...ep, sources: [src] };
+        byKey.set(k, record);
+        merged.push(record);
+      }
+    }
   }
   return merged;
 }
@@ -321,12 +438,15 @@ export class EndpointSummaryPanel {
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: 'Scanning endpoints…', cancellable: false },
       async () => {
-        const [codeEndpoints, semanticEndpoints, docEndpoints] = await Promise.all([
+        const [codeEndpoints, semanticEndpoints, docEndpoints, actuatorEndpoints] = await Promise.all([
           Promise.all(workspaceFolders.map((wf) => scanEndpoints(wf.uri.fsPath))).then((r) => r.flat()),
           Promise.all(workspaceFolders.map((wf) => scanSemanticEndpoints(wf.uri.fsPath))).then((r) => r.flat()),
           Promise.all(workspaceFolders.map((wf) => scanImportedDocEndpoints(wf.uri.fsPath))).then((r) => r.flat()),
+          Promise.all(workspaceFolders.map((wf) => scanActuatorEndpoints(wf.uri.fsPath))).then((r) => r.flat()),
         ]);
-        const endpoints = deduplicateEndpoints(semanticEndpoints, docEndpoints, codeEndpoints);
+        // Precedence for display fields: semantic → document → code → actuator; all
+        // contributing sources are recorded so shared endpoints show once, multi-badged.
+        const endpoints = deduplicateEndpoints(semanticEndpoints, docEndpoints, codeEndpoints, actuatorEndpoints);
 
         if (EndpointSummaryPanel.currentPanel) {
           EndpointSummaryPanel.currentPanel.panel.reveal(vscode.ViewColumn.Two);
@@ -416,14 +536,23 @@ function buildHtml(endpoints: DetectedEndpoint[], webview: vscode.Webview): stri
       const pathCell = ep.path ? `<span class="ep-path">${esc(ep.path)}</span>` : '<span class="ep-path muted">—</span>';
       const isSemantic = ep.source === 'semantic';
       const isDocument = ep.source === 'document';
-      const classCell = (isSemantic || isDocument)
+      const isActuator = ep.source === 'actuator';
+      const classCell = (isSemantic || isDocument || isActuator)
         ? `<span class="muted">${esc(ep.description ?? '')}</span>`
         : (ep.className ? `<span class="ep-class">${esc(ep.className)}</span>${ep.methodName ? `<span class="muted">::${esc(ep.methodName)}</span>` : ''}` : '');
-      const fileCell = isSemantic
-        ? `<span class="semantic-badge" title="From source.semantic.md">S</span>`
+      // One badge per contributing source, so a doc+code endpoint shows once with both.
+      const SRC_LABEL: Record<string, string> = { code: 'C', semantic: 'S', document: 'D', actuator: 'A' };
+      const srcList = ep.sources ?? [ep.source ?? 'code'];
+      const srcBadges = srcList
+        .map((s) => `<span class="src-badge src-${s}" title="${s}">${SRC_LABEL[s] ?? '?'}</span>`)
+        .join('');
+      const hasCode = srcList.includes('code');
+      const locator = hasCode
+        ? `<a class="ep-file" href="#" data-file="${esc(ep.file)}" data-line="${ep.line}">${esc(ep.file)}:${ep.line}</a>`
         : isDocument
-          ? `<span class="document-badge" title="${esc(ep.file)}">D</span><span class="muted doc-file">${esc(ep.file.replace('.ai-native/imports/', ''))}</span>`
-          : `<a class="ep-file" href="#" data-file="${esc(ep.file)}" data-line="${ep.line}">${esc(ep.file)}:${ep.line}</a>`;
+          ? `<span class="muted doc-file">${esc(ep.file.replace('.ai-native/imports/', ''))}</span>`
+          : '';
+      const fileCell = `${srcBadges}${locator ? ` ${locator}` : ''}`;
       return `<tr>${[badge ? `<td>${badge}</td>` : '<td></td>', `<td>${pathCell}</td>`, `<td>${classCell}</td>`, `<td>${fileCell}</td>`].join('')}</tr>`;
     }).join('');
 
@@ -496,6 +625,11 @@ function buildHtml(endpoints: DetectedEndpoint[], webview: vscode.Webview): stri
     .ep-file { font-size: 11px; font-family: monospace; color: var(--vscode-textLink-foreground); text-decoration: none; }
     .ep-file:hover { text-decoration: underline; }
     .muted { color: var(--vscode-descriptionForeground); font-size: 11px; }
+    .src-badge { display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; border: 1px solid; cursor: default; margin-right: 3px; }
+    .src-code { background: #22c55e22; color: #4ade80; border-color: #22c55e44; }
+    .src-semantic { background: #7c3aed22; color: #a78bfa; border-color: #7c3aed44; }
+    .src-document { background: #d9770622; color: #fb923c; border-color: #d9770644; }
+    .src-actuator { background: #0ea5e922; color: #38bdf8; border-color: #0ea5e944; }
     .semantic-badge { display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; background: #7c3aed22; color: #a78bfa; border: 1px solid #7c3aed44; cursor: default; }
     .document-badge { display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; background: #d9770622; color: #fb923c; border: 1px solid #d9770644; cursor: default; margin-right: 4px; }
     .doc-file { font-family: monospace; font-size: 10px; }

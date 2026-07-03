@@ -31,7 +31,8 @@ import {
   type JqassistantArtifact,
   type JavaAstFile,
 } from '@ai-native/semantic-shared';
-import { runAgenticPrompt, runAgenticReviewBundle, runCloudRawPrompt, CreditExhaustedError, type AgenticDiagramClassification, type AgenticReviewContext, type AgenticReviewResult, type ReviewPromptBundle } from './agenticReview.js';
+import { runAgenticPrompt, runAgenticReviewBundle, runCloudRawPrompt, setAiUsageSink, CreditExhaustedError, type AgenticDiagramClassification, type AgenticReviewContext, type AgenticReviewResult, type ReviewPromptBundle } from './agenticReview.js';
+import { recordUsage } from './metrics.js';
 import { hashArtifactContent, readLatestVersionedArtifact, writeVersionedArtifact } from './versionedArtifacts.js';
 import { analyzeDocImports } from './docImportAnalysis.js';
 
@@ -65,6 +66,22 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
   initializeMcpConfigStorage(context.globalStorageUri);
   const diagnostics = vscode.languages.createDiagnosticCollection('ai-native-semantic-workflow');
   context.subscriptions.push(diagnostics);
+
+  // Record AI token usage from every provider CLI call into .ai-native/metrics.
+  setAiUsageSink((event) => {
+    if (!event.workspaceRoot) return;
+    void recordUsage(
+      path.join(event.workspaceRoot, '.ai-native'),
+      event.operation,
+      {
+        inputTokens: event.inputTokens,
+        cachedInputTokens: event.cachedInputTokens,
+        cacheWriteTokens: event.cacheWriteTokens,
+        outputTokens: event.outputTokens,
+      },
+    );
+  });
+  context.subscriptions.push({ dispose: () => setAiUsageSink(undefined) });
 
   const registry = new McpRegistry(outputChannel);
   context.subscriptions.push({
@@ -214,6 +231,61 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
         if (!handleCreditExhaustedError(err, outputChannel)) throw err;
       }
     }),
+    vscode.commands.registerCommand(commandIds.reviewReconcile, async (payload?: { artifactRoot?: string }) => {
+      const root = payload?.artifactRoot ? vscode.Uri.file(payload.artifactRoot) : await resolveArtifactRoot();
+      if (!root) { void vscode.window.showWarningMessage('Open a workspace first.'); return; }
+      const current = vscode.Uri.joinPath(root, 'source.semantic.md');
+      const proposed = vscode.Uri.joinPath(root, 'source.semantic.proposed.md');
+      try {
+        await vscode.workspace.fs.stat(proposed);
+      } catch {
+        void vscode.window.showInformationMessage('No reconcile proposal pending (source.semantic.proposed.md not found).');
+        return;
+      }
+      await vscode.commands.executeCommand(
+        'vscode.diff',
+        current,
+        proposed,
+        'Semantic reconcile — resolve conflicts in the right pane, save, then Apply',
+      );
+      const choice = await vscode.window.showInformationMessage(
+        'Reconcile proposal opened. Resolve any conflict markers in the right (proposed) pane and save, then apply it to source.semantic.md.',
+        'Apply resolved',
+        'Discard',
+      );
+      if (choice === 'Apply resolved') {
+        await vscode.commands.executeCommand(commandIds.applyReconcile, { artifactRoot: root.fsPath });
+      } else if (choice === 'Discard') {
+        await vscode.workspace.fs.delete(proposed).then(undefined, () => undefined);
+        void vscode.window.showInformationMessage('Reconcile proposal discarded.');
+      }
+    }),
+    vscode.commands.registerCommand(commandIds.applyReconcile, async (payload?: { artifactRoot?: string }) => {
+      const root = payload?.artifactRoot ? vscode.Uri.file(payload.artifactRoot) : await resolveArtifactRoot();
+      if (!root) { void vscode.window.showWarningMessage('Open a workspace first.'); return; }
+      const current = vscode.Uri.joinPath(root, 'source.semantic.md');
+      const proposed = vscode.Uri.joinPath(root, 'source.semantic.proposed.md');
+      let bytes: Uint8Array;
+      try {
+        bytes = await vscode.workspace.fs.readFile(proposed);
+      } catch {
+        void vscode.window.showWarningMessage('No reconcile proposal to apply.');
+        return;
+      }
+      const text = Buffer.from(bytes).toString('utf8');
+      if (/^<{7}|^={7}|^>{7}/m.test(text)) {
+        const proceed = await vscode.window.showWarningMessage(
+          'The proposal still contains unresolved conflict markers (<<<<<<< / >>>>>>>). Apply anyway?',
+          'Apply anyway',
+          'Cancel',
+        );
+        if (proceed !== 'Apply anyway') return;
+      }
+      await vscode.workspace.fs.writeFile(current, bytes);
+      await vscode.workspace.fs.delete(proposed).then(undefined, () => undefined);
+      await refreshViews();
+      void vscode.window.showInformationMessage('Reconciled source.semantic.md applied.');
+    }),
     vscode.commands.registerCommand(commandIds.openDevelopmentView, async () => {
       try {
         await vscode.commands.executeCommand('workbench.view.extension.aiNativeDev');
@@ -263,7 +335,8 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
         }
       }).catch(err => {
         developmentProvider.updateState({ streamOutput: '' });
-        void vscode.window.showErrorMessage(`Implementation failed: ${err instanceof Error ? err.message : String(err)}`);
+        outputChannel.show(true);
+        void vscode.window.showErrorMessage(`Implementation failed (task reset to queued): ${err instanceof Error ? err.message : String(err)}`);
       });
     }),
     vscode.commands.registerCommand(commandIds.queueImplementation, async (payload?: { direction?: string }) => {
@@ -2032,6 +2105,14 @@ async function importSourceProject(
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.databaseSchemaPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.databaseSchemaMdPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.graphPath}`);
+      // If semantic.md already existed, the source scan produced a reconcile proposal
+      // (code-derived changes) instead of overwriting — surface it for review.
+      if (result.proposedSemanticPath && result.reconcile && outputDir) {
+        outputChannel.appendLine(
+          `[source-to-semantic] reconcile proposal — ${result.reconcile.addCount} addition(s), ${result.reconcile.conflictCount} conflict(s) → ${result.proposedSemanticPath}`,
+        );
+        void vscode.commands.executeCommand(commandIds.reviewReconcile, { artifactRoot: outputDir });
+      }
       const semanticDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(result.semanticPath));
       const sourceHash = hashArtifactContent(await fs.readFile(result.semanticPath, 'utf8'));
       if (outputDir) {

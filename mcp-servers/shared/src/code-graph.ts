@@ -848,6 +848,13 @@ function collectIntegrationInterfaces(analysis: SourceProjectAnalysis): string[]
   ]);
 }
 
+// Names that are annotation artifacts, not real types — the AST parser can
+// surface e.g. `Generated` (from `@Generated`) as a pseudo-type. These must
+// never be reported as controllers/handlers.
+function isAnnotationNoiseName(name: string): boolean {
+  return /^(Generated|Override|Deprecated|SuppressWarnings|FunctionalInterface|SafeVarargs|Nullable|NonNull|Nonnull|RestController|Controller|RestControllerAdvice|ControllerAdvice|ExceptionHandler|Validated|Valid|RequestMapping|Service|Component|Repository|Configuration|Bean)$/i.test(name);
+}
+
 function collectValidationBoundaryNames(analysis: SourceProjectAnalysis): string[] {
   const result: string[] = [];
   for (const astFile of analysis.javaAstCatalog ?? []) {
@@ -856,6 +863,7 @@ function collectValidationBoundaryNames(analysis: SourceProjectAnalysis): string
     const isWebFacing = /\/api\//i.test(file) || /\/web\/controller\//i.test(file) || /\.api(?:\.|$)/i.test(packageName);
     if (!isWebFacing) continue;
     for (const type of astFile.types) {
+      if (isAnnotationNoiseName(type.name)) continue;
       const hasValidated = type.annotations.some((annotation) => /Validated/i.test(annotation));
       const hasMethodValidation = type.methods.some((method) => method.annotations.some((annotation) => /Valid/i.test(annotation)));
       if (hasValidated || hasMethodValidation) {
@@ -890,6 +898,7 @@ function collectExceptionHandlerNames(analysis: SourceProjectAnalysis): string[]
   for (const astFile of analysis.javaAstCatalog ?? []) {
     const inErrorHandlerPackage = /\/errorhandler\//i.test(astFile.file) || /\.errorhandler(?:\.|$)/i.test(astFile.packageName ?? '');
     for (const type of astFile.types) {
+      if (isAnnotationNoiseName(type.name)) continue;
       const hasAdvice = type.annotations.some((annotation) => /RestControllerAdvice|ControllerAdvice/i.test(annotation));
       const hasExceptionHandler = type.methods.some((method) => method.annotations.some((annotation) => /ExceptionHandler/i.test(annotation)));
       if ((hasAdvice || hasExceptionHandler || inErrorHandlerPackage) && /Handler|Advice/i.test(type.name)) {
@@ -935,6 +944,14 @@ function collectWebSecurityBoundaryNames(analysis: SourceProjectAnalysis): strin
   return unique(result);
 }
 
+// Reject names that are clearly not tables — misparsed Java artifacts
+// (getters/setters/builders), the generic `entity` fallback, or SQL clause
+// keywords that leaked through. Schema prefix (e.g. `maren.`) is ignored.
+function isLikelyTableName(name: string): boolean {
+  const bare = name.replace(/^[^.]*\./, '').trim();
+  return Boolean(bare) && !/^(getters?|setters?|builders?|entitys?|entities|examples?|tests?|constraints?|unique|check|indexe?s?|keys?|foreign|primary)$/i.test(bare);
+}
+
 function collectSchemaTables(analysis: SourceProjectAnalysis): Array<{ name: string; columns: string[]; primaryKey?: string[] }> {
   const tables: Array<{ name: string; columns: string[]; primaryKey?: string[] }> = [];
   for (const hint of analysis.schemaHints.slice(0, 32)) {
@@ -953,7 +970,7 @@ function collectSchemaTables(analysis: SourceProjectAnalysis): Array<{ name: str
       });
     }
   }
-  return uniqueBy(tables, (item) => item.name);
+  return uniqueBy(tables.filter((table) => isLikelyTableName(table.name)), (item) => item.name);
 }
 
 function collectKinds(analysis: SourceProjectAnalysis, kind: JavaArtifactSummary['kind']): string[] {

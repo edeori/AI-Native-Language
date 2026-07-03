@@ -17,7 +17,7 @@ Triggered automatically when: `isCreating` topic detected — no button, no manu
   app/                             ← BUILD: plugin management + internal dep management (POM only, no src)
   api/                             ← RUNTIME: OpenAPI YAML-first → generated interfaces + DTOs
   common/                          ← RUNTIME: shared security / JWT / cross-cutting infra
-  persistence/                     ← RUNTIME: JPA entities + Spring Data repositories
+  persistence/                     ← RUNTIME: JDBC-first repository-k (NamedParameterJdbcTemplate + explicit SQL); JPA/Spring Data csak ha minden művelet triviális CRUD
   service/                         ← RUNTIME: business logic services
   web/                             ← RUNTIME: REST controllers implementing api interfaces
   build/                           ← RUNTIME: @SpringBootApplication + application.yml + Flyway + spring-boot-maven-plugin → fat JAR
@@ -59,9 +59,9 @@ build → web → service → persistence → common
 |               | `{groupId}.dto`                      | OpenAPI-generált DTOs (Lombok + Jackson)        |
 | `common`      | `{groupId}.common.security`          | SecurityConfig, JWT osztályok                   |
 |               | `{groupId}.common.{domain}`          | Megosztott utility-k                            |
-| `persistence` | `{groupId}.persistence.entity`       | `@Entity` osztályok                             |
-|               | `{groupId}.persistence.repository`   | `*Repository extends JpaRepository<T, ID>`      |
-| `service`     | `{groupId}.service.{domain}`         | `*Service` + `*ServiceImpl`                     |
+| `persistence` | `{groupId}.persistence.row`          | sima row/record típusok (`record` + `RowMapper`), nincs `@Entity` hacsak nem JPA |
+|               | `{groupId}.persistence.repository`   | `@Repository` osztály `NamedParameterJdbcTemplate`-tel (JDBC-first, alap); `*Repository extends JpaRepository<T, ID>` csak triviális CRUD-nál |
+| `service`     | `{groupId}.service.{domain}`         | `*Service` konkrét `@Service` osztály (interfész + `*ServiceImpl` csak több implementációnál) |
 |               | `{groupId}.service.jobs`             | `*Job` (scheduled feladatok)                    |
 | `web`         | `{groupId}.web.controller`           | `*ApiImpl implements *Api`                      |
 |               | `{groupId}.web.config`               | `*Config`, `*Properties`                        |
@@ -73,7 +73,7 @@ build → web → service → persistence → common
 1. Endpoint definiálása: `api/src/main/resources/openapi/{name}.yaml`
 2. `mvn generate-sources` → generál `*Api` interfészeket + DTO-kat
 3. Implementálás `web`-ben: `class FooApiImpl implements FooApi { ... }`
-4. Service interfész `service`-ben vagy `common`-ban, impl `*ServiceImpl`
+4. Service alapból egyetlen konkrét `@Service` osztály (`*Service`) a `service`-ben — a legtöbb service egy API végpontot szolgál ki, egyetlen implementációval, így az interfész felesleges indirekció. `*Service` interfész + `*ServiceImpl` szétbontás csak akkor, ha tényleg több implementáció várható (cserélhető stratégia/backend, teszteléshez kell a seam, vagy modulok közti publikus kontraktus)
 
 ## DB migrációk (Flyway)
 

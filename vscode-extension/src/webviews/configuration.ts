@@ -102,6 +102,13 @@ const ROLE_MODEL_PRESETS: Record<LocalAgentConfigKey, Record<AgentorModelsConfig
   },
 };
 
+// Suggested models per cloud provider, shown as datalist hints for the Model field.
+// The field is free-text — any value accepted by the provider CLI's `--model` flag works.
+const REVIEW_MODEL_PRESETS: Record<'codex' | 'claude', string[]> = {
+  codex: ['gpt-5-codex', 'gpt-5', 'gpt-5.4'],
+  claude: ['claude-sonnet-4-5', 'claude-opus-4-5', 'claude-opus-4-8', 'claude-haiku-4-5'],
+};
+
 const BULK_PRESET_HELPERS = [
   'Apply a preset to reset all local agent roles to a consistent starting profile.',
   'The preset updates role capability, model, provider, endpoint, timeout and confidence defaults.',
@@ -340,12 +347,24 @@ export class ConfigurationPanel {
     <p class="section-desc">Claude or Codex CLI — shared by Semantic Enrichment, Flow Extraction, and the AI Review sub-step in Generate Graph. Provider CLI must be available on this machine.</p>
     <div class="grid" style="margin-bottom:8px;">
       <div class="card">
-        <label for="reviewProvider">Provider</label>
-        <select id="reviewProvider">
-          <option value="codex" ${config.reviewProvider !== 'claude' ? 'selected' : ''}>codex</option>
-          <option value="claude" ${config.reviewProvider === 'claude' ? 'selected' : ''}>claude</option>
-        </select>
-        <p class="muted" style="margin-top:8px;">CLI: ${escapeHtml(agentStatus)}</p>
+        <div class="row-2">
+          <div>
+            <label for="reviewProvider">Provider</label>
+            <select id="reviewProvider">
+              <option value="codex" ${config.reviewProvider !== 'claude' ? 'selected' : ''}>codex</option>
+              <option value="claude" ${config.reviewProvider === 'claude' ? 'selected' : ''}>claude</option>
+            </select>
+          </div>
+          <div>
+            <label for="reviewModel">Model</label>
+            <input id="reviewModel" type="text" value="${escapeAttr(config.reviewModel)}" placeholder="e.g. sonnet or claude-3-5-sonnet-20241022" />
+            <select id="reviewModelPreset" style="margin-top:4px;">
+              <option value="">— pick a preset —</option>
+            </select>
+          </div>
+        </div>
+        <p class="muted" style="margin-top:8px;">Passed to the provider CLI via <code>--model</code>. Type any model id your API key supports — an alias like <code>sonnet</code> resolves to the newest version, which your gateway may not have.</p>
+        <p class="muted" style="margin-top:4px;">CLI: ${escapeHtml(agentStatus)}</p>
         <div class="card-actions">
           <button class="btn-secondary" id="testAgent">Test AI Review</button>
         </div>
@@ -429,6 +448,34 @@ export class ConfigurationPanel {
     <script nonce="${nonce}">
       const vscode = acquireVsCodeApi();
       const localAgentDefinitions = ${JSON.stringify(agentDefinitions.map((definition) => definition.key))};
+
+      // ── Cloud AI model: free-text input + preset quick-pick ──────
+      // Free text is the source of truth — the user's gateway may only accept
+      // specific model ids that no alias resolves to. Presets just fill the box.
+      const reviewModelPresets = ${JSON.stringify(REVIEW_MODEL_PRESETS)};
+      const reviewProviderEl = document.getElementById('reviewProvider');
+      const reviewModelEl = document.getElementById('reviewModel');
+      const reviewPresetEl = document.getElementById('reviewModelPreset');
+
+      function refreshPresetOptions() {
+        const presets = reviewModelPresets[reviewProviderEl.value] ?? [];
+        reviewPresetEl.innerHTML = '<option value="">— pick a preset —</option>' +
+          presets.map((m) => '<option value="' + m + '">' + m + '</option>').join('');
+      }
+      reviewPresetEl.addEventListener('change', () => {
+        if (reviewPresetEl.value) {
+          reviewModelEl.value = reviewPresetEl.value;
+          reviewPresetEl.value = '';
+        }
+      });
+      reviewProviderEl.addEventListener('change', () => {
+        refreshPresetOptions();
+        // Suggest the provider's default model only if the box is empty.
+        if (!reviewModelEl.value.trim()) {
+          reviewModelEl.value = (reviewModelPresets[reviewProviderEl.value] ?? [])[0] ?? '';
+        }
+      });
+      refreshPresetOptions();
       const roleModelPresets = ${JSON.stringify(ROLE_MODEL_PRESETS)};
       const roleDefaults = ${JSON.stringify(defaultRoleConfig)};
 
@@ -466,6 +513,7 @@ export class ConfigurationPanel {
         }
         return {
           reviewProvider: document.getElementById('reviewProvider').value,
+          reviewModel: document.getElementById('reviewModel').value,
           semanticCoreUrl: document.getElementById('semanticCoreUrl').value,
           validatorUrl: document.getElementById('validatorUrl').value,
           compilerUrl: document.getElementById('compilerUrl').value,
@@ -532,6 +580,7 @@ export class ConfigurationPanel {
 
   private async saveSettings(values: Record<string, unknown>): Promise<void> {
     const reviewProvider = String(values.reviewProvider ?? 'codex') as 'codex' | 'claude';
+    const reviewModel = String(values.reviewModel ?? '').trim() || defaultReviewModel(reviewProvider);
     const persistedValues = {
       ...this.currentValues,
       semanticCoreUrl: String(values.semanticCoreUrl ?? this.currentValues.semanticCoreUrl),
@@ -544,7 +593,7 @@ export class ConfigurationPanel {
       javaBasePackage: String(values.javaBasePackage ?? this.currentValues.javaBasePackage),
       reviewProvider,
       reviewMode: defaultReviewMode(reviewProvider),
-      reviewModel: defaultReviewModel(reviewProvider),
+      reviewModel,
     };
 
     await writeMcpConfigFile(persistedValues);

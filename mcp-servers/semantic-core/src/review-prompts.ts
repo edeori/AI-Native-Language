@@ -61,7 +61,7 @@ export function buildReviewPromptBundle(input: ReviewPromptBundleInput): ReviewP
   ].join('\n');
 
   return {
-    promptVersion: '1.2.0',
+    promptVersion: '1.3.0',
     architecturePrompt: [
       '# Architecture review agent',
       '',
@@ -82,6 +82,7 @@ export function buildReviewPromptBundle(input: ReviewPromptBundleInput): ReviewP
       '',
       'Task:',
       'Use the detected flow traces above as ground truth for execution paths. Infer the real request, command, async, and scheduled flows only. Focus on paths through controllers, services, jobs, listeners, and persistence boundaries.',
+      'Grounding: only reference classes, endpoints, jobs, and fields that appear in the graph, flow traces, or semantic source above. Do NOT invent flows or domain scenarios (e.g. registration, auto-archive, invites) that lack evidence in the inputs. If a flow is not supported by the inputs, omit it rather than fabricating one.',
       'Return valid JSON with summary, notes, issues, and refinedSemanticMarkdown concentrated on flow scenarios.',
     ].join('\n'),
     dataModelPrompt: [
@@ -107,6 +108,8 @@ export function buildReviewPromptBundle(input: ReviewPromptBundleInput): ReviewP
       '',
       'Task:',
       'Merge the architecture, flow, data model, and consistency outputs into the final refined semantic markdown and diagram classification JSON.',
+      'Grounding: ground every statement in the provided inputs. Do NOT introduce components, classes, flows, tables, fields, or technologies that are absent from the architecture/flow/data-model/consistency outputs and the semantic source. Prefer omitting a section over inventing content; leave a section empty if there is no evidence for it.',
+      'Preserve the structure of the semantic source: keep the existing `##` sections and `###` sub-headings, and keep one blank line between sections. Do NOT reformat `-` bullet lists into bold-titled paragraphs (no `**Name**:` bullets) and do NOT drop the blank lines that precede headings.',
       'Write the semantic markdown for humans, not for graph parsing.',
       'Use descriptive section headings and short explanatory paragraphs or bullets.',
       'Do not emit helper prefixes such as API:, APP:, COMMON:, SERVICE_SUMMARY:, SERVICE_FLOW_PREP:, PERSISTENCE:, or SECURITY: inside refinedSemanticMarkdown.',

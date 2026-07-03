@@ -2,6 +2,7 @@ export * from './models.js';
 export * from './paths.js';
 export * from './artifacts.js';
 export * from './semantic-markdown.js';
+export * from './semantic-reconcile.js';
 export * from './graph.js';
 export * from './validator.js';
 export * from './compiler.js';

@@ -27,6 +27,8 @@ export const commandIds = {
   runQueue: 'aiNative.runQueue',
   deleteTask: 'aiNative.deleteTask',
   analyzeDocImports: 'aiNative.analyzeDocImports',
+  reviewReconcile: 'aiNative.reviewReconcile',
+  applyReconcile: 'aiNative.applyReconcile',
 } as const;
 
 export const viewIds = {

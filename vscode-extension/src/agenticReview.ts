@@ -193,14 +193,79 @@ export async function runAgenticReviewBundle(
  * Same CLI path as runAgenticPrompt but skips structured review parsing — returns plain text.
  * Used by Source Import cloud AI to feed the same slice prompts as local ollama agents.
  */
-export async function runCloudRawPrompt(context: AgenticReviewContext, prompt: string, onChunk?: (raw: string) => void): Promise<string> {
+// ── AI token-usage telemetry ─────────────────────────────────────
+// A single sink, set once by the extension, receives per-call token usage parsed
+// from the provider CLI's result envelope. Keeps metrics wiring out of every call site.
+export interface AiUsageEvent {
+  workspaceRoot?: string;
+  operation: string;
+  provider: string;
+  model: string;
+  inputTokens: number;        // fresh, uncached input (billed at full rate)
+  cachedInputTokens: number;  // prompt-cache reads (re-sent context; billed ~10%)
+  cacheWriteTokens: number;   // prompt-cache writes (billed ~125%)
+  outputTokens: number;
+  promptChars: number;
+}
+
+let usageSink: ((event: AiUsageEvent) => void) | undefined;
+export function setAiUsageSink(sink: ((event: AiUsageEvent) => void) | undefined): void {
+  usageSink = sink;
+}
+
+// Claude stream-json result envelope carries `usage`; Codex emits a token-count event.
+// Keep cache reads/writes separate from fresh input: in a multi-turn agent loop
+// the re-sent context shows up as cache_read_input_tokens (billed ~10%), so
+// collapsing them into one "input" figure inflates the number ~10x and hides
+// where the tokens actually went. The metrics layer weights each bucket.
+function parseUsage(
+  normalized: string,
+  provider: AgenticReviewContext['provider'],
+): { inputTokens: number; cachedInputTokens: number; cacheWriteTokens: number; outputTokens: number } {
+  let inputTokens = 0;
+  let cachedInputTokens = 0;
+  let cacheWriteTokens = 0;
+  let outputTokens = 0;
+  for (const line of normalized.split(/\r?\n/)) {
+    const parsed = safeJsonParse(line.trim());
+    if (!parsed || typeof parsed !== 'object') continue;
+    const obj = parsed as Record<string, unknown>;
+    const usage = (obj.usage ?? (obj as any).token_usage) as Record<string, unknown> | undefined;
+    if (usage && typeof usage === 'object') {
+      const num = (v: unknown) => (typeof v === 'number' ? v : 0);
+      inputTokens = num(usage.input_tokens) + num(usage.prompt_tokens);
+      cachedInputTokens = num(usage.cache_read_input_tokens);
+      cacheWriteTokens = num(usage.cache_creation_input_tokens);
+      outputTokens = num(usage.output_tokens) + num(usage.completion_tokens);
+    }
+  }
+  return { inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens };
+}
+
+export async function runCloudRawPrompt(context: AgenticReviewContext, prompt: string, onChunk?: (raw: string) => void, timeoutMs?: number): Promise<string> {
   if (context.mode === 'cli') {
     const cwd = context.workspaceRoot ?? path.dirname(context.sourcePath);
     const cli = await resolveProviderCli(context.provider, context.model, prompt, cwd, context.mcpServers);
     if (!cli) return '';
     try {
-      const output = await executeCli(cli.command, cli.args, cli.stdin ?? '', cwd, onChunk);
+      const output = await executeCli(cli.command, cli.args, cli.stdin ?? '', cwd, onChunk, timeoutMs);
       const normalized = normalizeCliOutput(output.stdout, output.stderr);
+      if (usageSink) {
+        const { inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens } = parseUsage(normalized, context.provider);
+        try {
+          usageSink({
+            workspaceRoot: context.workspaceRoot,
+            operation: context.artifactName || 'ai-call',
+            provider: context.provider,
+            model: context.model,
+            inputTokens,
+            cachedInputTokens,
+            cacheWriteTokens,
+            outputTokens,
+            promptChars: prompt.length,
+          });
+        } catch { /* telemetry must never break the call */ }
+      }
       return extractRawAiText(normalized, context.provider);
     } finally {
       await cli.cleanup?.().catch(() => undefined);
@@ -655,7 +720,7 @@ async function buildClaudeInvocation(
   };
 }
 
-function executeCli(command: string, args: string[], prompt: string, cwd?: string, onChunk?: (raw: string) => void): Promise<{ stdout: string; stderr: string }> {
+function executeCli(command: string, args: string[], prompt: string, cwd?: string, onChunk?: (raw: string) => void, timeoutMs = 10 * 60 * 1000): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
@@ -667,8 +732,8 @@ function executeCli(command: string, args: string[], prompt: string, cwd?: strin
     let stderr = '';
     const timeout = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error(`Command ${command} timed out.`));
-    }, 10 * 60 * 1000);
+      reject(new Error(`Command ${command} timed out after ${Math.round(timeoutMs / 60000)} min.`));
+    }, timeoutMs);
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');

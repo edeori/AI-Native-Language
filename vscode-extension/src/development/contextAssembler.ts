@@ -99,7 +99,7 @@ function detectTopics(direction: string): Topics {
   const lower = direction.toLowerCase();
   const has = (words: string[]) => words.some(w => lower.includes(w));
   return {
-    isSimple:   has(['comment', 'komment', 'javadoc', 'rename', 'átnevez', 'format', 'typo', 'whitespace', 'indent', 'értelmező', 'leírás csak', 'csak komment', 'csak átnevez']),
+    isSimple:   has(['comment', 'komment', 'javadoc', 'rename', 'átnevez', 'format', 'typo', 'whitespace', 'indent', 'értelmező', 'leírás csak', 'csak komment', 'csak átnevez', 'áthelyez', 'helyezd át', 'mozgat', 'mozgasd', 'áttesz', 'tedd át', 'relocate']),
     isTest:     has(['test', 'teszt', 'junit', 'assert', 'mock', 'stub', 'egységteszt', 'integrációs teszt', 'tesztelés', 'tesztet írj', 'tesztet kell']),
     isBugFix:   has(['fix', 'hiba', 'bug', 'hibás', 'broken', 'npe', 'exception', 'javít', 'crash', 'error', 'nem működik', 'elromlo', 'stacktrace', 'elszáll']),
     isConfig:   has(['config', 'configuration', 'property', 'properties', 'yml', 'yaml', 'env', 'beállítás', 'konfig', 'környezeti változó', 'application.yaml', 'application.yml']),
@@ -315,13 +315,69 @@ async function readProjectOverview(artifactRoot: string): Promise<string> {
 }
 
 // ── DB schema ────────────────────────────────────────────────────
+// The planned schema is authored across the design docs, not only the
+// reverse-engineered source.database.md. For a DB/table task we combine both
+// so table creation reflects the intended model, not just what already exists:
+//   1. source.database.md                    — discovered schema snapshot
+//   2. source.semantic.md § database_schema  — planned tables / columns / relationships
+//      (+ § data_flows for how records move through the system), authored at design time
+const SCHEMA_SECTIONS = ['database_schema', 'data_flows'];
+const DB_SCHEMA_CHAR_CAP = 6000;
 
 async function readDatabaseSchema(artifactRoot: string): Promise<string> {
+  const parts: string[] = [];
+
   try {
-    return (await fs.readFile(path.join(artifactRoot, 'source.database.md'), 'utf8')).trim();
-  } catch {
-    return '';
+    const discovered = (await fs.readFile(path.join(artifactRoot, 'source.database.md'), 'utf8')).trim();
+    if (discovered) parts.push(`### Discovered schema (source.database.md)\n${discovered}`);
+  } catch { /* no discovered schema snapshot */ }
+
+  try {
+    const planned = await readNamedSemanticSections(artifactRoot, SCHEMA_SECTIONS, DB_SCHEMA_CHAR_CAP);
+    if (planned) parts.push(`### Planned schema (source.semantic.md)\n${planned}`);
+  } catch { /* no semantic doc */ }
+
+  return parts.join('\n\n');
+}
+
+// Extract specific `## <name>` sections from source.semantic.md, ordered by the
+// caller's preference and truncated at charCap. Mirrors the h2 parsing in
+// readSemanticSections but selects an explicit allow-list of sections.
+async function readNamedSemanticSections(artifactRoot: string, wanted: string[], charCap: number): Promise<string> {
+  const raw = await fs.readFile(path.join(artifactRoot, 'source.semantic.md'), 'utf8');
+  const wantedSet = new Set(wanted);
+  const lines = raw.split('\n');
+  const sections: Array<{ name: string; content: string }> = [];
+  let current: string | null = null;
+  let buf: string[] = [];
+
+  const flush = () => {
+    if (current && wantedSet.has(current) && buf.some(l => l.trim())) {
+      sections.push({ name: current, content: buf.join('\n').trim() });
+    }
+  };
+
+  for (const line of lines) {
+    const h2 = line.match(/^## (.+)/);
+    if (h2) {
+      flush();
+      current = h2[1].trim().toLowerCase();
+      buf = [];
+    } else if (current) {
+      buf.push(line);
+    }
   }
+  flush();
+
+  sections.sort((a, b) => wanted.indexOf(a.name) - wanted.indexOf(b.name));
+
+  let result = '';
+  for (const s of sections) {
+    const candidate = result ? `${result}\n\n## ${s.name}\n${s.content}` : `## ${s.name}\n${s.content}`;
+    if (candidate.length > charCap) break;
+    result = candidate;
+  }
+  return result;
 }
 
 // ── Layer context ─────────────────────────────────────────────────
@@ -408,7 +464,11 @@ function buildPrompt(p: {
   if (topics.isCreating) hints.push('When creating new modules, classes, or packages: call MCP tool `get_maven_project_conventions` to get the canonical module layout, package naming, dependency chain, and version rules.');
   if (topics.isApi)      hints.push('When writing or extending OpenAPI YAML, DTOs, or REST endpoints: call MCP tool `get_openapi_yaml_conventions` to get the canonical URL, schema naming, and response structure rules.');
   const hintBlock = hints.length > 0 ? '\n' + hints.join('\n') : '';
-  s.push(`You are an AI coding agent implementing a task in the repository at \`${p.workspaceRoot}\`.\nWork ONLY inside that path. Do NOT commit or push anything.\nWrite a report.md in the task run directory when done.${hintBlock}`);
+  s.push(`You are an AI coding agent implementing a task in the repository at \`${p.workspaceRoot}\`.
+Work ONLY inside that path. Do NOT commit or push anything.
+Scope discipline: make the SMALLEST change that satisfies the task. Touch only the files the task requires; do not refactor, reformat, or "improve" unrelated code, and do not regenerate scaffolding that already exists.
+Build/verify cadence (IMPORTANT — this is the biggest time sink): do NOT run a Maven/Gradle build, compile, or test suite after each edit. Make ALL the edits first. Run a build AT MOST ONCE, at the very end, and ONLY if the task needs a confirmed-working build — and even then prefer a single affected module (\`mvn -pl <module> -q compile\`) over the whole reactor. For a pure move/rename/refactor, reason about correctness by reading the code; a full build is usually unnecessary. Stop as soon as the task is done.
+Write a report.md in the task run directory when done.${hintBlock}`);
 
   if (p.projectOverview) s.push(`## Project overview\n\n${p.projectOverview}`);
   if (p.conventions)     s.push(`## Project-specific conventions\n\n${p.conventions}`);

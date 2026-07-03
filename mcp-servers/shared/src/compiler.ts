@@ -48,15 +48,17 @@ function collectNames(graph: CanonicalGraph, type: string): string[] {
 }
 
 function renderPomXml(artifactName: string, basePackage: string, graph: CanonicalGraph): string {
-  const needsJpa = graph.nodes.some((node) => node.type === 'ExternalSystem' && /database|sql|jdbc|relational/i.test(node.name));
+  const needsDb = graph.nodes.some((node) => node.type === 'ExternalSystem' && /database|sql|jdbc|relational/i.test(node.name));
   const needsMessaging = graph.nodes.some((node) => node.type === 'ExternalSystem' && /kafka|mq|queue|messaging|event/i.test(node.name));
 
   const extraDeps: string[] = [];
-  if (needsJpa) {
+  if (needsDb) {
+    // JDBC-first: repositories use NamedParameterJdbcTemplate with explicit SQL by default.
+    // Swap for spring-boot-starter-data-jpa only if all repository operations are trivial CRUD.
     extraDeps.push(`
     <dependency>
       <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-data-jpa</artifactId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
     </dependency>`);
   }
   if (needsMessaging) {

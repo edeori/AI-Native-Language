@@ -37,6 +37,30 @@ function parseSections(markdown: string): DocSection[] {
   return sections;
 }
 
+// ─── Canonical semantic section helpers ─────────────────────────────────────
+// The canonical semantic.md format uses H1 `#` ONLY for the system title and
+// H2 `##` for every machine section (## intent, ## processes, ## data_flows …) —
+// matching `parseSemanticMarkdown` in @ai-native/semantic-shared. Reads tolerate
+// a legacy single `#` heading; writes always emit the canonical `##`.
+//
+// NOTE: the previous regexes used `\z` as an end anchor, which JS does not
+// support — under the `m` flag it collapses to the literal char `z`, truncating
+// the section body at the first `z`. The correct end anchor is `$(?![\s\S])`.
+function semanticSectionRegex(sectionName: string): RegExp {
+  return new RegExp(
+    `(^#{1,2}\\s+${sectionName}\\s*\\n)([\\s\\S]*?)(?=\\n#{1,2}\\s|$(?![\\s\\S]))`,
+    'm',
+  );
+}
+
+function upsertSemanticSection(md: string, sectionName: string, newContent: string): string {
+  const sectionRe = semanticSectionRegex(sectionName);
+  if (sectionRe.test(md)) {
+    return md.replace(sectionRe, `## ${sectionName}\n${newContent}\n`);
+  }
+  return `${md.trimEnd()}\n\n## ${sectionName}\n${newContent}\n`;
+}
+
 function extractTitle(markdown: string): string {
   const m = markdown.match(/^#\s+(.+)$/m);
   return m ? m[1].trim() : 'Imported Document';
@@ -269,8 +293,8 @@ function mergeIntoExisting(existing: string, patch: string, docTitle: string): s
     return existing;
   }
 
-  // Append patch to dependencies section or at the end
-  const depsMatch = existing.match(/^#\s*dependencies\b/im);
+  // Append patch to dependencies section or at the end (match H1 or H2 heading)
+  const depsMatch = existing.match(/^#{1,2}\s*dependencies\b/im);
   if (depsMatch && depsMatch.index !== undefined) {
     const before = existing.slice(0, depsMatch.index);
     const after = existing.slice(depsMatch.index);
@@ -299,15 +323,14 @@ function buildNewSemanticMd(params: {
   const systemDesc = overviewSection?.content.split('\n').slice(0, 4).join(' ').trim() || docTitle;
 
   const lines: string[] = [];
-  lines.push(`# system`);
-  lines.push(docTitle);
+  lines.push(`# ${docTitle}`);
   lines.push('');
-  lines.push(`# intent`);
+  lines.push(`## intent`);
   lines.push(systemDesc);
   lines.push('');
 
   if (components.length > 0 || techStack.length > 0) {
-    lines.push(`# context`);
+    lines.push(`## context`);
     if (components.length > 0) {
       for (const c of components.slice(0, 6)) lines.push(`- ${c}`);
     }
@@ -318,13 +341,13 @@ function buildNewSemanticMd(params: {
   }
 
   if (apis.length > 0) {
-    lines.push(`# interfaces`);
+    lines.push(`## interfaces`);
     for (const api of apis.slice(0, 15)) lines.push(`- api: \`${api}\``);
     lines.push('');
   }
 
   if (flows.length > 0) {
-    lines.push(`# processes`);
+    lines.push(`## processes`);
     for (const f of flows) {
       const sec = sections.find((s) => s.title === f);
       const body = sec?.content.split('\n').filter((l) => l.trim()).slice(0, 4).join(' ').trim();
@@ -334,13 +357,13 @@ function buildNewSemanticMd(params: {
   }
 
   if (dataModels.length > 0) {
-    lines.push(`# data_flows`);
+    lines.push(`## data_flows`);
     for (const m of dataModels) lines.push(`- ${m} entity is persisted and referenced by business operations`);
     lines.push('');
   }
 
   if (techStack.length > 0) {
-    lines.push(`# dependencies`);
+    lines.push(`## dependencies`);
     for (const t of techStack) lines.push(`- ${t}`);
     lines.push('');
   }
@@ -349,7 +372,7 @@ function buildNewSemanticMd(params: {
     const body = fullMarkdown.length > FULL_CONTENT_LIMIT
       ? fullMarkdown.slice(0, FULL_CONTENT_LIMIT) + '\n… (truncated)'
       : fullMarkdown;
-    lines.push(`# document_content`);
+    lines.push(`## document_content`);
     lines.push(body.trim());
     lines.push('');
   }
@@ -780,12 +803,12 @@ function extractApplicationFlows(input: {
 }): Record<string, unknown> {
   const { semanticMd, docEntities, graphJson } = input;
 
-  // Extract existing processes and data_flows sections
-  const processesMatch = semanticMd.match(/^# processes\s*\n([\s\S]*?)(?=^# |\z)/m);
-  const dataFlowsMatch = semanticMd.match(/^# data_flows\s*\n([\s\S]*?)(?=^# |\z)/m);
+  // Extract existing processes and data_flows sections (canonical H2, legacy H1 tolerated)
+  const processesMatch = semanticMd.match(semanticSectionRegex('processes'));
+  const dataFlowsMatch = semanticMd.match(semanticSectionRegex('data_flows'));
 
-  const existingProcesses = processesMatch?.[1]?.trim() ?? '';
-  const existingDataFlows = dataFlowsMatch?.[1]?.trim() ?? '';
+  const existingProcesses = processesMatch?.[2]?.trim() ?? '';
+  const existingDataFlows = dataFlowsMatch?.[2]?.trim() ?? '';
 
   // Gather flows from all sources
   const flowSet = new Set<string>();
@@ -847,18 +870,10 @@ function extractApplicationFlows(input: {
   const newProcesses = [...processSet].filter(Boolean).map((p) => `- ${p}`).join('\n');
   const newDataFlows = [...flowSet].filter(Boolean).map((f) => `- ${f}`).join('\n');
 
-  // Replace sections in semanticMd
+  // Replace sections in semanticMd (canonical H2 upsert)
   let updated = semanticMd;
-  const replaceSectionContent = (md: string, sectionName: string, newContent: string): string => {
-    const sectionRe = new RegExp(`(^# ${sectionName}\\s*\\n)([\\s\\S]*?)(?=^# |\\z)`, 'm');
-    if (sectionRe.test(md)) {
-      return md.replace(sectionRe, `$1${newContent}\n\n`);
-    }
-    return `${md.trimEnd()}\n\n# ${sectionName}\n${newContent}\n`;
-  };
-
-  if (newProcesses) updated = replaceSectionContent(updated, 'processes', newProcesses);
-  if (newDataFlows) updated = replaceSectionContent(updated, 'data_flows', newDataFlows);
+  if (newProcesses) updated = upsertSemanticSection(updated, 'processes', newProcesses);
+  if (newDataFlows) updated = upsertSemanticSection(updated, 'data_flows', newDataFlows);
 
   return {
     ok: true,

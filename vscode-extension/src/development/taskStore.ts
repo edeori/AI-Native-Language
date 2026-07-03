@@ -47,6 +47,9 @@ export async function updateTaskResult(artifactRoot: string, taskId: string, res
   if (t) {
     t.result = result;
     t.status = 'done';
+    // A successful run supersedes any earlier failure.
+    delete t.failureReason;
+    delete t.failedAt;
   }
   await saveTasks(artifactRoot, tasks);
   return tasks;

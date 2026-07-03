@@ -3,6 +3,8 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { runCloudRawPrompt, CreditExhaustedError, type AgenticReviewContext } from './agenticReview.js';
 import { getConfig } from './config.js';
+import { reconcileSemanticMarkdown } from '@ai-native/semantic-shared';
+import { commandIds } from './constants.js';
 import type { McpRegistry } from './mcpRegistry.js';
 
 function makeStreamTracker(postFn: ((msg: unknown) => void) | undefined, label: string) {
@@ -239,15 +241,33 @@ OUTPUT FORMAT — use EXACTLY this heading structure (H1 for system title, H2 fo
   if (result && result.trim().length > 20) {
     const content = result.trim().replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '');
     await fs.mkdir(outputDir, { recursive: true });
-    await fs.writeFile(semanticPath, content + '\n', 'utf8');
-    progress(`Done — source.semantic.md updated (${content.length} chars)`);
 
-    if (opts.registry) {
-      await generateDatabaseSchemaFiles(opts.registry, content, outputDir, progress);
+    if (existingSemanticMd.trim()) {
+      // semantic.md already exists → do NOT overwrite. Reconcile the synthesized
+      // doc content against the source of truth (a fresh doc is newer intent) and
+      // write a reviewable proposal with git-style conflict markers.
+      const rec = reconcileSemanticMarkdown(existingSemanticMd, content, { authority: 'doc' });
+      if (rec.changes.length > 0) {
+        const proposedPath = path.join(outputDir, 'source.semantic.proposed.md');
+        await fs.writeFile(proposedPath, rec.merged, 'utf8');
+        progress(`Reconcile proposal ready — ${rec.addCount} addition(s), ${rec.conflictCount} conflict(s) → source.semantic.proposed.md`);
+        postFn?.({ type: 'analysisDone', proposed: true, addCount: rec.addCount, conflictCount: rec.conflictCount });
+        void vscode.commands.executeCommand(commandIds.reviewReconcile, { artifactRoot: outputDir });
+      } else {
+        progress('No changes vs current source.semantic.md.');
+        postFn?.({ type: 'analysisDone', chars: content.length });
+        vscode.window.showInformationMessage('Document import: no changes vs current source.semantic.md.');
+      }
+    } else {
+      // First import → create the source of truth.
+      await fs.writeFile(semanticPath, content + '\n', 'utf8');
+      progress(`Done — source.semantic.md created (${content.length} chars)`);
+      if (opts.registry) {
+        await generateDatabaseSchemaFiles(opts.registry, content, outputDir, progress);
+      }
+      postFn?.({ type: 'analysisDone', chars: content.length });
+      vscode.window.showInformationMessage(`AI analysis complete — source.semantic.md created (${content.length} chars)`);
     }
-
-    postFn?.({ type: 'analysisDone', chars: content.length });
-    vscode.window.showInformationMessage(`AI analysis complete — source.semantic.md updated (${content.length} chars)`);
   } else {
     progress('AI returned empty result. Check AI Review provider configuration.');
     postFn?.({ type: 'analysisDone', error: true });
