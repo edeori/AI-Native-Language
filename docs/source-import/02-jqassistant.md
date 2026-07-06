@@ -5,7 +5,7 @@
 
 ## Mikor fut le
 
-A Flow panelen a **Source Import** kártyán van egy **jQAssistant Scan** checkbox. Ha be van jelölve, a scan lefut a Source Import részeként. Ha nincs bejelölve, az extension megpróbálja betölteni a létező `.ai-native/source.jqassistant.json`-t — ha megvan, azt használja; ha nincs, skipped állapotban folytat.
+A Import Source panelen a **Source Import** kártyán van egy **jQAssistant Scan** checkbox. Ha be van jelölve, a scan lefut a Source Import részeként. Ha nincs bejelölve, az extension megpróbálja betölteni a létező `.ai-native/source.jqassistant.json`-t — ha megvan, azt használja; ha nincs, skipped állapotban folytat.
 
 A standalone futtatáshoz is van command: `aiNative.runJqassistantScan` (Actions panel → jQAssistant Scan gomb).
 

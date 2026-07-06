@@ -53,5 +53,5 @@ Lightweight inventory of the MCP server roles. Részletes tool-szintű leírás�
 ## Részletes dokumentáció
 
 - [docs/source-import/](source-import/) — Source Import pipeline (java-parser, jqassistant, semantic-core, validator)
-- [docs/document-import/](document-import/) — Document Import pipeline (document-import szerver)
+- [docs/document-import/](document-import/) — Import Document pipeline (document-import szerver)
 - [docs/actions/](actions/) — minden meghívható action és a mögöttük lévő MCP hívások

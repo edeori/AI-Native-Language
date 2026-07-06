@@ -448,7 +448,7 @@ export class DevelopmentWebviewProvider implements vscode.WebviewViewProvider {
         document.getElementById('root').innerHTML = \`
           <div class="no-context-banner">
             <p><strong>No context available.</strong></p>
-            <p>Run Source Import or Document Import first to provide context for development tasks.</p>
+            <p>Run Import Source or Import Document first to provide context for development tasks.</p>
             <button class="btn-full" data-cmd="${commandIds.openDashboard}">Open Import Flow</button>
           </div>\`;
         attachHandlers(state);

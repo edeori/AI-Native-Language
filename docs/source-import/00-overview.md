@@ -1,8 +1,10 @@
 # Source Import — áttekintés
 
-A Flow panel négy egymásra épülő lépést tartalmaz, amelyek a forráskódbázisból felépítik a projekt teljes semantic leírását és kódgráfját.
+Az **Import Source** panel négy egymásra épülő lépést tartalmaz, amelyek a forráskódbázisból felépítik a projekt teljes semantic leírását és kódgráfját.
 
-## A négy Flow panel lépés
+> Felhasználói útmutató a teljes panelhez (lépések, kapcsolók, példák): [../AI_AGENT_PANEL.md](../AI_AGENT_PANEL.md).
+
+## A négy Import Source lépés
 
 | # | Panel felirat | stepId | Command |
 |---|---|---|---|

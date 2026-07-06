@@ -11,7 +11,7 @@ This repo is organized as a reproducible starting point for a future pilot that 
 - remain provider-neutral across AI vendors
 - support IDE-driven development through a VSCode extension and MCP tools
 - support local Docker execution and remote containerized MCP servers
-- include a VSCode extension scaffold with workflow views, tutorial views, and remote MCP integration
+- include a VSCode extension (AI Agent panel: Import Document, Import Source, Actions, Validation, Sources, Settings) with remote MCP integration
 
 ## Current Status
 
@@ -236,14 +236,17 @@ These scripts expect SSH access, Docker Compose to be installed on the remote ho
 
 ### VSCode extension
 
-The `vscode-extension/` package is the developer-facing control plane:
+The `vscode-extension/` package is the developer-facing control plane. Its **AI Agent** sidebar has these views (top to bottom):
 
-- workflow tree view
-- artifacts tree view
-- tutorial tree view
-- actions sidebar view
-- MCP configuration panel
-- commands for validation, graph generation, and Spring Boot generation
+- **Import Document** — import files / Confluence pages and merge them into `source.semantic.md` with AI
+- **Import Source** — deterministic + optional-AI processing of a source codebase, step by step
+- **Recon Runs** — status/history of source-import reconnaissance runs
+- **Actions** — **Show graph**, **Endpoint summary**, and a token-efficiency card
+- **Validation** — **Validate semantic** and **Doc-code alignment** buttons + the latest reports
+- **Sources** — the current canonical files (semantic / database schema / review)
+- **Settings** — MCP endpoints, **AI Review Provider**, **Local AI Agents**
+
+Plus a separate **Development** panel for running implementation tasks. Full UI guide: [docs/AI_AGENT_PANEL.md](docs/AI_AGENT_PANEL.md).
 
 Build it separately:
 

@@ -1,20 +1,19 @@
 # Validate semantic
 
 **Command:** `aiNative.validateActiveSemanticMarkdown`  
-**Elérés:** Actions panel → Validation szekció gomb
+**Elérés:** **Validation** nézet → **Validate semantic** gomb (vagy Command Palette)
 
 Lefuttatja az MCP validátort az aktív `source.semantic.md`-n.
 
 ## Lépések
 
-1. **Verziós checkpoint**: `ensureSemanticVersionCheckpoint` — ha a fájl tartalma változott az utolsó snapshot óta, elmenti az aktuális állapotot
-2. **Validation policy betöltése**: MCP `validator` → `get_validation_policy`
-3. **Validáció futtatása**: MCP `validator` → `validate_semantic_markdown` (`persist: true` — a szerver is ment fájlt)
-4. **VSCode diagnosztikák**: az issue-k megjelennek szerkesztő figyelmeztetésekként (gap / conflict / warning / violation)
-5. **Plain file mentése**: `.ai-native/validation/<slug>.validation.md`
-6. **Verziózott artifact mentése**: `writeVersionedArtifact` kind `validation`
-7. **Feedback delta**: `submitFeedbackDelta` → MCP `validator` → `ingest_feedback_delta`
-8. **Megnyitás + info üzenet**: `source.semantic.md` megnyílik, értesítés az issue-k számával
+1. **Validation policy betöltése**: MCP `validator` → `get_validation_policy`
+2. **Validáció futtatása**: MCP `validator` → `validate_semantic_markdown` (`persist: true` — a szerver is ment fájlt)
+3. **VSCode diagnosztikák**: az issue-k megjelennek szerkesztő figyelmeztetésekként (gap / conflict / warning / violation)
+4. **Plain file mentése**: `.ai-native/validation/<slug>.validation.md`
+5. **Frissesség-jel mentése**: `.ai-native/validation/<slug>.validation.hash` — az aktuális `source.semantic.md` hash-e. A **Generate Graph** ezt olvassa, hogy stale semantic-ból ne épüljön gráf.
+6. **Feedback delta**: `submitFeedbackDelta` → MCP `validator` → `ingest_feedback_delta`
+7. **Megnyitás + info üzenet**: `source.semantic.md` megnyílik, értesítés az issue-k számával
 
 ## A mentett validation.md tartalma
 
@@ -51,20 +50,20 @@ Röviden: section completeness, quality (processes/interfaces/modules), contradi
 
 Státusz: `validated` (tiszta) · `ready` (csak warning) · `draft` (gap/conflict/violation van)
 
-A Generate Graph lépés megköveteli, hogy legyen friss validációs snapshot (sourceHash egyezés) — ezt a gomb futtatja le.
+A Generate Graph lépés megköveteli, hogy legyen friss validáció (a `<slug>.validation.hash` frissesség-jel egyezzen az aktuális `source.semantic.md` hash-ével) — ezt a gomb futtatja le.
 
 ---
 
 # Doc-code alignment
 
 **Command:** `aiNative.runDocCodeAlignment`  
-**Elérés:** Actions panel → Validation szekció gomb
+**Elérés:** **Validation** nézet → **Doc-code alignment** gomb (vagy Command Palette)
 
-Összehasonlítja a Document Import által kinyert komponens listát a kódgráfból ismert komponensekkel, és riportot generál.
+Összehasonlítja az **Import Document** által kinyert komponens listát a kódgráfból ismert komponensekkel, és riportot generál.
 
 ## Előfeltétel
 
-`.ai-native/doc-entities.json` megléte — ha nem létezik, az extension felajánlja a Document Import panel megnyitását.
+`.ai-native/doc-entities.json` megléte — ha nem létezik, az extension felajánlja az **Import Document** panel megnyitását.
 
 ## Lépések
 

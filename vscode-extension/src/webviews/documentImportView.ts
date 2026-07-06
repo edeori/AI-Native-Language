@@ -124,8 +124,10 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
           this.post({ type: 'progress', message: `Converted "${item.name}" (${markdown.length} chars)` });
         } else {
           const confluenceToken = await this.context.secrets.get('confluencePersonalToken') ?? item.token;
+          const confluenceBaseUrl = vscode.workspace.getConfiguration('aiNative').get<string>('confluence.url', '');
           const fetchResult = await this.registry.callTool('documentImport', 'fetch_confluence_page', {
             pageUrl: item.url,
+            ...(confluenceBaseUrl ? { baseUrl: confluenceBaseUrl } : {}),
             ...(item.user ? { user: item.user } : {}),
             ...(confluenceToken ? { token: confluenceToken } : {}),
             persist: false,
@@ -168,7 +170,7 @@ export class DocumentImportWebviewProvider implements vscode.WebviewViewProvider
     <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${n}';" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Document Import</title>
+    <title>Import Document</title>
     <style>
       :root { color-scheme: dark; }
       * { box-sizing: border-box; }

@@ -1,6 +1,6 @@
 # 6. AI Analízis — ✦ Analyze with AI
 
-**Hol:** Document Import panel → **✦ Analyze with AI** gomb, vagy Command Palette: `AI Native: Analyze Imported Documents with AI`
+**Hol:** **Import Document** panel → **✦ Analyze with AI** gomb, vagy Command Palette: `AI Native: Analyze Imported Documents with AI`
 
 ## Mikor érdemes futtatni
 

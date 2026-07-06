@@ -24,7 +24,7 @@ URL mező + Add gomb. Az URL-ből egy `ImportItem` jön létre:
 - **Instance URL** — a Confluence alap URL (pl. `https://wiki.example.com/confluence`)
 - **Personal Access Token** — VSCode SecretStorage-ban (OS kulcstárban) tárolódik, restart után is megmarad
 
-A token a Settings panelen is beállítható, de a Document Import panelen közvetlenül is módosítható.
+A token a Settings panelen is beállítható, de az **Import Document** panelen (Confluence credentials) közvetlenül is módosítható.
 
 ## Futtatás
 

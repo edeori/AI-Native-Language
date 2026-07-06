@@ -2,8 +2,14 @@
   "name": "ai-native-semantic-workflow",
   "displayName": "AI Native Semantic Workflow",
   "description": "Developer-facing VSCode extension for the AI-native semantic workflow.",
-  "version": "1.0.6",
+  "version": "1.1.4",
   "private": true,
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edeori/AI-Native-Language.git",
+    "directory": "vscode-extension"
+  },
   "icon": "media/ai-native.png",
   "main": "./out/extension.js",
   "engines": {
@@ -34,11 +40,13 @@
       },
       {
         "command": "aiNative.reviewReconcile",
-        "title": "AI Native: Review Reconcile Proposal (3-way merge)"
+        "title": "AI Native: Review Reconcile Proposal (3-way merge)",
+        "icon": "$(git-merge)"
       },
       {
         "command": "aiNative.applyReconcile",
-        "title": "AI Native: Apply Reconcile Proposal"
+        "title": "AI Native: Apply Reconcile Proposal",
+        "icon": "$(check-all)"
       },
       {
         "command": "aiNative.openConfiguration",
@@ -62,7 +70,8 @@
       },
       {
         "command": "aiNative.validateActiveSemanticMarkdown",
-        "title": "AI Native: Validate Active Semantic Markdown"
+        "title": "AI Native: Validate Active Semantic Markdown",
+        "icon": "$(check)"
       },
       {
         "command": "aiNative.generateCanonicalGraph",
@@ -106,7 +115,8 @@
       },
       {
         "command": "aiNative.runDocCodeAlignment",
-        "title": "AI Native: Run Doc-Code Alignment"
+        "title": "AI Native: Run Doc-Code Alignment",
+        "icon": "$(arrow-swap)"
       },
       {
         "command": "aiNative.runImplementation",
@@ -137,6 +147,15 @@
         "title": "AI Native: Retry Failed Task"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "aiNative.applyReconcile",
+          "when": "resourceFilename == source.semantic.proposed.md",
+          "group": "navigation@1"
+        }
+      ]
+    },
     "configuration": {
       "title": "AI Native Semantic Workflow",
       "properties": {
@@ -214,6 +233,11 @@
       "aiNativeSemantic": [
         {
           "type": "webview",
+          "id": "aiNativeDocImport",
+          "name": "Import Document"
+        },
+        {
+          "type": "webview",
           "id": "aiNativeFlow",
           "name": "Import Source"
         },
@@ -224,29 +248,17 @@
         },
         {
           "type": "webview",
-          "id": "aiNativeDocImport",
-          "name": "Document Import"
-        },
-        {
-          "type": "webview",
           "id": "aiNativeActions",
           "name": "Actions"
         },
         {
+          "type": "webview",
           "id": "aiNativeValidation",
           "name": "Validation"
         },
         {
-          "id": "aiNativeReviewArtifacts",
-          "name": "Review"
-        },
-        {
-          "id": "aiNativeSemanticArtifacts",
-          "name": "Semantic"
-        },
-        {
-          "id": "aiNativeDatabaseSchema",
-          "name": "Database Schema"
+          "id": "aiNativeSources",
+          "name": "Sources"
         },
         {
           "id": "aiNativeMcpHub",

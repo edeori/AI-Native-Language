@@ -1,21 +1,21 @@
 # 4. Generate Graph
 
-**Flow panel:** Step 4 — **Generate Graph**  
+**Import Source panel:** Step 4 — **Generate Graph**  
 **Command:** `aiNative.generateCanonicalGraph`  
 **Hol:** `extension.ts` → `runGraphGeneration()`  
 **MCP szerver:** `semantic-core` · tool: `generate_canonical_graph`
 
 ## Előfeltétel
 
-A Generate Graph lépés ellenőrzi, hogy a `source.semantic.md` frissen validált-e:
+A Generate Graph lépés ellenőrzi, hogy a `source.semantic.md` frissen validált-e a **frissesség-jel** alapján:
 
-1. Megkeresi a legutóbbi validált artifact snapshot-ot (`.ai-native/artifacts/validation/`)
-2. Összehasonlítja a snapshot `sourceHash`-ét a jelenlegi `source.semantic.md` tartalmi hash-ével
-3. Ha eltérnek → figyelmeztetés: _"The latest validation version is stale. Run Validate input before generating the graph."_
+1. Beolvassa a `.ai-native/validation/<slug>.validation.hash` fájlt (ezt a **Validate semantic** írja).
+2. Összehasonlítja a jelenlegi `source.semantic.md` tartalmi hash-ével.
+3. Ha eltérnek → figyelmeztetés: _"The latest validation is stale. Run Validate input before generating the graph."_
 
-Ha nincs egyáltalán validációs snapshot → _"Graph generation requires a fresh validated version first."_
+Ha nincs frissesség-jel → _"Graph generation requires a fresh validated version first."_
 
-Ez biztosítja, hogy a gráf mindig egy validált semantic.md-ből készül.
+Ez biztosítja, hogy a gráf mindig egy validált semantic.md-ből készül. (A korábbi verziózott snapshot + `sourceHash` mechanizmust ez a sidecar-hash váltotta ki.)
 
 ## Mit csinál az MCP szerver
 
@@ -41,19 +41,15 @@ Ha az AI Review nincs bejelölve, csak a MCP validátor issue-i kerülnek diagno
 
 **Graph Preview panel** — `GraphPreviewPanel.show(context, graph, ...)` — a kanonikus gráf interaktív vizualizációja.
 
-**Verziózott artifact:**
+**Kanonikus gráf fájlok** (nincs külön verziózott store — a történetet a git kezeli):
+- `.ai-native/graph/<slug>.graph.json` — a felülvizsgált (reviewed) gráf, amelyet a **Show graph**, a Flow Extraction és a Doc-Code Alignment használ.
+- AI Review nélkül a determinisztikus gráf frissül.
 
-```
-.ai-native/artifacts/graph/<hash>/
-  graph.json
-  graph.md
-```
-
-**`.ai-native/graph/<timestamp>.graph.json`** — a legfrissebb graph, amelyet a Flow Extraction és a Doc-Code Alignment lépések input-ként használnak.
+> Kapcsolódó: a **reconcile Apply** (dokumentum-/forrás-import után) determinisztikusan újragenerálja a `source.graph.json`-t és a `source.database.json/.md`-t az új `source.semantic.md`-ből — a *felülvizsgált* gráfhoz viszont a **Generate Graph → AI Review** futtatás kell.
 
 ## Összefoglalás az egész pipeline szempontjából
 
 A Generate Graph az utolsó lépés, de a gráf kimenet visszacsatolódik:
 - Flow Extraction (Step 3) felhasználja a gráfot az előző futásból
-- Doc-Code Alignment (Actions panel) a gráfból veszi a kód-oldali komponens listát
+- Doc-code alignment (**Validation** nézet) a gráfból veszi a kód-oldali komponens listát
 - A Graph Preview panel a legfrissebb `.graph.json`-t mutatja

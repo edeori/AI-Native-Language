@@ -1,6 +1,8 @@
-# Document Import — áttekintés
+# Import Document — áttekintés
 
-A Document Import panel (`aiNativeDocImport` webview) külső dokumentumokból vagy Confluence oldalakból épít semantic tartalmat.
+Az **Import Document** panel (`aiNativeDocImport` webview) külső dokumentumokból vagy Confluence oldalakból épít semantic tartalmat.
+
+> Felhasználói útmutató a teljes panelhez (gombok, kapcsolók, példák): [../AI_AGENT_PANEL.md](../AI_AGENT_PANEL.md).
 
 ## Lépések
 
@@ -9,7 +11,7 @@ A Document Import panel (`aiNativeDocImport` webview) külső dokumentumokból v
 3. [AI analízis](03-analysis.md) — **✦ Analyze with AI** gomb: az összes importált `.md` fájlt Claude elemzi, és strukturált `source.semantic.md`-t ír
 4. [Downstream: Flow Extraction](07-flow-extraction.md) — flows és processes beépítése a semantic.md-be (önállóan is futtatható)
 
-> A **Doc-Code Alignment** nem a document import flow része — az Actions panelről indítható standalone ellenőrzés.
+> A **Doc-code alignment** nem a document import flow része — a **Validation** nézet gombjáról indítható standalone ellenőrzés.
 
 ## Adatfolyam
 

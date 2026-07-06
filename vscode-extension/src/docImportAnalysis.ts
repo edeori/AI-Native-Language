@@ -3,7 +3,6 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { runCloudRawPrompt, CreditExhaustedError, type AgenticReviewContext } from './agenticReview.js';
 import { getConfig } from './config.js';
-import { reconcileSemanticMarkdown } from '@ai-native/semantic-shared';
 import { commandIds } from './constants.js';
 import type { McpRegistry } from './mcpRegistry.js';
 
@@ -243,15 +242,15 @@ OUTPUT FORMAT — use EXACTLY this heading structure (H1 for system title, H2 fo
     await fs.mkdir(outputDir, { recursive: true });
 
     if (existingSemanticMd.trim()) {
-      // semantic.md already exists → do NOT overwrite. Reconcile the synthesized
-      // doc content against the source of truth (a fresh doc is newer intent) and
-      // write a reviewable proposal with git-style conflict markers.
-      const rec = reconcileSemanticMarkdown(existingSemanticMd, content, { authority: 'doc' });
-      if (rec.changes.length > 0) {
-        const proposedPath = path.join(outputDir, 'source.semantic.proposed.md');
-        await fs.writeFile(proposedPath, rec.merged, 'utf8');
-        progress(`Reconcile proposal ready — ${rec.addCount} addition(s), ${rec.conflictCount} conflict(s) → source.semantic.proposed.md`);
-        postFn?.({ type: 'analysisDone', proposed: true, addCount: rec.addCount, conflictCount: rec.conflictCount });
+      // semantic.md already exists → do NOT overwrite. The synthesized content is
+      // already an AI merge (the synthesis prompt was given the existing doc and
+      // told to enrich, not lose it), so write it as a clean proposal (no conflict
+      // markers) for a plain 2-pane review + apply.
+      const proposedPath = path.join(outputDir, 'source.semantic.proposed.md');
+      if (content.trim() !== existingSemanticMd.trim()) {
+        await fs.writeFile(proposedPath, content + '\n', 'utf8');
+        progress('AI merge proposal ready → source.semantic.proposed.md (review & apply)');
+        postFn?.({ type: 'analysisDone', proposed: true });
         void vscode.commands.executeCommand(commandIds.reviewReconcile, { artifactRoot: outputDir });
       } else {
         progress('No changes vs current source.semantic.md.');
@@ -275,6 +274,35 @@ OUTPUT FORMAT — use EXACTLY this heading structure (H1 for system title, H2 fo
   }
 }
 
+// Infer a fresh database schema draft from semantic content via the semantic-core
+// MCP tool. Returns undefined when nothing table-like could be inferred.
+async function inferSchemaFromSemantic(
+  registry: McpRegistry,
+  semanticContent: string,
+): Promise<DatabaseSchemaLike | undefined> {
+  const normalized = normalizeSemanticSections(semanticContent);
+  const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
+    content: normalized,
+    persist: false,
+  });
+  const payload = (response.json as Record<string, unknown> | undefined);
+  const graph = payload?.graph as Record<string, unknown> | undefined;
+  const dbSchema = (graph?.metadata as Record<string, unknown> | undefined)?.databaseSchema as DatabaseSchemaLike | undefined;
+  return dbSchema?.tables?.length ? dbSchema : undefined;
+}
+
+// Persist the canonical schema pair (source.database.json + source.database.md)
+// git carries their history — no file-level version snapshot is kept.
+async function writeSchemaArtifacts(
+  schema: DatabaseSchemaLike,
+  outputDir: string,
+): Promise<void> {
+  const schemaJson = JSON.stringify(schema, null, 2) + '\n';
+  const schemaMd = renderDatabaseSchemaMd(schema);
+  await fs.writeFile(path.join(outputDir, 'source.database.json'), schemaJson, 'utf8');
+  await fs.writeFile(path.join(outputDir, 'source.database.md'), schemaMd, 'utf8');
+}
+
 async function generateDatabaseSchemaFiles(
   registry: McpRegistry,
   semanticContent: string,
@@ -283,28 +311,122 @@ async function generateDatabaseSchemaFiles(
 ): Promise<void> {
   progress('Generating database schema…');
   try {
-    const normalized = normalizeSemanticSections(semanticContent);
-    const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
-      content: normalized,
-      persist: false,
-    });
-    const payload = (response.json as Record<string, unknown> | undefined);
-    const graph = payload?.graph as Record<string, unknown> | undefined;
-    const dbSchema = (graph?.metadata as Record<string, unknown> | undefined)?.databaseSchema as DatabaseSchemaLike | undefined;
-
-    if (!dbSchema?.tables?.length) {
+    const dbSchema = await inferSchemaFromSemantic(registry, semanticContent);
+    if (!dbSchema) {
       progress('Database schema: no tables inferred from semantic content.');
       return;
     }
-
-    const schemaMd = renderDatabaseSchemaMd(dbSchema);
-    const schemaJsonPath = path.join(outputDir, 'source.database.json');
-    const schemaMdPath = path.join(outputDir, 'source.database.md');
-    await fs.writeFile(schemaJsonPath, JSON.stringify(dbSchema, null, 2) + '\n', 'utf8');
-    await fs.writeFile(schemaMdPath, schemaMd, 'utf8');
+    await writeSchemaArtifacts(dbSchema, outputDir);
     progress(`Database schema written — ${dbSchema.tables.length} table(s) → source.database.md`);
   } catch (err) {
     progress(`Database schema generation skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+// AI-driven merge of the semantic source. Given the CURRENT source.semantic.md and
+// the INCOMING (freshly generated) version, an AI agent produces one clean merged
+// markdown — the new content is authoritative but existing curated detail is kept.
+// Writes source.semantic.proposed.md (NO conflict markers) for a plain 2-pane review.
+export async function reconcileSemanticWithAi(opts: {
+  currentMarkdown: string;
+  incomingMarkdown: string;
+  workspaceRoot: string;
+  outputDir: string;
+  progress?: (msg: string) => void;
+}): Promise<{ proposedPath: string; changed: boolean }> {
+  const { currentMarkdown, incomingMarkdown, workspaceRoot, outputDir } = opts;
+  const progress = opts.progress ?? (() => { /* noop */ });
+  const proposedPath = path.join(outputDir, 'source.semantic.proposed.md');
+
+  // Nothing to merge against → the incoming version is the proposal as-is.
+  if (!currentMarkdown.trim()) {
+    await fs.writeFile(proposedPath, incomingMarkdown.trimEnd() + '\n', 'utf8');
+    return { proposedPath, changed: incomingMarkdown.trim().length > 0 };
+  }
+
+  const config = getConfig();
+  const agContext: AgenticReviewContext = {
+    provider: config.reviewProvider,
+    mode: config.reviewMode,
+    model: config.reviewModel,
+    endpoint: config.reviewEndpoint,
+    commandId: config.reviewCommandId,
+    commandArgsJson: config.reviewCommandArgsJson,
+    promptFileName: config.reviewPromptFileName,
+    workspaceRoot,
+    sourcePath: path.join(outputDir, 'source.semantic.md'),
+    semanticSource: currentMarkdown,
+    artifactName: 'semantic-reconcile',
+  };
+
+  const mergePrompt = `TASK: Merge two versions of a Semantic Markdown document into ONE.
+
+RULES:
+- The INCOMING version is the source of truth for NEW information. Add every genuinely new section, component, table, endpoint, rule or detail it introduces.
+- Do NOT lose curated detail: when the CURRENT version describes something richer than INCOMING (e.g. a component catalogue, table descriptions, business rules) and INCOMING is thinner or silent about it, KEEP the current detail.
+- Where the two genuinely conflict on the same fact, prefer the INCOMING value.
+- Preserve the Semantic Markdown structure (H1 title, H2 sections like intent/context/interfaces/processes/data_flows/database_schema/dependencies). Merge same-named sections; append new sections.
+- Output ONLY the final merged markdown document. No code fences, no commentary, no conflict markers.
+
+CURRENT source.semantic.md:
+---
+${currentMarkdown}
+---
+
+INCOMING (freshly generated) version:
+---
+${incomingMarkdown}
+---`;
+
+  progress('Merging semantic source with AI…');
+  const raw = await runCloudRawPrompt(agContext, mergePrompt, makeStreamTracker(undefined, 'Merging semantic'));
+  let merged = (raw ?? '').trim().replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+
+  // If the agent returned nothing usable, fall back to the incoming version so the
+  // proposal still reflects the latest content rather than silently doing nothing.
+  if (merged.length < 20) {
+    progress('Semantic merge: AI returned no usable output — falling back to the incoming version.');
+    merged = incomingMarkdown.trim();
+  }
+
+  await fs.writeFile(proposedPath, merged + '\n', 'utf8');
+  return { proposedPath, changed: merged.trim() !== currentMarkdown.trim() };
+}
+
+// Deterministically regenerate the semantic-derived canonical artifacts after a
+// reconcile has been applied. The approved source.semantic.md is the single source
+// of truth; one generate_canonical_graph call rebuilds the graph AND the database
+// schema from it, so source.graph.json + source.database.json/.md stay consistent.
+// No AI review here — the AI merge already happened at the semantic level.
+export async function regenerateSemanticDerivedArtifacts(opts: {
+  registry: McpRegistry;
+  semanticContent: string;
+  outputDir: string;
+  progress?: (msg: string) => void;
+}): Promise<void> {
+  const { registry, semanticContent, outputDir } = opts;
+  const progress = opts.progress ?? (() => { /* noop */ });
+
+  const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
+    content: normalizeSemanticSections(semanticContent),
+    persist: false,
+  });
+  const payload = response.json as Record<string, unknown> | undefined;
+  const graph = payload?.graph as Record<string, unknown> | undefined;
+  if (!graph) {
+    progress('Graph regeneration skipped — semantic-core returned no graph.');
+    return;
+  }
+
+  await fs.writeFile(path.join(outputDir, 'source.graph.json'), JSON.stringify(graph, null, 2) + '\n', 'utf8');
+  progress('Regenerated source.graph.json');
+
+  const dbSchema = (graph.metadata as Record<string, unknown> | undefined)?.databaseSchema as DatabaseSchemaLike | undefined;
+  if (dbSchema?.tables?.length) {
+    await writeSchemaArtifacts(dbSchema, outputDir);
+    progress(`Regenerated source.database.json/.md (${dbSchema.tables.length} table(s))`);
+  } else {
+    progress('Database schema: no tables inferred — leaving existing schema files unchanged.');
   }
 }
 

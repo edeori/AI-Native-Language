@@ -195,24 +195,6 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       </button>
     </div>
 
-    <div class="section-label">Validation</div>
-    <div class="btn-group">
-      <button class="action-btn" data-command="${commandIds.validateActiveSemanticMarkdown}">
-        <span class="btn-icon">✓</span>
-        <span>
-          <div class="btn-label">Validate semantic</div>
-          <div class="btn-desc">Check active source.semantic.md against policy</div>
-        </span>
-      </button>
-      <button class="action-btn" data-command="${commandIds.runDocCodeAlignment}">
-        <span class="btn-icon">⇄</span>
-        <span>
-          <div class="btn-label">Doc-code alignment</div>
-          <div class="btn-desc">Check imported docs against code artifacts</div>
-        </span>
-      </button>
-    </div>
-
     <div class="section-label">Efficiency</div>
     <div class="eff-card">${renderEfficiency(efficiency)}</div>
 

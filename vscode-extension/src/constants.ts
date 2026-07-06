@@ -34,10 +34,7 @@ export const commandIds = {
 
 export const viewIds = {
   validation: 'aiNativeValidation',
-  review: 'aiNativeReviewArtifacts',
-  semantic: 'aiNativeSemanticArtifacts',
-  graph: 'aiNativeGraph',
-  databaseSchema: 'aiNativeDatabaseSchema',
+  sources: 'aiNativeSources',
   settings: 'aiNativeMcpHub',
   recon: 'aiNativeRecon',
 } as const;

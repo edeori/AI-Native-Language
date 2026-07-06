@@ -1,3 +1,10 @@
+import type { ReferenceProjectAnalysis } from './reference-corpus.js';
+
+// Baked-in reference "learning points": the compact analysis summary of the
+// event-app-be ground-truth project. This lets the MCP servers seed module /
+// technology / architecture / schema hints WITHOUT shipping a reference-projects/
+// folder. Set AI_NATIVE_REFERENCE_CORPUS_ROOT to a directory to add more projects.
+export const BUILTIN_REFERENCE_PROJECTS: ReferenceProjectAnalysis[] = [
 {
   "projectName": "event-app-be",
   "projectRoot": "/Users/mothproduction/Documents/VSCode/Event-App-BE",
@@ -199,3 +206,4 @@
     "contract-first HTTP layer"
   ]
 }
+];

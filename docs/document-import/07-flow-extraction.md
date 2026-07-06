@@ -1,6 +1,6 @@
 # 7. Downstream: Flow Extraction
 
-**Hol:** Flow panel → Step 3 — önállóan is futtatható, nem a document import közvetlen része  
+**Hol:** Import Source panel → Step 3 — önállóan is futtatható, nem a document import közvetlen része  
 **Command:** `aiNative.runFlowExtraction`  
 **MCP szerver:** `document-import` · tool: `extract_application_flows`
 
@@ -46,7 +46,7 @@ meglévő processes + doc-entities.flows + kódgráfból kinyert flow-ok
 
 **Frissített `.ai-native/doc-entities.json`** — az extension visszaírja, kiegészítve az újonnan kinyert flows/processes értékekkel (Set-alapú dedup a meglévőkkel).
 
-**Flow panel feedback** — az eredmény megjelenik a Flow Extraction kártyán: `X flow(s), Y process(es) — docs: N, graph: N, existing: N`.
+**Import Source panel feedback** — az eredmény megjelenik a Flow Extraction kártyán: `X flow(s), Y process(es) — docs: N, graph: N, existing: N`.
 
 ## AI Synthesis (opcionális)
 

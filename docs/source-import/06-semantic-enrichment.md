@@ -1,6 +1,6 @@
 # 2. Semantic Enrichment
 
-**Flow panel:** Step 2 — **Semantic Enrichment**  
+**Import Source panel:** Step 2 — **Semantic Enrichment**  
 **Command:** `aiNative.runAiEnrichment`  
 **Hol:** `extension.ts` → `runAiEnrichment()`
 
@@ -8,7 +8,7 @@
 
 Az [1c — importSourceProjectState](03-analysis.md) által generált `source.semantic.md` determinisztikusan épül fel az AST-ból. A Semantic Enrichment lépés cloud AI (vagy lokális Ollama) agent-eket futtat erre az alapra, hogy gazdagabb, kontextuálisabb leírást hozzon létre.
 
-## Konfiguráció (Flow panel kártyán)
+## Konfiguráció (Import Source panel kártyán)
 
 | Checkbox | Leírás |
 |---|---|

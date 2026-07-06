@@ -22,8 +22,6 @@ SYNC_ITEMS=(
   AI_Native_Semantic_Workflow.md
   AI_Native_Semantic_Programming_Platform.md
   docs
-  examples
-  reference-projects
   mcp-servers
   docker
 )

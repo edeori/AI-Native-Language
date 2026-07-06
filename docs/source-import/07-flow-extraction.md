@@ -1,6 +1,6 @@
 # 3. Flow Extraction
 
-**Flow panel:** Step 3 — **Flow Extraction**  
+**Import Source panel:** Step 3 — **Flow Extraction**  
 **Command:** `aiNative.runFlowExtraction`  
 **Hol:** `extension.ts` → `runFlowExtraction()`  
 **MCP szerver:** `document-import` · tool: `extract_application_flows`

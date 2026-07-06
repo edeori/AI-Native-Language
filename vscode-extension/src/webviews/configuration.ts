@@ -356,14 +356,12 @@ export class ConfigurationPanel {
             </select>
           </div>
           <div>
-            <label for="reviewModel">Model</label>
-            <input id="reviewModel" type="text" value="${escapeAttr(config.reviewModel)}" placeholder="e.g. sonnet or claude-3-5-sonnet-20241022" />
-            <select id="reviewModelPreset" style="margin-top:4px;">
-              <option value="">— pick a preset —</option>
-            </select>
+            <label for="reviewModelSelect">Model</label>
+            <select id="reviewModelSelect"></select>
+            <input id="reviewModel" type="text" value="${escapeAttr(config.reviewModel)}" placeholder="e.g. claude-opus-4-8" style="margin-top:4px; display:none;" />
           </div>
         </div>
-        <p class="muted" style="margin-top:8px;">Passed to the provider CLI via <code>--model</code>. Type any model id your API key supports — an alias like <code>sonnet</code> resolves to the newest version, which your gateway may not have.</p>
+        <p class="muted" style="margin-top:8px;">Passed to the provider CLI via <code>--model</code>. Pick a known model, or choose <code>Custom…</code> to type any id your gateway accepts (aliases like <code>sonnet</code> may not resolve on a gateway).</p>
         <p class="muted" style="margin-top:4px;">CLI: ${escapeHtml(agentStatus)}</p>
         <div class="card-actions">
           <button class="btn-secondary" id="testAgent">Test AI Review</button>
@@ -450,32 +448,48 @@ export class ConfigurationPanel {
       const localAgentDefinitions = ${JSON.stringify(agentDefinitions.map((definition) => definition.key))};
 
       // ── Cloud AI model: free-text input + preset quick-pick ──────
-      // Free text is the source of truth — the user's gateway may only accept
-      // specific model ids that no alias resolves to. Presets just fill the box.
+      // One dropdown of known models per provider + a "Custom…" escape hatch that
+      // reveals the free-text box (the gateway may accept ids no preset lists).
+      // The hidden reviewModel input stays the source of truth read on save.
       const reviewModelPresets = ${JSON.stringify(REVIEW_MODEL_PRESETS)};
+      const CUSTOM_MODEL = '__custom__';
       const reviewProviderEl = document.getElementById('reviewProvider');
-      const reviewModelEl = document.getElementById('reviewModel');
-      const reviewPresetEl = document.getElementById('reviewModelPreset');
+      const reviewModelEl = document.getElementById('reviewModel');       // hidden text = source of truth
+      const reviewSelectEl = document.getElementById('reviewModelSelect');
 
-      function refreshPresetOptions() {
+      function refreshModelOptions() {
         const presets = reviewModelPresets[reviewProviderEl.value] ?? [];
-        reviewPresetEl.innerHTML = '<option value="">— pick a preset —</option>' +
-          presets.map((m) => '<option value="' + m + '">' + m + '</option>').join('');
+        let current = (reviewModelEl.value || '').trim();
+        // Empty (or provider just switched away from its preset) → default to the
+        // first known model so the field is always valid.
+        if (!current && presets.length) {
+          current = presets[0];
+          reviewModelEl.value = current;
+        }
+        const isCustom = current !== '' && !presets.includes(current);
+        reviewSelectEl.innerHTML =
+          presets.map((m) => '<option value="' + m + '"' + (m === current ? ' selected' : '') + '>' + m + '</option>').join('') +
+          '<option value="' + CUSTOM_MODEL + '"' + (isCustom ? ' selected' : '') + '>Custom…</option>';
+        reviewModelEl.style.display = isCustom ? '' : 'none';
       }
-      reviewPresetEl.addEventListener('change', () => {
-        if (reviewPresetEl.value) {
-          reviewModelEl.value = reviewPresetEl.value;
-          reviewPresetEl.value = '';
+      reviewSelectEl.addEventListener('change', () => {
+        if (reviewSelectEl.value === CUSTOM_MODEL) {
+          reviewModelEl.style.display = '';
+          reviewModelEl.focus();
+        } else {
+          reviewModelEl.value = reviewSelectEl.value;
+          reviewModelEl.style.display = 'none';
         }
       });
       reviewProviderEl.addEventListener('change', () => {
-        refreshPresetOptions();
-        // Suggest the provider's default model only if the box is empty.
-        if (!reviewModelEl.value.trim()) {
-          reviewModelEl.value = (reviewModelPresets[reviewProviderEl.value] ?? [])[0] ?? '';
+        const presets = reviewModelPresets[reviewProviderEl.value] ?? [];
+        // Keep a still-valid custom id; otherwise fall back to the new provider's default.
+        if (!presets.includes((reviewModelEl.value || '').trim())) {
+          reviewModelEl.value = presets[0] ?? '';
         }
+        refreshModelOptions();
       });
-      refreshPresetOptions();
+      refreshModelOptions();
       const roleModelPresets = ${JSON.stringify(ROLE_MODEL_PRESETS)};
       const roleDefaults = ${JSON.stringify(defaultRoleConfig)};
 

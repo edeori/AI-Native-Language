@@ -19,7 +19,7 @@ Mi keletkezik, hol, és mikor.
     └── memory.md               ← akkumulált repo-memória
 ```
 
-Minden task futáshoz **egy könyvtár, két fájl** keletkezik. Ha egy task hibával áll le, a `direction.md` megvan (a hívás előtt íródik), de a `report.md` hiányzik.
+Minden task futáshoz **egy könyvtár, két fájl** keletkezik. Ha egy task hibával áll le, a `direction.md` megvan (a hívás előtt íródik), és a `report.md` is elkészül (`# Failed` szekcióval + a hiba előtt streamelt részlettel).
 
 A teljes assemblelt prompt **nem kerül fájlba** — csak memóriában él az API hívásig.
 
@@ -41,9 +41,10 @@ vscode-extension/src/development/
 
 ```
 queued → pending → running → done
-                              ↑
-                   hiba esetén visszaesik queued-re
+                          └→ failed   (hiba esetén; NEM esik vissza queued-re)
 ```
+
+Hiba esetén a task `failed` státuszt kap (nem kerül vissza a sorba), és a `↻ retry` gombbal újrafuttatható; sikeres újrafutás után `done` lesz és a hiba-jelzés törlődik.
 
 | Státusz | Mit jelent |
 |---|---|
@@ -51,6 +52,7 @@ queued → pending → running → done
 | `pending` | Run Queue-ból vár sorra (más task fut előtte) |
 | `running` | AI épp dolgozik rajta |
 | `done` | Befejezve, van `result` |
+| `failed` | Hibára futott; `failureReason` + `failedAt` beállítva. Retry-olható, törölhető. |
 
 ---
 

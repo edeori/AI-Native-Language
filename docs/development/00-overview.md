@@ -11,7 +11,7 @@ A direction → context assembly → AI implementál ciklus gombnyomásos, copy-
 | AI hívás mechanizmusa | A beállított `review.provider` CLI-je (Claude Code CLI vagy Codex CLI) — ugyanaz mint a review flow |
 | Panel elhelyezése | Önálló panel az activity bar-ban, jobb oldalra helyezhető |
 | Task input | Rövid vagy hosszú direction szövege — a plugin rakja össze a kontextust az importokból |
-| Scope forrása | Kizárólag a Source Import / Document Import artifactokból (semantic.md, codegraph, doc-entities) |
+| Scope forrása | A Source Import / Import Document artifactokból: `source.semantic.md`, `source.codegraph.json`, `source.ast-index.json`, `source.class-index.md`, `source.analysis.md`, `source.database.md`, `source.layer-graphs.json`, `source.component-map.json`, opcionálisan `doc-entities.json`, plusz a `development/` memória |
 | Iteráció modell | Lapos task lista — follow-up = új task manuálisan írva |
 
 ---

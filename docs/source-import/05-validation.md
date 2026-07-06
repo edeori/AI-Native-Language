@@ -1,4 +1,4 @@
-# 1e. Validáció és verziózott artifactek
+# 1e. Validáció
 
 **Hol:** `extension.ts` → `importSourceProject()`, a recon prompt után  
 **MCP szerver:** `validator` · tool: `validate_semantic_markdown`
@@ -46,17 +46,18 @@ Az issue típusai: `gap` · `conflict` · `warning` · `violation`
 
 A validáció eredménye megjelenik VSCode diagnosztika figyelmeztetésként a megnyíló `source.semantic.md` szerkesztőben.
 
-## Verziózott artifactek
+## Kimenetek
 
-Futás után az extension három verziózott snapshot-ot ment le a `.ai-native/artifacts/` könyvtárba (`writeVersionedArtifact`):
+> Nincs külön file-szintű verziózás. A korábbi `.ai-native/versions/` snapshot-store megszűnt — a történetet a **git** kezeli a kanonikus fájlokon.
 
-| Kind | Fájlok |
+Futás után a kanonikus fájlok a helyükön vannak (`source.semantic.md`, `source.database.json/.md`), és a validáció kiír:
+
+| Fájl | Tartalom |
 |---|---|
-| `semantic` | `semantic.md`, `semantic.json`, `analysis.json` |
-| `databaseSchema` | `database.schema.json`, `database.schema.md` |
-| `validation` | `validation.md` |
+| `.ai-native/validation/<slug>.validation.md` | ember-olvasható validációs riport |
+| `.ai-native/validation/<slug>.validation.hash` | frissesség-jel: az aktuális `source.semantic.md` hash-e |
 
-Minden artifact-verzió tartalmaz `sourceHash`-t (a `source.semantic.md` tartalmi ujjlenyomata), így a Generate Graph lépés ellenőrizni tudja, hogy a graph generáláshoz használt semantic.md megegyezik-e az utoljára validáltal.
+A **frissesség-jel** (`<slug>.validation.hash`) váltja ki a korábbi `sourceHash`-alapú snapshot-ellenőrzést: a **Generate Graph** ebből tudja, hogy a graph-generáláshoz használt `source.semantic.md` megegyezik-e az utoljára validáltal.
 
 ### A validation.md tartalma (Source Import kontextus)
 
@@ -79,5 +80,5 @@ Minden artifact-verzió tartalmaz `sourceHash`-t (a `source.semantic.md` tartalm
 
 A Source Import végén az extension:
 1. Megnyitja a `source.semantic.md`-t VSCode szerkesztőben — a diagnosztika figyelmeztetések azonnal megjelennek
-2. Best-effort: ha létezik verziózott graph artifact, megnyitja a `GraphPreviewPanel`-t is
+2. Best-effort: ha létezik kanonikus gráf (`source.graph.reviewed.json`, ill. `source.graph.json`), megnyitja a `GraphPreviewPanel`-t is
 3. Info üzenet: "Imported source workspace into .ai-native"

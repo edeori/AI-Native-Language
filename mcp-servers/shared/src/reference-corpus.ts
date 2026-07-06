@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BUILTIN_REFERENCE_PROJECTS } from './reference-corpus.default.js';
 
 export interface ReferenceProjectAnalysis {
   projectName: string;
@@ -59,7 +60,13 @@ export function loadReferenceCorpus(): ReferenceCorpus {
   }
 
   const corpusRoot = process.env.AI_NATIVE_REFERENCE_CORPUS_ROOT || defaultCorpusRoot;
-  const projects: ReferenceProjectAnalysis[] = [];
+  // Start from the baked-in learning points so the corpus works with no folder on
+  // disk. An external folder (env override or the legacy reference-projects/ dir)
+  // adds/overrides projects by name on top.
+  const byName = new Map<string, ReferenceProjectAnalysis>();
+  for (const project of BUILTIN_REFERENCE_PROJECTS) {
+    byName.set(project.projectName, project);
+  }
 
   if (existsSync(corpusRoot)) {
     for (const entry of readdirSync(corpusRoot, { withFileTypes: true })) {
@@ -70,12 +77,14 @@ export function loadReferenceCorpus(): ReferenceCorpus {
       try {
         const raw = readFileSync(analysisPath, 'utf8');
         const parsed = JSON.parse(raw) as ReferenceProjectAnalysis;
-        projects.push(parsed);
+        byName.set(parsed.projectName, parsed);
       } catch {
         continue;
       }
     }
   }
+
+  const projects: ReferenceProjectAnalysis[] = [...byName.values()];
 
   const primary = projects[0];
   const moduleHints = unique([

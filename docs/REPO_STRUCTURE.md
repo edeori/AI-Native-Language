@@ -23,7 +23,7 @@ The goal is to keep the semantic model, tooling contracts, examples, and impleme
 ### `docs/`
 
 - [source-import/](source-import/) — Source Import pipeline lépések részletesen
-- [document-import/](document-import/) — Document Import pipeline lépések részletesen
+- [document-import/](document-import/) — Import Document pipeline lépések részletesen
 - [actions/](actions/) — minden plugin action és command leírása
 - `CURRENT_PROCESSING_PIPELINE.md` — pipeline design elvek és artifact stratégia
 - `MCP_SERVER_CONTRACTS.md` — MCP server szerepkörök összefoglalója
@@ -44,12 +44,12 @@ The goal is to keep the semantic model, tooling contracts, examples, and impleme
 - `java-parser/` — Java AST parsing
 - `jqassistant/` — bytecode scan, Maven/modul struktúra
 - `document-import/` — dokumentum → Markdown konverzió, semantic elemzés, alignment
-- `shared/` — determinisztikus artifact utilities, `importSourceProjectState`
+- `shared/` — determinisztikus artifact utilities, `importSourceProjectState`; a referencia-korpusz ("learning points", event-app-be) beépítve: `shared/src/reference-corpus.default.ts` (nincs külön `reference-projects/` mappa, a Docker sem másolja)
 
 ### `vscode-extension/`
 
-- plugin UI (Flow panel, Actions panel, Document Import, Settings)
-- artifact tree view-ok (validation, graph, semantic, database schema)
+- plugin UI — AI Agent panel: Import Document, Import Source, Recon Runs, Actions, Validation, Sources, Settings (+ külön Development panel)
+- a **Sources** nézet a jelenlegi kanonikus fájlokat mutatja (semantic / database schema / review); a **Validation** webview a Validate semantic / Doc-code alignment gombokkal. (Nincs külön file-szintű verziózás — a történetet a git kezeli.)
 - Recon Runs panel
 
 ### `docker/`

@@ -651,23 +651,43 @@ async function fetchConfluencePage(input: {
   }
   const response = await fetch(url, { headers });
   if (!response.ok) throw new Error(`Confluence returned ${response.status} for ${url}`);
+  // A REST endpoint returns JSON; HTML back means we hit a page/login view (bad URL,
+  // or a missing/expired token that bounced us to the login page) — fail clearly
+  // instead of letting JSON.parse throw the opaque "Unexpected token '<'".
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('json')) {
+    throw new Error(
+      `Confluence returned ${contentType || 'non-JSON'} for ${url} instead of JSON. ` +
+      `Likely the page id/URL is not a REST target, or the Personal Access Token is missing/expired (login page returned). ` +
+      `Check the Confluence base URL and token in Settings.`,
+    );
+  }
   const json = await response.json() as any;
   return { pageId: json.id, title: json.title, url: json._links?.webui ? `${input.baseUrl ?? ''}${json._links.webui}` : input.pageUrl, body: extractConfluenceBody(json) };
 }
 
 function resolveConfluenceApiUrl(input: { pageUrl?: string; pageId?: string; baseUrl?: string }): string {
   const expand = 'body.storage,body.view,version,space';
+  const configuredBase = input.baseUrl?.replace(/\/$/, '');
   if (input.pageUrl) {
-    const match = input.pageUrl.match(/\/pages\/(\d+)/);
-    if (match) {
-      const pageId = match[1];
-      const baseUrl = input.pageUrl.replace(/\/(spaces|pages)\/.*$/, '');
+    // If the caller already handed us a REST URL, use it verbatim.
+    if (/\/rest\/api\/content\//.test(input.pageUrl)) return input.pageUrl;
+    // pageId can be in the modern path (…/pages/12345/Title) OR a legacy query
+    // param (…/pages/viewpage.action?pageId=12345&spaceKey=…, …/pages/viewpage.action?pageId=…).
+    const pageId = input.pageUrl.match(/\/pages\/(\d+)/)?.[1]
+      ?? input.pageUrl.match(/[?&]pageId=(\d+)/)?.[1];
+    if (pageId) {
+      // Prefer the configured base (works even for host-less/relative page URLs);
+      // otherwise derive it by stripping the page/space path off an absolute URL.
+      const baseUrl = configuredBase
+        ?? input.pageUrl.replace(/\/(spaces|pages|display|x)\/.*$/i, '').replace(/\/$/, '');
       return `${baseUrl}/rest/api/content/${pageId}?expand=${expand}`;
     }
+    // No resolvable id (e.g. a /display/SPACE/Title URL) — return as-is.
     return input.pageUrl;
   }
-  if (!input.baseUrl || !input.pageId) throw new Error('Requires baseUrl and pageId when pageUrl is not provided.');
-  return `${input.baseUrl.replace(/\/$/, '')}/rest/api/content/${encodeURIComponent(input.pageId)}?expand=${expand}`;
+  if (!configuredBase || !input.pageId) throw new Error('Requires baseUrl and pageId when pageUrl is not provided.');
+  return `${configuredBase}/rest/api/content/${encodeURIComponent(input.pageId)}?expand=${expand}`;
 }
 
 async function extractDocumentText(sourcePath: string, kind: ImportKind): Promise<string> {

@@ -2,12 +2,19 @@ import * as fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { createHash } from 'node:crypto';
 import { getConfig } from './config.js';
 
 export interface ArtifactNode {
   label: string;
   path: string;
   kind: 'file' | 'directory';
+}
+
+// Stable content hash used to detect whether a derived artifact (validation, graph)
+// still matches the semantic source it was produced from.
+export function hashArtifactContent(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
 }
 
 export async function resolveArtifactRoot(): Promise<vscode.Uri | undefined> {

@@ -9,8 +9,8 @@ Ez a fő munkafázis. A shared library az extension Node.js folyamatán belül f
 
 | Opció | Forrás a UI-ból |
 |---|---|
-| `enableOllamaEnrichment` | Flow panel: **Local AI Agents** checkbox |
-| `enableCloudEnrichment` | Flow panel: **Cloud AI** checkbox (`sourceCloudEnabled`) |
+| `enableOllamaEnrichment` | Import Source panel: **Local AI Agents** checkbox |
+| `enableCloudEnrichment` | Import Source panel: **Cloud AI** checkbox (`sourceCloudEnabled`) |
 | `cloudAgentRunner` | Ha `sourceCloudEnabled`, az extension egy closure-t ad át, ami `runCloudRawPrompt`-ot hív |
 | `resumeFromStage` | Ha csak Semantic Enrichment fut, `'semantic'` stage-ről folytatódik |
 | `javaAstCatalog` | Az [1a lépés](01-java-ast.md) eredménye |

@@ -7,8 +7,8 @@ import { addTask, deleteTask, loadTasks, updateTaskStatus } from './development/
 import { generateTaskId } from './development/taskId.js';
 import { runImplementationTask } from './development/implementationRunner.js';
 import { McpRegistry } from './mcpRegistry.js';
-import { VersionedArtifactTreeDataProvider } from './views/versionedArtifactTree.js';
-import { ValidationPanelTreeDataProvider } from './views/validationPanelTree.js';
+import { SourcesTreeDataProvider } from './views/sourcesTree.js';
+import { ValidationWebviewProvider } from './webviews/validationView.js';
 import { McpTreeDataProvider } from './views/mcpTree.js';
 import { ActionsWebviewProvider } from './webviews/actionsView.js';
 import { DevelopmentWebviewProvider } from './webviews/developmentView.js';
@@ -18,7 +18,7 @@ import { ConfigurationPanel } from './webviews/configuration.js';
 import { GraphPreviewPanel } from './webviews/graphPreview.js';
 import { EndpointSummaryPanel } from './webviews/endpointSummaryPanel.js';
 import { ReconRunsWebviewProvider, type ReconRunModuleSnapshot, type ReconRunSnapshot } from './webviews/reconRunsView.js';
-import { resolveArtifactRoot } from './workspaceArtifacts.js';
+import { resolveArtifactRoot, hashArtifactContent } from './workspaceArtifacts.js';
 import { initializeMcpConfigStorage } from './mcpConfigStore.js';
 import {
   appendFeedbackDelta,
@@ -33,8 +33,7 @@ import {
 } from '@ai-native/semantic-shared';
 import { runAgenticPrompt, runAgenticReviewBundle, runCloudRawPrompt, setAiUsageSink, CreditExhaustedError, type AgenticDiagramClassification, type AgenticReviewContext, type AgenticReviewResult, type ReviewPromptBundle } from './agenticReview.js';
 import { recordUsage } from './metrics.js';
-import { hashArtifactContent, readLatestVersionedArtifact, writeVersionedArtifact } from './versionedArtifacts.js';
-import { analyzeDocImports } from './docImportAnalysis.js';
+import { analyzeDocImports, regenerateSemanticDerivedArtifacts, reconcileSemanticWithAi } from './docImportAnalysis.js';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const outputChannel = vscode.window.createOutputChannel('AI Native Semantic Workflow');
@@ -90,10 +89,8 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
     },
   });
 
-  const validationProvider = new ValidationPanelTreeDataProvider();
-  const reviewProvider = new VersionedArtifactTreeDataProvider('review', 'Review', 'Versioned AI review outputs.');
-  const semanticProvider = new VersionedArtifactTreeDataProvider('semantic', 'Semantic', 'Versioned semantic source states.');
-  const databaseSchemaProvider = new VersionedArtifactTreeDataProvider('databaseSchema', 'Database Schema', 'Versioned database schema outputs.');
+  const validationProvider = new ValidationWebviewProvider();
+  const sourcesProvider = new SourcesTreeDataProvider();
   const mcpProvider = new McpTreeDataProvider(registry);
   const actionsProvider = new ActionsWebviewProvider(context);
   const developmentProvider = new DevelopmentWebviewProvider(context);
@@ -101,10 +98,10 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
   const docImportProvider = new DocumentImportWebviewProvider(context, registry, outputChannel);
   const reconRunsProvider = new ReconRunsWebviewProvider(context);
 
-  const validationView = vscode.window.createTreeView('aiNativeValidation', { treeDataProvider: validationProvider });
-  const reviewView = vscode.window.createTreeView('aiNativeReviewArtifacts', { treeDataProvider: reviewProvider });
-  const semanticView = vscode.window.createTreeView('aiNativeSemanticArtifacts', { treeDataProvider: semanticProvider });
-  const databaseSchemaView = vscode.window.createTreeView('aiNativeDatabaseSchema', { treeDataProvider: databaseSchemaProvider });
+  const validationView = vscode.window.registerWebviewViewProvider('aiNativeValidation', validationProvider, {
+    webviewOptions: { retainContextWhenHidden: true },
+  });
+  const sourcesView = vscode.window.createTreeView('aiNativeSources', { treeDataProvider: sourcesProvider });
   const mcpView = vscode.window.createTreeView('aiNativeMcpHub', { treeDataProvider: mcpProvider });
   const actionsView = vscode.window.registerWebviewViewProvider('aiNativeActions', actionsProvider, {
     webviewOptions: { retainContextWhenHidden: true },
@@ -123,9 +120,7 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
   });
   context.subscriptions.push(
     validationView,
-    reviewView,
-    semanticView,
-    databaseSchemaView,
+    sourcesView,
     mcpView,
     actionsView,
     developmentView,
@@ -157,10 +152,8 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
   };
 
   const refreshViews = async (): Promise<void> => {
-    validationProvider.refresh();
-    reviewProvider.refresh();
-    semanticProvider.refresh();
-    databaseSchemaProvider.refresh();
+    void validationProvider.refresh();
+    sourcesProvider.refresh();
     mcpProvider.refresh();
     reconRunsProvider.refresh();
     await registry.pingAll();
@@ -235,62 +228,35 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       const root = payload?.artifactRoot ? vscode.Uri.file(payload.artifactRoot) : await resolveArtifactRoot();
       if (!root) { void vscode.window.showWarningMessage('Open a workspace first.'); return; }
       const current = vscode.Uri.joinPath(root, 'source.semantic.md');
-      const suggested = vscode.Uri.joinPath(root, 'source.semantic.suggested.md');
       const proposed = vscode.Uri.joinPath(root, 'source.semantic.proposed.md');
-      const mergeResult = vscode.Uri.joinPath(root, 'source.semantic.merge-result.md');
 
       const exists = (uri: vscode.Uri) => vscode.workspace.fs.stat(uri).then(() => true, () => false);
-      const [haveCurrent, haveSuggested, haveProposed] = await Promise.all([exists(current), exists(suggested), exists(proposed)]);
-      if (!haveSuggested && !haveProposed) {
+      if (!(await exists(proposed))) {
         void vscode.window.showInformationMessage('No reconcile proposal pending (source.semantic.proposed.md not found).');
         return;
       }
 
-      // Prefer VSCode's native 3-way merge editor: Current + Incoming (doc) on
-      // top, an editable Result pane below with per-change Accept controls. The
-      // opening command is internal, so guard it and fall back to the 2-pane
-      // diff on the marker-based proposal if it's unavailable.
-      let usedMergeEditor = false;
-      if (haveCurrent && haveSuggested) {
-        try {
-          // Seed the result with current so an untouched merge keeps current.
-          await vscode.workspace.fs.copy(current, mergeResult, { overwrite: true });
-          await vscode.commands.executeCommand('_open.mergeEditor', {
-            base: current,
-            input1: { uri: current, title: 'Current (semantic)', detail: 'existing source.semantic.md', description: '' },
-            input2: { uri: suggested, title: 'Incoming (doc)', detail: 'freshly generated from docs/code', description: '' },
-            output: mergeResult,
-          });
-          usedMergeEditor = true;
-        } catch {
-          usedMergeEditor = false;
-          await vscode.workspace.fs.delete(mergeResult).then(undefined, () => undefined);
-        }
-      }
-      if (!usedMergeEditor) {
-        if (!haveProposed) {
-          void vscode.window.showInformationMessage('No reconcile proposal pending (source.semantic.proposed.md not found).');
-          return;
-        }
-        await vscode.commands.executeCommand(
-          'vscode.diff',
-          current,
-          proposed,
-          'Semantic reconcile — resolve conflicts in the right pane, save, then Apply',
-        );
-      }
+      // Plain 2-pane review: left = current source of truth, right = the AI-merged
+      // proposal (editable, no conflict markers). The user just reviews — and edits
+      // the right pane if something is off — then applies via the editor-title ✓
+      // button, this toast, or the Command Palette.
+      await vscode.commands.executeCommand(
+        'vscode.diff',
+        current,
+        proposed,
+        'Semantic reconcile — Current  ↔  AI proposal (edit the right pane if needed, then Apply)',
+      );
 
-      const where = usedMergeEditor ? 'the Result pane of the merge editor' : 'the right (proposed) pane';
       const choice = await vscode.window.showInformationMessage(
-        `Reconcile opened. Resolve in ${where}, save, then apply it to source.semantic.md.`,
-        'Apply resolved',
+        'AI merge proposal opened on the right. Review (edit if needed), then Apply to source.semantic.md.',
+        'Apply',
         'Discard',
       );
-      if (choice === 'Apply resolved') {
+      if (choice === 'Apply') {
         await vscode.commands.executeCommand(commandIds.applyReconcile, { artifactRoot: root.fsPath });
       } else if (choice === 'Discard') {
         await vscode.workspace.fs.delete(proposed).then(undefined, () => undefined);
-        await vscode.workspace.fs.delete(mergeResult).then(undefined, () => undefined);
+        await vscode.workspace.fs.delete(vscode.Uri.joinPath(root, 'source.semantic.suggested.md')).then(undefined, () => undefined);
         void vscode.window.showInformationMessage('Reconcile proposal discarded.');
       }
     }),
@@ -299,13 +265,10 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       if (!root) { void vscode.window.showWarningMessage('Open a workspace first.'); return; }
       const current = vscode.Uri.joinPath(root, 'source.semantic.md');
       const proposed = vscode.Uri.joinPath(root, 'source.semantic.proposed.md');
-      const mergeResult = vscode.Uri.joinPath(root, 'source.semantic.merge-result.md');
-      // The merge editor writes to merge-result.md; the marker-based fallback
-      // writes to proposed.md. Prefer the merge result when present.
+      // The AI merge writes a clean proposal to proposed.md (no conflict markers).
+      // If the user edited the right diff pane, VS Code persists their edits there.
       let bytes: Uint8Array | undefined;
-      for (const candidate of [mergeResult, proposed]) {
-        try { bytes = await vscode.workspace.fs.readFile(candidate); break; } catch { /* try next */ }
-      }
+      try { bytes = await vscode.workspace.fs.readFile(proposed); } catch { /* none */ }
       if (!bytes) {
         void vscode.window.showWarningMessage('No reconcile proposal to apply.');
         return;
@@ -313,17 +276,39 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       const text = Buffer.from(bytes).toString('utf8');
       if (/^<{7}|^={7}|^>{7}/m.test(text)) {
         const proceed = await vscode.window.showWarningMessage(
-          'The result still contains unresolved conflict markers (<<<<<<< / >>>>>>>). Apply anyway?',
+          'The proposal still contains unresolved conflict markers (<<<<<<< / >>>>>>>). Apply anyway?',
           'Apply anyway',
           'Cancel',
         );
         if (proceed !== 'Apply anyway') return;
       }
       await vscode.workspace.fs.writeFile(current, bytes);
+      // Clean up the transient reconcile artifacts so nothing stays stuck.
       await vscode.workspace.fs.delete(proposed).then(undefined, () => undefined);
-      await vscode.workspace.fs.delete(mergeResult).then(undefined, () => undefined);
+      await vscode.workspace.fs.delete(vscode.Uri.joinPath(root, 'source.semantic.suggested.md')).then(undefined, () => undefined);
+
+      // The applied semantic.md is now the source of truth → deterministically
+      // regenerate the semantic-derived artifacts (graph + database schema) in one
+      // pass so they stay consistent with the new doc. Best-effort: never block apply.
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Regenerating graph & database schema…', cancellable: false },
+        async () => {
+          try {
+            await regenerateSemanticDerivedArtifacts({
+              registry,
+              semanticContent: text,
+              outputDir: root.fsPath,
+              progress: (message) => outputChannel.appendLine(`[semantic-derived] ${message}`),
+            });
+          } catch (err) {
+            outputChannel.appendLine(`[semantic-derived] regeneration failed: ${err instanceof Error ? err.message : String(err)}`);
+            void vscode.window.showWarningMessage(`Semantic applied, but graph/schema regeneration failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        },
+      );
+
       await refreshViews();
-      void vscode.window.showInformationMessage('Reconciled source.semantic.md applied.');
+      void vscode.window.showInformationMessage('Reconciled source.semantic.md applied — graph & schema regenerated.');
     }),
     vscode.commands.registerCommand(commandIds.openDevelopmentView, async () => {
       try {
@@ -589,7 +574,6 @@ async function runValidation(
         return;
       }
       const artifactRoot = await resolveArtifactRoot();
-      await ensureSemanticVersionCheckpoint(artifactRoot, source, 'validation checkpoint');
 
       report('Loading validation policy from MCP...');
       const validationPolicy = await resolveValidationPolicyText(registry);
@@ -662,48 +646,11 @@ async function runValidation(
             'utf8',
           ),
         );
-        await writeVersionedArtifact({
-          artifactRoot: artifactRoot.fsPath,
-          kind: 'validation',
-          baseName: slug(source.fileName),
-          sourcePath: source.fileName,
-          sourceHash: hashArtifactContent(source.getText()),
-          label: 'validation',
-          files: {
-            'validation.md': [
-              '# AI Native Validation',
-              '',
-              `- Source: ${source.fileName}`,
-              `- MCP report path: ${payload.reportPath ?? 'n/a'}`,
-              `- MCP summary: gaps=${payload.summary.gaps}, conflicts=${payload.summary.conflicts}, warnings=${payload.summary.warnings}, violations=${payload.summary.violations}`,
-              '',
-              '## MCP issues',
-              ...(payload.issues.length
-                ? payload.issues.map((issue) => `- [${issue.severity ?? 'info'}] ${issue.code ?? 'issue'}: ${issue.message ?? ''}`)
-                : ['- none']),
-              '',
-              '## Retraining delta',
-              `- missing sections: ${validationDelta.missingSections.length ? validationDelta.missingSections.join(', ') : 'none'}`,
-              `- schema gaps: ${validationDelta.schemaGaps.length ? validationDelta.schemaGaps.join(', ') : 'none'}`,
-              `- persistence gaps: ${validationDelta.persistenceSignals.length ? validationDelta.persistenceSignals.join(', ') : 'none'}`,
-              `- review targets: ${validationDelta.reviewTargets.length ? validationDelta.reviewTargets.join(', ') : 'none'}`,
-              '',
-              '## Graph signals',
-              `- nodes: ${validationDelta.graphSignals.nodeCount}`,
-              `- edges: ${validationDelta.graphSignals.edgeCount}`,
-              `- database schema tables: ${validationDelta.graphSignals.databaseSchemaTables}`,
-              `- graph layers: ${validationDelta.graphSignals.layers.length ? validationDelta.graphSignals.layers.join(', ') : 'none'}`,
-              '',
-              '## Delta hints',
-              ...(validationDelta.hints.length ? validationDelta.hints.map((hint) => `- ${hint}`) : ['- none']),
-            ].join('\n') + '\n',
-          },
-          metadata: {
-            reportPath: payload.reportPath,
-            summary: payload.summary,
-            validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
-          },
-        });
+        // Freshness sidecar: record the hash of the semantic source this validation
+        // was produced from. Graph generation reads it to refuse running off a stale
+        // validation (replaces the former versioned-artifact sourceHash).
+        const validationHashPath = vscode.Uri.joinPath(validationFolder, `${slug(source.fileName)}.validation.hash`);
+        await vscode.workspace.fs.writeFile(validationHashPath, Buffer.from(hashArtifactContent(source.getText()), 'utf8'));
         outputChannel.appendLine(`  validation markdown: ${validationPath.fsPath}`);
 
           await submitFeedbackDelta({
@@ -898,16 +845,15 @@ async function runGraphGeneration(
       const validationPolicy = await resolveValidationPolicyText(registry);
       const artifactRoot = await resolveArtifactRoot();
       const sourceHash = hashArtifactContent(source.getText());
-      await ensureSemanticVersionCheckpoint(artifactRoot, source, 'graph checkpoint');
-      const latestValidation = artifactRoot
-        ? await readLatestVersionedArtifact(artifactRoot.fsPath, 'validation', slug(source.fileName))
+      const validationHash = artifactRoot
+        ? await fs.readFile(path.join(artifactRoot.fsPath, 'validation', `${slug(source.fileName)}.validation.hash`), 'utf8').then((h) => h.trim(), () => undefined)
         : undefined;
-      if (!latestValidation) {
+      if (!validationHash) {
         vscode.window.showWarningMessage('Graph generation requires a fresh validated version first.');
         return;
       }
-      if (latestValidation.sourceHash !== sourceHash) {
-        vscode.window.showWarningMessage('The latest validation version is stale. Run Validate input before generating the graph.');
+      if (validationHash !== sourceHash) {
+        vscode.window.showWarningMessage('The latest validation is stale. Run Validate input before generating the graph.');
         return;
       }
       const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
@@ -1001,41 +947,8 @@ async function runGraphGeneration(
           await vscode.workspace.fs.createDirectory(graphFolder);
           const reviewedPath = vscode.Uri.joinPath(graphFolder, `${slug(source.fileName)}.graph.json`);
           await vscode.workspace.fs.writeFile(reviewedPath, Buffer.from(JSON.stringify(reviewedGraph, null, 2), 'utf8'));
-          await writeVersionedArtifact({
-            artifactRoot: artifactRoot.fsPath,
-            kind: 'graph',
-            baseName: slug(source.fileName),
-            sourcePath: source.fileName,
-            sourceHash,
-            label: 'reviewed graph',
-            files: {
-              'graph.json': JSON.stringify(reviewedGraph, null, 2) + '\n',
-            },
-            metadata: {
-              review: agenticReview.summary,
-            },
-          });
-          const reviewedDatabaseSchema = asObject(reviewedGraph.metadata)?.databaseSchema as
-            | NonNullable<AgenticDiagramClassification['databaseSchema']>
-            | undefined;
-          if (reviewedDatabaseSchema) {
-            await writeVersionedArtifact({
-              artifactRoot: artifactRoot.fsPath,
-              kind: 'databaseSchema',
-              baseName: slug(source.fileName),
-              sourcePath: source.fileName,
-              sourceHash,
-              label: 'reviewed database schema',
-              files: {
-                'database.schema.json': JSON.stringify(reviewedDatabaseSchema, null, 2) + '\n',
-              },
-              metadata: {
-                reviewedAt: new Date().toISOString(),
-                source: 'reviewed graph metadata',
-                reviewSummary: agenticReview.summary,
-              },
-            });
-          }
+          // The reviewed database schema stays embedded in the canonical graph.json
+          // (reviewedGraph.metadata.databaseSchema) — git carries its history.
           outputChannel.appendLine(`  reviewed graph: ${reviewedPath.fsPath}`);
           const validationFolder = vscode.Uri.joinPath(artifactRoot, 'validation');
           await vscode.workspace.fs.createDirectory(validationFolder);
@@ -1073,15 +986,12 @@ async function runGraphGeneration(
               'utf8',
             ),
           );
-          await writeVersionedArtifact({
-            artifactRoot: artifactRoot.fsPath,
-            kind: 'review',
-            baseName: slug(source.fileName),
-            sourcePath: source.fileName,
-            sourceHash,
-            label: 'review',
-            files: {
-              'review.md': [
+          // Canonical AI review artifact (shown in the Sources view, tracked by git).
+          const reviewMarkdownPath = vscode.Uri.joinPath(artifactRoot, 'source.review.md');
+          await vscode.workspace.fs.writeFile(
+            reviewMarkdownPath,
+            Buffer.from(
+              [
                 '# AI Native Validation',
                 '',
                 `- Source: ${source.fileName}`,
@@ -1108,15 +1018,11 @@ async function runGraphGeneration(
                   ? agenticReview.issues.map((issue) => `- [${issue.severity}] ${issue.code}: ${issue.message}`)
                   : ['- none']),
               ].join('\n') + '\n',
-            },
-            metadata: {
-              reviewedAt: new Date().toISOString(),
-              summary: agenticReview.summary,
-              provider: agenticReview.provider,
-              mode: agenticReview.mode,
-            },
-          });
+              'utf8',
+            ),
+          );
           outputChannel.appendLine(`  validation markdown: ${validationPath.fsPath}`);
+          outputChannel.appendLine(`  review markdown: ${reviewMarkdownPath.fsPath}`);
           await submitFeedbackDelta({
             registry,
             workspaceRoot: artifactRoot?.fsPath ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
@@ -1171,7 +1077,7 @@ async function runGraphGeneration(
               reviewedIssuesCount: reviewedIssues.length,
               graphNodeCount: reviewedGraph.nodes.length,
               graphEdgeCount: reviewedGraph.edges.length,
-              databaseSchemaTables: reviewedDatabaseSchema?.tables?.length ?? 0,
+              databaseSchemaTables: (asObject(reviewedGraph.metadata)?.databaseSchema as { tables?: unknown[] } | undefined)?.tables?.length ?? 0,
             },
             issues: reviewedIssues,
             evidence: [
@@ -1330,14 +1236,9 @@ async function openGraphPreview(
 
   const source = await resolveSemanticSourceDocument();
   if (source) {
-    const reviewedArtifactRecord = artifactRoot
-      ? await readLatestVersionedArtifact(artifactRoot.fsPath, 'graph', slug(source.fileName))
+    const reviewedArtifact = artifactRoot
+      ? vscode.Uri.joinPath(artifactRoot, 'graph', `${slug(source.fileName)}.graph.json`)
       : undefined;
-    const reviewedArtifact = reviewedArtifactRecord?.files['graph.json']
-      ? vscode.Uri.file(reviewedArtifactRecord.files['graph.json'])
-      : artifactRoot
-        ? vscode.Uri.joinPath(artifactRoot, 'graph', `${slug(source.fileName)}.graph.json`)
-        : undefined;
     if (reviewedArtifact && (await pathExists(reviewedArtifact))) {
       const document = await vscode.workspace.openTextDocument(reviewedArtifact);
       const reviewedGraph = parseGraphFromText(document.getText());
@@ -1367,10 +1268,7 @@ async function openGraphPreview(
     const canonicalSemanticPath = vscode.Uri.joinPath(artifactRoot, 'source.semantic.md');
     if (await pathExists(canonicalSemanticPath)) {
       const canonicalSlug = slug(canonicalSemanticPath.fsPath);
-      const reviewedArtifactRecord = await readLatestVersionedArtifact(artifactRoot.fsPath, 'graph', canonicalSlug);
-      const reviewedArtifact = reviewedArtifactRecord?.files['graph.json']
-        ? vscode.Uri.file(reviewedArtifactRecord.files['graph.json'])
-        : vscode.Uri.joinPath(artifactRoot, 'graph', `${canonicalSlug}.graph.json`);
+      const reviewedArtifact = vscode.Uri.joinPath(artifactRoot, 'graph', `${canonicalSlug}.graph.json`);
       if (await pathExists(reviewedArtifact)) {
         const document = await vscode.workspace.openTextDocument(reviewedArtifact);
         const reviewedGraph = parseGraphFromText(document.getText());
@@ -1457,41 +1355,6 @@ function deriveValidationStatus(summary: { gaps: number; conflicts: number; warn
     : summary.warnings > 0
       ? 'ready'
       : 'validated';
-}
-
-async function ensureSemanticVersionCheckpoint(
-  artifactRoot: vscode.Uri | undefined,
-  source: vscode.TextDocument,
-  reason: string,
-): Promise<void> {
-  if (!artifactRoot) {
-    return;
-  }
-
-  const sourceText = source.getText();
-  const sourceHash = hashArtifactContent(sourceText);
-  const baseName = slug(source.fileName);
-  const latest = await readLatestVersionedArtifact(artifactRoot.fsPath, 'semantic', baseName);
-  if (latest?.sourceHash === sourceHash) {
-    return;
-  }
-
-  await writeVersionedArtifact({
-    artifactRoot: artifactRoot.fsPath,
-    kind: 'semantic',
-    baseName,
-    sourcePath: source.fileName,
-    sourceHash,
-    label: reason,
-    files: {
-      'semantic.md': `${sourceText}\n`,
-    },
-    metadata: {
-      source: source.fileName,
-      checkpointReason: reason,
-      checkpointedAt: new Date().toISOString(),
-    },
-  });
 }
 
 async function submitFeedbackDelta(context: {
@@ -2190,50 +2053,32 @@ async function importSourceProject(
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.databaseSchemaMdPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${result.graphPath}`);
       // If semantic.md already existed, the source scan produced a reconcile proposal
-      // (code-derived changes) instead of overwriting — surface it for review.
+      // (code-derived changes) instead of overwriting. Regenerate it as a clean AI
+      // merge (current + code-derived incoming) so the review is a plain 2-pane diff
+      // with no conflict markers, then surface it for review.
       if (result.proposedSemanticPath && result.reconcile && outputDir) {
-        outputChannel.appendLine(
-          `[source-to-semantic] reconcile proposal — ${result.reconcile.addCount} addition(s), ${result.reconcile.conflictCount} conflict(s) → ${result.proposedSemanticPath}`,
-        );
+        const workspaceRootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.dirname(outputDir);
+        const currentMarkdown = await fs.readFile(path.join(outputDir, 'source.semantic.md'), 'utf8').catch(() => '');
+        const incomingMarkdown = await fs.readFile(path.join(outputDir, 'source.semantic.suggested.md'), 'utf8')
+          .catch(() => fs.readFile(result.proposedSemanticPath!, 'utf8').catch(() => ''));
+        try {
+          await reconcileSemanticWithAi({
+            currentMarkdown,
+            incomingMarkdown,
+            workspaceRoot: workspaceRootPath,
+            outputDir,
+            progress: (m) => outputChannel.appendLine(`[semantic-reconcile] ${m}`),
+          });
+        } catch (err) {
+          outputChannel.appendLine(`[semantic-reconcile] AI merge failed, using raw proposal: ${err instanceof Error ? err.message : String(err)}`);
+        }
         void vscode.commands.executeCommand(commandIds.reviewReconcile, { artifactRoot: outputDir });
       }
       const semanticDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(result.semanticPath));
       const sourceHash = hashArtifactContent(await fs.readFile(result.semanticPath, 'utf8'));
-      if (outputDir) {
-        await writeVersionedArtifact({
-          artifactRoot: outputDir,
-          kind: 'semantic',
-          baseName: slug(result.semanticPath),
-          sourcePath: result.semanticPath,
-          sourceHash,
-          label: 'imported semantic',
-          files: {
-            'semantic.md': `${await fs.readFile(result.semanticPath, 'utf8')}\n`,
-            'semantic.json': `${await fs.readFile(result.semanticJsonPath, 'utf8')}`,
-            'analysis.json': `${await fs.readFile(result.analysisPath, 'utf8')}`,
-          },
-          metadata: {
-            databaseSchemaPath: result.databaseSchemaPath,
-            graphPath: result.graphPath,
-          },
-        });
-        await writeVersionedArtifact({
-          artifactRoot: outputDir,
-          kind: 'databaseSchema',
-          baseName: slug(result.semanticPath),
-          sourcePath: result.semanticPath,
-          sourceHash,
-          label: 'import database schema',
-          files: {
-            'database.schema.json': `${await fs.readFile(result.databaseSchemaPath, 'utf8')}`,
-            'database.schema.md': `${await fs.readFile(result.databaseSchemaMdPath, 'utf8')}`,
-          },
-          metadata: {
-            semanticPath: result.semanticPath,
-            graphPath: result.graphPath,
-          },
-        });
-      }
+      // The imported semantic / database schema canonical files (result.semanticPath,
+      // result.databaseSchemaPath/.md) are already written by the importer; git carries
+      // their history, so no file-level version snapshot is kept.
 
       const validationPolicy = await resolveValidationPolicyText(registry);
       const semanticText = await fs.readFile(result.semanticPath, 'utf8');
@@ -2254,15 +2099,13 @@ async function importSourceProject(
         outputChannel.appendLine(line);
       }
       if (outputDir) {
-        await writeVersionedArtifact({
-          artifactRoot: outputDir,
-          kind: 'validation',
-          baseName: slug(result.semanticPath),
-          sourcePath: result.semanticPath,
-          sourceHash,
-          label: 'import validation',
-          files: {
-            'validation.md': [
+        const validationFolder = vscode.Uri.file(path.join(outputDir, 'validation'));
+        await vscode.workspace.fs.createDirectory(validationFolder);
+        const validationPath = vscode.Uri.joinPath(validationFolder, `${slug(result.semanticPath)}.validation.md`);
+        await vscode.workspace.fs.writeFile(
+          validationPath,
+          Buffer.from(
+            [
               '# AI Native Validation',
               '',
               `- Source: ${result.semanticPath}`,
@@ -2284,13 +2127,15 @@ async function importSourceProject(
                 issues: validationPayload.issues,
               }).missingSections.join(', ') || 'none'}`,
             ].join('\n') + '\n',
-          },
-          metadata: {
-            reportPath: validationPayload.reportPath,
-            summary: validationPayload.summary,
-            validationPolicyLoadedFrom: 'mcp-validator:get_validation_policy',
-          },
-        });
+            'utf8',
+          ),
+        );
+        // Freshness sidecar so a subsequent graph generation recognises this import
+        // as a fresh validation of the current semantic source.
+        await vscode.workspace.fs.writeFile(
+          vscode.Uri.joinPath(validationFolder, `${slug(result.semanticPath)}.validation.hash`),
+          Buffer.from(sourceHash, 'utf8'),
+        );
       }
 
       const config = getConfig();
@@ -2627,44 +2472,7 @@ async function importSourceProject(
         ].join('\n'),
         'utf8',
       );
-      if (outputDir) {
-        await writeVersionedArtifact({
-          artifactRoot: outputDir,
-          kind: 'review',
-          baseName: slug(result.semanticPath),
-          sourcePath: result.semanticPath,
-          sourceHash,
-          label: 'import review',
-          files: {
-            'review.md': [
-              '# AI Review',
-              '',
-              `- provider: ${agenticReview.provider}`,
-              `- mode: ${agenticReview.mode}`,
-              `- model: ${agenticReview.model}`,
-              `- bridge: ${agenticReview.bridgeAction}`,
-              '',
-              '## Summary',
-              agenticReview.summary,
-              '',
-              '## Notes',
-              ...agenticReview.notes.map((note) => `- ${note}`),
-              '',
-              '## Issues',
-              ...agenticReview.issues.map((issue) => `- [${issue.severity}] ${issue.code}: ${issue.message}`),
-              '',
-              '## Validation summary',
-              JSON.stringify(validationPayload.summary, null, 2),
-            ].join('\n') + '\n',
-          },
-          metadata: {
-            reviewedAt: new Date().toISOString(),
-            summary: agenticReview.summary,
-            provider: agenticReview.provider,
-            mode: agenticReview.mode,
-          },
-        });
-      }
+      // Canonical review artifact (source.review.md) is written above; git tracks it.
 
       const reviewArtifactPath = reviewMarkdownPath;
       if (agenticReview.refinedSemanticMarkdown) {
@@ -2673,46 +2481,12 @@ async function importSourceProject(
         if (result.createdSemantic) {
           await fs.writeFile(result.semanticPath, agenticReview.refinedSemanticMarkdown, 'utf8');
         }
-        if (outputDir) {
-          await writeVersionedArtifact({
-            artifactRoot: outputDir,
-            kind: 'semantic',
-            baseName: slug(result.semanticPath),
-            sourcePath: result.semanticPath,
-            sourceHash: hashArtifactContent(agenticReview.refinedSemanticMarkdown),
-            label: 'reviewed semantic',
-            files: {
-              'semantic.reviewed.md': `${agenticReview.refinedSemanticMarkdown}\n`,
-            },
-            metadata: {
-              reviewedAt: new Date().toISOString(),
-              reviewSummary: agenticReview.summary,
-            },
-          });
-        }
         outputChannel.appendLine(`[source-to-semantic] wrote ${reviewedSemanticPath}`);
       }
 
       const reviewedGraph = applyReviewToGraph(result.graph, agenticReview);
       const reviewedGraphPath = path.join(outputDir, 'source.graph.reviewed.json');
       await fs.writeFile(reviewedGraphPath, JSON.stringify(reviewedGraph, null, 2) + '\n', 'utf8');
-      if (outputDir) {
-        await writeVersionedArtifact({
-          artifactRoot: outputDir,
-          kind: 'graph',
-          baseName: slug(result.semanticPath),
-          sourcePath: result.semanticPath,
-          sourceHash,
-          label: 'import reviewed graph',
-          files: {
-            'graph.json': JSON.stringify(reviewedGraph, null, 2) + '\n',
-          },
-          metadata: {
-            reviewedAt: new Date().toISOString(),
-            reviewSummary: agenticReview.summary,
-          },
-        });
-      }
       outputChannel.appendLine(`[source-to-semantic] wrote ${reviewedGraphPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${reviewArtifactPath}`);
       outputChannel.appendLine(`[source-to-semantic] wrote ${reviewMarkdownPath}`);
@@ -2739,8 +2513,7 @@ async function importSourceProject(
   await vscode.window.showTextDocument(semanticDocument, { preview: false });
 
   try {
-    const graphRecord = await readLatestVersionedArtifact(outputDir, 'graph', slug(semanticPath.fsPath));
-    const graphPath = graphRecord?.files['graph.json'] ?? path.join(outputDir, 'source.graph.reviewed.json');
+    const graphPath = path.join(outputDir, 'source.graph.reviewed.json');
     const rawGraph = await fs.readFile(graphPath, 'utf8').catch(async () => fs.readFile(path.join(outputDir, 'source.graph.json'), 'utf8'));
     const graph = JSON.parse(rawGraph) as {
       schemaVersion?: string;
@@ -3964,10 +3737,10 @@ async function runDocCodeAlignment(
 
   if (!docEntitiesExist) {
     const choice = await vscode.window.showWarningMessage(
-      'No doc-entities.json found. Import documents first via Document Import to enable alignment checking.',
-      'Open Document Import',
+      'No doc-entities.json found. Import documents first via Import Document to enable alignment checking.',
+      'Open Import Document',
     );
-    if (choice === 'Open Document Import') {
+    if (choice === 'Open Import Document') {
       await vscode.commands.executeCommand('aiNativeDocImport.focus');
     }
     return;
