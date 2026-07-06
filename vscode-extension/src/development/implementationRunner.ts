@@ -138,6 +138,10 @@ export async function runImplementationTask(
       status: 'done',
       docDrift,
       result: { summary, changedFiles, risks, timestamp: new Date().toISOString() },
+      // A successful run supersedes any earlier failure — clear it so a retried
+      // task no longer renders as failed.
+      failureReason: undefined,
+      failedAt: undefined,
     });
 
     outputChannel.appendLine(`[development] task ${task.taskId} done — ${changedFiles} files changed`);
@@ -155,9 +159,10 @@ export async function runImplementationTask(
         'utf8',
       );
     } catch { /* best-effort */ }
-    // Put the task back on the queue but keep why it failed so the UI can show it.
+    // Mark the task failed (NOT re-queued) so it stays out of the automatic queue
+    // run, but keep why it failed so the UI can show it and offer a manual retry.
     await patchTask(artifactRoot, task.taskId, {
-      status: 'queued',
+      status: 'failed',
       failureReason: msg,
       failedAt: new Date().toISOString(),
     });

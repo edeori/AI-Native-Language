@@ -131,6 +131,10 @@
       {
         "command": "aiNative.deleteTask",
         "title": "AI Native: Delete Queued Task"
+      },
+      {
+        "command": "aiNative.retryTask",
+        "title": "AI Native: Retry Failed Task"
       }
     ],
     "configuration": {

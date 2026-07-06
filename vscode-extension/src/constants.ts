@@ -26,6 +26,7 @@ export const commandIds = {
   queueImplementation: 'aiNative.queueImplementation',
   runQueue: 'aiNative.runQueue',
   deleteTask: 'aiNative.deleteTask',
+  retryTask: 'aiNative.retryTask',
   analyzeDocImports: 'aiNative.analyzeDocImports',
   reviewReconcile: 'aiNative.reviewReconcile',
   applyReconcile: 'aiNative.applyReconcile',

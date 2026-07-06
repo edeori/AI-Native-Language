@@ -11,7 +11,7 @@ export interface TaskResult {
 export interface TaskEntry {
   taskId: string;
   direction: string;
-  status: 'queued' | 'pending' | 'running' | 'done';
+  status: 'queued' | 'pending' | 'running' | 'done' | 'failed';
   createdAt: string;
   result?: TaskResult;
   docDrift?: boolean;
@@ -240,6 +240,11 @@ export class DevelopmentWebviewProvider implements vscode.WebviewViewProvider {
       background: none; border: none; cursor: pointer; padding: 0;
     }
     .delete-hint:hover { text-decoration: underline; }
+    .retry-hint {
+      font-size: 10px; color: var(--vscode-textLink-foreground);
+      background: none; border: none; cursor: pointer; padding: 0;
+    }
+    .retry-hint:hover { text-decoration: underline; }
 
     /* ── Status badges ───────────────────────── */
     .badge {
@@ -316,7 +321,8 @@ export class DevelopmentWebviewProvider implements vscode.WebviewViewProvider {
     function badge(status, docDrift) {
       const spinner = status === 'running' ? '<span class="spinner"></span>' : '';
       const driftBadge = docDrift ? '<span class="badge badge-drift">⚠ drift</span>' : '';
-      return '<span class="badge badge-' + status + '">' + spinner + status + '</span>' + driftBadge;
+      const label = status === 'failed' ? '✗ failed' : status;
+      return '<span class="badge badge-' + status + '">' + spinner + label + '</span>' + driftBadge;
     }
 
     // ── Context bar ──────────────────────────────────────────────
@@ -355,10 +361,11 @@ export class DevelopmentWebviewProvider implements vscode.WebviewViewProvider {
 
     // ── Last Result ──────────────────────────────────────────────
     function resultHtml(task) {
-      // A failed run is re-queued but keeps its failure reason — surface it here
-      // so clicking the task explains what went wrong (takes precedence, since it
-      // is the most recent outcome).
-      if (task && task.failureReason) {
+      // A failed run keeps its failure reason and stays in 'failed' status (it is
+      // NOT re-queued). Surface it here so clicking the task explains what went
+      // wrong and offers a retry (takes precedence, since it is the most recent
+      // outcome — unless a later successful run cleared the failure).
+      if (task && task.failureReason && task.status !== 'running' && task.status !== 'pending') {
         return \`<div class="result-card failed">
           <div class="result-header">
             <span class="result-task-id">\${esc(task.taskId)}</span>
@@ -367,7 +374,7 @@ export class DevelopmentWebviewProvider implements vscode.WebviewViewProvider {
           </div>
           <div class="result-reason">\${esc(task.failureReason)}</div>
           <div class="result-meta">
-            <span class="result-stat warn">re-queued for retry</span>
+            <button class="btn-link" data-cmd="${commandIds.retryTask}" data-payload-task="\${task.taskId}">↻ retry</button>
             <button class="btn-link" data-cmd="${commandIds.openImplementationReport}" data-payload-task="\${task.taskId}">view full report</button>
           </div>
         </div>\`;
@@ -424,9 +431,9 @@ export class DevelopmentWebviewProvider implements vscode.WebviewViewProvider {
           </div>
           <div class="task-row-right">
             \${badge(t.status, t.docDrift)}
-            \${t.failureReason ? '<span class="badge badge-failed">✗ failed</span>' : ''}
             <span class="load-hint">↑ load</span>
-            \${t.status === 'queued' ? \`<button class="delete-hint" data-delete-task="\${esc(t.taskId)}">✕ delete</button>\` : ''}
+            \${t.status === 'failed' ? \`<button class="retry-hint" data-retry-task="\${esc(t.taskId)}">↻ retry</button>\` : ''}
+            \${t.status === 'queued' || t.status === 'failed' ? \`<button class="delete-hint" data-delete-task="\${esc(t.taskId)}">✕ delete</button>\` : ''}
           </div>
         </div>
       \`).join('') + '</div>';
@@ -520,12 +527,21 @@ export class DevelopmentWebviewProvider implements vscode.WebviewViewProvider {
         });
       });
 
-      // Delete queued task
+      // Delete queued/failed task
       document.querySelectorAll('[data-delete-task]').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
           const taskId = btn.dataset.deleteTask;
           if (taskId) cmd('${commandIds.deleteTask}', { taskId });
+        });
+      });
+
+      // Retry failed task (re-runs the same task in place)
+      document.querySelectorAll('[data-retry-task]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const taskId = btn.dataset.retryTask;
+          if (taskId) cmd('${commandIds.retryTask}', { taskId });
         });
       });
 

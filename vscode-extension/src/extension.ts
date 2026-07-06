@@ -375,7 +375,7 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       }).catch(err => {
         developmentProvider.updateState({ streamOutput: '' });
         outputChannel.show(true);
-        void vscode.window.showErrorMessage(`Implementation failed (task reset to queued): ${err instanceof Error ? err.message : String(err)}`);
+        void vscode.window.showErrorMessage(`Implementation failed (task marked failed — retry from the Task Log): ${err instanceof Error ? err.message : String(err)}`);
       });
     }),
     vscode.commands.registerCommand(commandIds.queueImplementation, async (payload?: { direction?: string }) => {
@@ -448,6 +448,51 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       }
       await deleteTask(artifactRoot.fsPath, taskId);
       await refreshDevelopmentContext();
+    }),
+    vscode.commands.registerCommand(commandIds.retryTask, async (payload?: { taskId?: string }) => {
+      const taskId = payload?.taskId;
+      if (!taskId) return;
+      const artifactRoot = await resolveArtifactRoot();
+      if (!artifactRoot) { void vscode.window.showWarningMessage('Open a workspace first.'); return; }
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!workspaceRoot) { void vscode.window.showWarningMessage('No workspace folder open.'); return; }
+      const tasks = await loadTasks(artifactRoot.fsPath);
+      if (tasks.some(t => t.status === 'running' || t.status === 'pending')) {
+        void vscode.window.showWarningMessage('A task is already running. Wait for it to finish before retrying.');
+        return;
+      }
+      const task = tasks.find(t => t.taskId === taskId);
+      if (!task) { void vscode.window.showWarningMessage(`Task ${taskId} not found.`); return; }
+
+      // Re-run the SAME task in place (same id + direction). runImplementationTask
+      // flips it back to 'running' and clears the failure on success.
+      let streamBuf = '';
+      void runImplementationTask(task, artifactRoot.fsPath, workspaceRoot, outputChannel, async () => {
+        await refreshDevelopmentContext();
+      }, (text) => {
+        if (text) {
+          streamBuf += (streamBuf ? '\n' : '') + text;
+          if (streamBuf.length > 4000) streamBuf = streamBuf.slice(-4000);
+          developmentProvider.updateState({ streamOutput: streamBuf });
+        }
+      }).then(({ docDrift, driftNotes }) => {
+        developmentProvider.updateState({ streamOutput: '' });
+        if (docDrift) {
+          void publishDriftDiagnostics(diagnostics, artifactRoot, driftNotes);
+          void vscode.window.showWarningMessage(
+            `⚠ Task ${taskId} done — Claude flagged a possible semantic drift. Check semantic documentation.`,
+            'Validate semantic',
+          ).then(choice => {
+            if (choice === 'Validate semantic') {
+              void vscode.commands.executeCommand(commandIds.validateActiveSemanticMarkdown);
+            }
+          });
+        }
+      }).catch(err => {
+        developmentProvider.updateState({ streamOutput: '' });
+        outputChannel.show(true);
+        void vscode.window.showErrorMessage(`Retry failed (task still marked failed): ${err instanceof Error ? err.message : String(err)}`);
+      });
     }),
     vscode.commands.registerCommand(commandIds.openImplementationReport, async (payload?: { taskId?: string }) => {
       const taskId = payload?.taskId;

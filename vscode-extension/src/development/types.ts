@@ -1,4 +1,4 @@
-export type TaskStatus = 'queued' | 'pending' | 'running' | 'done';
+export type TaskStatus = 'queued' | 'pending' | 'running' | 'done' | 'failed';
 
 export interface TaskResult {
   summary: string;
@@ -14,8 +14,9 @@ export interface TaskEntry {
   createdAt: string;
   result?: TaskResult;
   docDrift?: boolean;
-  // Why the last run failed (e.g. a timeout or CLI error). A failed run is put
-  // back on the queue, so this lets the UI still explain what went wrong.
+  // Why the last run failed (e.g. a timeout or CLI error). A failed run keeps
+  // status 'failed' (it is NOT re-queued) so it stays out of the automatic
+  // queue run; this lets the UI explain what went wrong and offer a retry.
   failureReason?: string;
   failedAt?: string;
 }
