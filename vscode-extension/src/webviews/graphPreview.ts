@@ -1165,36 +1165,55 @@ function inferErRelationships(tables: DatabaseTables): ErRelationship[] {
   return relationships;
 }
 
+// Strip schema qualifier (maren.) and common table prefixes (tbl_/t_/stg_) so a
+// foreign-key column like `calendar_id` can match `maren.tbl_holiday_calendars`.
+function normalizeTableName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/^[^.]*\./, '')
+    .replace(/^(tbl|table|t|stg|dim|fact)_/, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 function guessTableForForeignKey(base: string, sourceTable: string, tableNames: string[]): string | undefined {
   const normalized = base.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-  const candidates = new Set<string>([
+  const forms = new Set<string>([
     normalized,
     `${normalized}s`,
     `${normalized}es`,
     normalized.replace(/s$/, ''),
+    normalized.replace(/y$/, 'ies'),
   ]);
 
-  if (normalized === 'owner' || normalized === 'user' || normalized === 'actor' || normalized === 'author' || normalized === 'creator') {
-    candidates.add('users');
+  if (['owner', 'user', 'actor', 'author', 'creator', 'created_by', 'updated_by'].includes(normalized)) {
+    forms.add('users');
   }
-  if (normalized === 'subject') {
-    candidates.add('notes');
-    candidates.add('users');
-  }
-  if (normalized === 'note') {
-    candidates.add('notes');
-  }
-  if (normalized === 'audit') {
-    candidates.add('audit_log');
-  }
-  if (normalized === 'parent') {
-    candidates.add(sourceTable);
-  }
+  if (normalized === 'subject') { forms.add('notes'); forms.add('users'); }
+  if (normalized === 'note') forms.add('notes');
+  if (normalized === 'audit') forms.add('audit_log');
+  if (normalized === 'parent') forms.add(normalizeTableName(sourceTable));
 
-  for (const candidate of candidates) {
-    if (tableNames.includes(candidate)) {
-      return candidate;
-    }
+  const index = tableNames.map((original) => ({ original, norm: normalizeTableName(original) }));
+  const notSelf = (t: { original: string }) => t.original !== sourceTable;
+
+  // 1) exact normalized match against any candidate form (best signal)
+  for (const form of forms) {
+    const hit = index.find((t) => notSelf(t) && t.norm === form);
+    if (hit) return hit.original;
+  }
+  // 2) a table whose normalized name ends with the base (calendar → holiday_calendars)
+  for (const form of forms) {
+    if (form.length < 3) continue;
+    const hit = index.find((t) => notSelf(t) && (t.norm.endsWith(`_${form}`) || t.norm.endsWith(form)));
+    if (hit) return hit.original;
+  }
+  // 3) base appears as a whole token anywhere in the table name
+  for (const form of forms) {
+    if (form.length < 4) continue;
+    const re = new RegExp(`(^|_)${form}(_|$)`);
+    const hit = index.find((t) => notSelf(t) && re.test(t.norm));
+    if (hit) return hit.original;
   }
 
   return undefined;

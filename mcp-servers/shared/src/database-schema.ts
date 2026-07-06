@@ -544,6 +544,17 @@ function inferRelationships(tables: DatabaseTable[]): DatabaseRelationship[] {
   return relationships;
 }
 
+// Strip schema qualifier (maren.) and common table prefixes (tbl_/stg_/…) so a
+// foreign-key column like `calendar_id` can resolve to `maren.tbl_holiday_calendars`.
+function normalizeTableNameForFk(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/^[^.]*\./, '')
+    .replace(/^(tbl|table|t|stg|dim|fact)_/, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 function resolveForeignKeyTarget(sourceTable: string, columnBase: string, tableNames: Set<string>): string | undefined {
   const semanticTargets: Record<string, string[]> = {
     owner: ['users'],
@@ -554,21 +565,36 @@ function resolveForeignKeyTarget(sourceTable: string, columnBase: string, tableN
     note: ['notes'],
     subject: ['notes', 'users'],
     audit: ['audit_log'],
-    parent: [sourceTable],
+    parent: [normalizeTableNameForFk(sourceTable)],
   };
 
-  const candidates = unique([
+  const forms = unique([
     ...(semanticTargets[columnBase] ?? []),
     columnBase,
     `${columnBase}s`,
     `${columnBase}es`,
     columnBase.replace(/s$/, ''),
-  ]);
+    columnBase.replace(/y$/, 'ies'),
+  ].map((value) => value.toLowerCase()).filter(Boolean));
 
-  for (const candidate of candidates) {
-    if (tableNames.has(candidate.toLowerCase())) {
-      return candidate.toLowerCase();
-    }
+  // Match against schema/prefix-normalized table names, returning the original
+  // (full, lowercased) name so the caller can map it back to a table.
+  const index = [...tableNames].map((full) => ({ full, norm: normalizeTableNameForFk(full) }));
+
+  for (const form of forms) {
+    const hit = index.find((t) => t.norm === form || t.full === form);
+    if (hit) return hit.full;
+  }
+  for (const form of forms) {
+    if (form.length < 3) continue;
+    const hit = index.find((t) => t.norm.endsWith(`_${form}`) || t.norm.endsWith(form));
+    if (hit) return hit.full;
+  }
+  for (const form of forms) {
+    if (form.length < 4) continue;
+    const re = new RegExp(`(^|_)${form}(_|$)`);
+    const hit = index.find((t) => re.test(t.norm));
+    if (hit) return hit.full;
   }
 
   return undefined;

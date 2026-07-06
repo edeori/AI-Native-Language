@@ -2,7 +2,7 @@
   "name": "ai-native-semantic-workflow",
   "displayName": "AI Native Semantic Workflow",
   "description": "Developer-facing VSCode extension for the AI-native semantic workflow.",
-  "version": "1.0.3",
+  "version": "1.0.6",
   "private": true,
   "icon": "media/ai-native.png",
   "main": "./out/extension.js",
@@ -31,6 +31,14 @@
       {
         "command": "aiNative.openDashboard",
         "title": "AI Native: Open Actions View"
+      },
+      {
+        "command": "aiNative.reviewReconcile",
+        "title": "AI Native: Review Reconcile Proposal (3-way merge)"
+      },
+      {
+        "command": "aiNative.applyReconcile",
+        "title": "AI Native: Apply Reconcile Proposal"
       },
       {
         "command": "aiNative.openConfiguration",

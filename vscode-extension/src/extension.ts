@@ -235,21 +235,54 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       const root = payload?.artifactRoot ? vscode.Uri.file(payload.artifactRoot) : await resolveArtifactRoot();
       if (!root) { void vscode.window.showWarningMessage('Open a workspace first.'); return; }
       const current = vscode.Uri.joinPath(root, 'source.semantic.md');
+      const suggested = vscode.Uri.joinPath(root, 'source.semantic.suggested.md');
       const proposed = vscode.Uri.joinPath(root, 'source.semantic.proposed.md');
-      try {
-        await vscode.workspace.fs.stat(proposed);
-      } catch {
+      const mergeResult = vscode.Uri.joinPath(root, 'source.semantic.merge-result.md');
+
+      const exists = (uri: vscode.Uri) => vscode.workspace.fs.stat(uri).then(() => true, () => false);
+      const [haveCurrent, haveSuggested, haveProposed] = await Promise.all([exists(current), exists(suggested), exists(proposed)]);
+      if (!haveSuggested && !haveProposed) {
         void vscode.window.showInformationMessage('No reconcile proposal pending (source.semantic.proposed.md not found).');
         return;
       }
-      await vscode.commands.executeCommand(
-        'vscode.diff',
-        current,
-        proposed,
-        'Semantic reconcile — resolve conflicts in the right pane, save, then Apply',
-      );
+
+      // Prefer VSCode's native 3-way merge editor: Current + Incoming (doc) on
+      // top, an editable Result pane below with per-change Accept controls. The
+      // opening command is internal, so guard it and fall back to the 2-pane
+      // diff on the marker-based proposal if it's unavailable.
+      let usedMergeEditor = false;
+      if (haveCurrent && haveSuggested) {
+        try {
+          // Seed the result with current so an untouched merge keeps current.
+          await vscode.workspace.fs.copy(current, mergeResult, { overwrite: true });
+          await vscode.commands.executeCommand('_open.mergeEditor', {
+            base: current,
+            input1: { uri: current, title: 'Current (semantic)', detail: 'existing source.semantic.md', description: '' },
+            input2: { uri: suggested, title: 'Incoming (doc)', detail: 'freshly generated from docs/code', description: '' },
+            output: mergeResult,
+          });
+          usedMergeEditor = true;
+        } catch {
+          usedMergeEditor = false;
+          await vscode.workspace.fs.delete(mergeResult).then(undefined, () => undefined);
+        }
+      }
+      if (!usedMergeEditor) {
+        if (!haveProposed) {
+          void vscode.window.showInformationMessage('No reconcile proposal pending (source.semantic.proposed.md not found).');
+          return;
+        }
+        await vscode.commands.executeCommand(
+          'vscode.diff',
+          current,
+          proposed,
+          'Semantic reconcile — resolve conflicts in the right pane, save, then Apply',
+        );
+      }
+
+      const where = usedMergeEditor ? 'the Result pane of the merge editor' : 'the right (proposed) pane';
       const choice = await vscode.window.showInformationMessage(
-        'Reconcile proposal opened. Resolve any conflict markers in the right (proposed) pane and save, then apply it to source.semantic.md.',
+        `Reconcile opened. Resolve in ${where}, save, then apply it to source.semantic.md.`,
         'Apply resolved',
         'Discard',
       );
@@ -257,6 +290,7 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
         await vscode.commands.executeCommand(commandIds.applyReconcile, { artifactRoot: root.fsPath });
       } else if (choice === 'Discard') {
         await vscode.workspace.fs.delete(proposed).then(undefined, () => undefined);
+        await vscode.workspace.fs.delete(mergeResult).then(undefined, () => undefined);
         void vscode.window.showInformationMessage('Reconcile proposal discarded.');
       }
     }),
@@ -265,17 +299,21 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       if (!root) { void vscode.window.showWarningMessage('Open a workspace first.'); return; }
       const current = vscode.Uri.joinPath(root, 'source.semantic.md');
       const proposed = vscode.Uri.joinPath(root, 'source.semantic.proposed.md');
-      let bytes: Uint8Array;
-      try {
-        bytes = await vscode.workspace.fs.readFile(proposed);
-      } catch {
+      const mergeResult = vscode.Uri.joinPath(root, 'source.semantic.merge-result.md');
+      // The merge editor writes to merge-result.md; the marker-based fallback
+      // writes to proposed.md. Prefer the merge result when present.
+      let bytes: Uint8Array | undefined;
+      for (const candidate of [mergeResult, proposed]) {
+        try { bytes = await vscode.workspace.fs.readFile(candidate); break; } catch { /* try next */ }
+      }
+      if (!bytes) {
         void vscode.window.showWarningMessage('No reconcile proposal to apply.');
         return;
       }
       const text = Buffer.from(bytes).toString('utf8');
       if (/^<{7}|^={7}|^>{7}/m.test(text)) {
         const proceed = await vscode.window.showWarningMessage(
-          'The proposal still contains unresolved conflict markers (<<<<<<< / >>>>>>>). Apply anyway?',
+          'The result still contains unresolved conflict markers (<<<<<<< / >>>>>>>). Apply anyway?',
           'Apply anyway',
           'Cancel',
         );
@@ -283,6 +321,7 @@ async function _activate(context: vscode.ExtensionContext, outputChannel: vscode
       }
       await vscode.workspace.fs.writeFile(current, bytes);
       await vscode.workspace.fs.delete(proposed).then(undefined, () => undefined);
+      await vscode.workspace.fs.delete(mergeResult).then(undefined, () => undefined);
       await refreshViews();
       void vscode.window.showInformationMessage('Reconciled source.semantic.md applied.');
     }),

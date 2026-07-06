@@ -1137,41 +1137,46 @@ export class CreditExhaustedError extends Error {
 // Scans CLI stdout/stderr for credit/quota exhaustion signals from the Claude CLI stream-json format.
 // Returns the user-facing message if found, otherwise null.
 export function detectCreditExhaustion(stdout: string, stderr: string): string | null {
+  // Genuine billing / credit-exhaustion signatures. These are deliberately
+  // specific: bare words like "credit" or "usage limit" show up constantly in
+  // ordinary content (a financial / FX domain document is full of "credit
+  // risk", "credit limit"), and the model's own answer can mention them too.
+  // Matching those in free text produced false "credit limit reached" failures
+  // on runs that actually completed. So we only trust a real error signal.
   const CREDIT_PATTERNS = [
-    /credit/i,
-    /usage.?limit/i,
-    /billing/i,
-    /insufficient.?funds/i,
-    /quota.?exceeded/i,
-    /payment.?required/i,
-    /overdue/i,
+    /credit balance/i,
+    /insufficient\s+(?:credit|funds|balance|quota)/i,
+    /(?:credit|quota)\s+(?:exhausted|exceeded|depleted)/i,
+    /billing\s+(?:issue|problem|required|error)/i,
+    /payment\s+required/i,
+    /account\s+(?:suspended|overdue|past[\s-]?due)/i,
   ];
 
-  // Scan NDJSON stream-json lines for error events
+  // Only structured stream-json error events count as a credit signal.
   for (const line of stdout.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (!trimmed.startsWith('{')) continue;
     try {
       const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      if (parsed.type === 'error' || parsed.type === 'api_error') {
-        const errObj = (parsed.error ?? parsed) as Record<string, unknown>;
-        const msg = typeof errObj.message === 'string' ? errObj.message : '';
-        const errType = typeof errObj.type === 'string' ? errObj.type : '';
-        if (CREDIT_PATTERNS.some((re) => re.test(msg) || re.test(errType))) {
-          return msg || 'API credit or usage limit reached.';
-        }
+      if (parsed.type !== 'error' && parsed.type !== 'api_error') continue;
+      const errObj = (parsed.error ?? parsed) as Record<string, unknown>;
+      const msg = typeof errObj.message === 'string' ? errObj.message : '';
+      const errType = typeof errObj.type === 'string' ? errObj.type : '';
+      const status = typeof errObj.status === 'number' ? errObj.status : undefined;
+      if (status === 402 || CREDIT_PATTERNS.some((re) => re.test(msg) || re.test(errType))) {
+        return msg || 'API credit or billing limit reached.';
       }
     } catch {
-      // not JSON
+      // not JSON — ignore
     }
   }
 
-  // Also check raw stderr (some CLI versions print plain text errors there)
-  const combined = `${stdout}\n${stderr}`;
-  if (CREDIT_PATTERNS.some((re) => re.test(combined))) {
-    // Extract a one-liner from the first matching line
-    const line = combined.split(/\r?\n/).find((l) => CREDIT_PATTERNS.some((re) => re.test(l)));
-    return line?.trim() || 'API credit or usage limit reached.';
+  // stderr: only trust lines that actually look like an error report, never
+  // arbitrary output that merely happens to contain one of these words.
+  for (const raw of stderr.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!/\berror\b|\b402\b|payment required/i.test(line)) continue;
+    if (CREDIT_PATTERNS.some((re) => re.test(line))) return line;
   }
 
   return null;
