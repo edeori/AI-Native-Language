@@ -29,7 +29,7 @@ Dokumentumokat importál, majd AI-val a `source.semantic.md`-be olvasztja.
 **Gombok:**
 - **▶ Import Documents** — minden hozzáadott fájlt/oldalt Markdownná alakít és elment ide: `.ai-native/imports/`. Semmi mást nem módosít.
 - **✦ Analyze with AI** — beolvassa a `.ai-native/imports/` tartalmát, és AI-val előállítja/frissíti a `source.semantic.md`-t.
-  - **Első import** (még nincs `source.semantic.md`): közvetlenül létrejön a `source.semantic.md` + a `source.database.json/.md`.
+  - **Első import** (még nincs `source.semantic.md`): közvetlenül létrejön a `source.semantic.md`, és belőle determinisztikusan a `source.graph.json` + `source.database.json/.md` is.
   - **Újraimport** (már van `source.semantic.md`): NEM írja felül. AI-merge készül (`source.semantic.proposed.md`, konfliktus-marker nélkül), és megnyílik egy **2-paneles diff** (Current ↔ AI proposal) — lásd [Reconcile: felülvizsgálat és Apply](#reconcile-fel%C3%BClvizsg%C3%A1lat-%C3%A9s-apply).
 
 ---
@@ -69,7 +69,7 @@ Saját nézet (nem az Actions alatt). Felül két gomb, alatta a legutóbbi kime
 
 ## Actions
 
-- **Show graph** — megnyitja a legutóbbi kanonikus gráfot (a felülvizsgált változatot preferálja, ha van).
+- **Show graph** — megnyitja a **mentett kanonikus gráf JSON**-t (a `source.semantic.md`-ből származtatott csúcs/él modell, **nem** maga a semantic.md). A gráf a gyökérben van (nincs `graph/` almappa) — keresési sorrend: `source.graph.reviewed.json` (felülvizsgált) → `source.graph.json` (determinisztikus). Ha egyik sincs, élőben generál a `source.semantic.md`-ből (megjeleníti, de nem menti — ez az „AI Native Graph Preview").
 - **Endpoint summary** — REST · SOAP · GraphQL · Events · gRPC végpontok összegzése.
 - Alul: token-hatékonysági kártya (a mért AI-hívások alapján).
 
@@ -100,7 +100,9 @@ Amikor az **Analyze with AI** vagy a **Source Import** egy már létező `source
    - a felugró értesítés **Apply** gombja.
 4. Apply után a `source.semantic.md` frissül, a tranziens fájlok törlődnek, és **determinisztikusan újragenerálódik a `source.graph.json` + a `source.database.json/.md`** (hogy szinkronban maradjanak az új semantic-kal).
 
-> Megjegyzés: az Apply a *sima* gráfot frissíti. A felülvizsgált gráf (`source.graph.reviewed.json`) csak a **Generate Graph → AI Review** futtatásával frissül.
+> A kanonikus gráf JSON így **mindig frissül, amikor a `source.semantic.md` készül/frissül** (első import, Apply, Source Import) — a **Show graph** ezt a mentett gráfot nyitja meg, nem generál újat.
+>
+> Megjegyzés: az Apply a *sima* (`source.graph.json`) gráfot frissíti. A felülvizsgált gráf (`source.graph.reviewed.json`) csak a **Generate Graph → AI Review** futtatásával frissül.
 
 ---
 

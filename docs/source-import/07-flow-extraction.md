@@ -11,7 +11,7 @@
 |---|---|---|
 | `.ai-native/source.semantic.md` | igen | Source Import (Step 1) |
 | `.ai-native/doc-entities.json` | nem | Document Import (ha volt) |
-| `.ai-native/graph/<latest>.graph.json` | nem | Generate Graph (Step 4 előző futásból) |
+| `.ai-native/source.graph.reviewed.json` | nem | Generate Graph (Step 4 előző futásból) |
 
 Ha a `doc-entities.json` nem létezik, a lépés csak a semantic.md és az esetleges gráf alapján dolgozik.
 

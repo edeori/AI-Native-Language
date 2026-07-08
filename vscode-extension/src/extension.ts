@@ -943,9 +943,9 @@ async function runGraphGeneration(
         const reviewedGraph = applyReviewToGraph(graph, agenticReview);
         if (artifactRoot) {
           report('Writing reviewed graph artifact...');
-          const graphFolder = vscode.Uri.joinPath(artifactRoot, 'graph');
-          await vscode.workspace.fs.createDirectory(graphFolder);
-          const reviewedPath = vscode.Uri.joinPath(graphFolder, `${slug(source.fileName)}.graph.json`);
+          // Canonical root location (no graph/ subfolder) — consistent with the
+          // other source.* artifacts and what the source import / apply-regen write.
+          const reviewedPath = vscode.Uri.joinPath(artifactRoot, 'source.graph.reviewed.json');
           await vscode.workspace.fs.writeFile(reviewedPath, Buffer.from(JSON.stringify(reviewedGraph, null, 2), 'utf8'));
           // The reviewed database schema stays embedded in the canonical graph.json
           // (reviewedGraph.metadata.databaseSchema) — git carries its history.
@@ -1234,22 +1234,35 @@ async function openGraphPreview(
     }
   }
 
-  const source = await resolveSemanticSourceDocument();
-  if (source) {
-    const reviewedArtifact = artifactRoot
-      ? vscode.Uri.joinPath(artifactRoot, 'graph', `${slug(source.fileName)}.graph.json`)
-      : undefined;
-    if (reviewedArtifact && (await pathExists(reviewedArtifact))) {
-      const document = await vscode.workspace.openTextDocument(reviewedArtifact);
-      const reviewedGraph = parseGraphFromText(document.getText());
-      if (reviewedGraph) {
-        GraphPreviewPanel.show(context, reviewedGraph, `${path.basename(source.fileName)} · reviewed`);
+  // Saved canonical graph candidates, in preference order. All artifacts live at the
+  // artifact root (no graph/ subfolder): the AI-reviewed graph, then the deterministic one.
+  const savedGraphUris = (): vscode.Uri[] =>
+    artifactRoot
+      ? [
+          vscode.Uri.joinPath(artifactRoot, 'source.graph.reviewed.json'),
+          vscode.Uri.joinPath(artifactRoot, 'source.graph.json'),
+        ]
+      : [];
+  const openSavedGraph = async (uris: vscode.Uri[], label: string): Promise<boolean> => {
+    for (const uri of uris) {
+      if (!(await pathExists(uri))) continue;
+      const document = await vscode.workspace.openTextDocument(uri);
+      const graph = parseGraphFromText(document.getText());
+      if (graph) {
+        GraphPreviewPanel.show(context, graph, label);
         outputChannel.show(true);
-        outputChannel.appendLine(`[graph-preview] reviewed artifact: ${reviewedArtifact.fsPath}`);
-        return;
+        outputChannel.appendLine(`[graph-preview] saved graph: ${uri.fsPath}`);
+        return true;
       }
     }
+    return false;
+  };
 
+  const source = await resolveSemanticSourceDocument();
+  if (source) {
+    if (await openSavedGraph(savedGraphUris(), `${path.basename(source.fileName)} · saved`)) return;
+
+    // No saved graph yet → generate a live one from the current text (not persisted).
     const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
       content: normalizeSemanticMdSections(source.getText()),
       persist: false,
@@ -1259,7 +1272,7 @@ async function openGraphPreview(
     if (graph) {
       GraphPreviewPanel.show(context, graph, path.basename(source.fileName));
       outputChannel.show(true);
-      outputChannel.appendLine(`[graph-preview] current source: ${source.fileName}`);
+      outputChannel.appendLine(`[graph-preview] current source (live): ${source.fileName}`);
       return;
     }
   }
@@ -1267,18 +1280,7 @@ async function openGraphPreview(
   if (artifactRoot) {
     const canonicalSemanticPath = vscode.Uri.joinPath(artifactRoot, 'source.semantic.md');
     if (await pathExists(canonicalSemanticPath)) {
-      const canonicalSlug = slug(canonicalSemanticPath.fsPath);
-      const reviewedArtifact = vscode.Uri.joinPath(artifactRoot, 'graph', `${canonicalSlug}.graph.json`);
-      if (await pathExists(reviewedArtifact)) {
-        const document = await vscode.workspace.openTextDocument(reviewedArtifact);
-        const reviewedGraph = parseGraphFromText(document.getText());
-        if (reviewedGraph) {
-          GraphPreviewPanel.show(context, reviewedGraph, 'source.semantic.md · reviewed');
-          outputChannel.show(true);
-          outputChannel.appendLine(`[graph-preview] reviewed artifact: ${reviewedArtifact.fsPath}`);
-          return;
-        }
-      }
+      if (await openSavedGraph(savedGraphUris(), 'source.semantic.md · saved')) return;
 
       const canonicalDocument = await vscode.workspace.openTextDocument(canonicalSemanticPath);
       const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
@@ -1290,44 +1292,14 @@ async function openGraphPreview(
       if (graph) {
         GraphPreviewPanel.show(context, graph, 'source.semantic.md');
         outputChannel.show(true);
-        outputChannel.appendLine(`[graph-preview] canonical source: ${canonicalSemanticPath.fsPath}`);
+        outputChannel.appendLine(`[graph-preview] canonical source (live): ${canonicalSemanticPath.fsPath}`);
         return;
       }
     }
   }
 
-  const candidates: vscode.Uri[] = [];
-
-  if (artifactRoot) {
-    const graphFolder = vscode.Uri.joinPath(artifactRoot, 'graph');
-    let items: Array<[string, vscode.FileType]> = [];
-    try {
-      items = await vscode.workspace.fs.readDirectory(graphFolder);
-    } catch {
-      items = [];
-    }
-    candidates.push(
-      ...items
-        .filter(([, type]) => type === vscode.FileType.File)
-        .map(([name]) => vscode.Uri.joinPath(graphFolder, name))
-        .filter((uri) => uri.fsPath.endsWith('.graph.json')),
-    );
-  }
-
-  for (const candidate of candidates) {
-    if (!(await pathExists(candidate))) {
-      continue;
-    }
-
-    const document = await vscode.workspace.openTextDocument(candidate);
-    const graph = parseGraphFromText(document.getText());
-    if (graph) {
-      GraphPreviewPanel.show(context, graph, path.basename(candidate.fsPath));
-      outputChannel.show(true);
-      outputChannel.appendLine(`[graph-preview] ${candidate.fsPath}`);
-      return;
-    }
-  }
+  // Last resort: any saved root graph, even without an active/canonical semantic.md.
+  if (artifactRoot && (await openSavedGraph(savedGraphUris(), 'saved graph'))) return;
 
   vscode.window.showWarningMessage('No generated graph artifact was found yet.');
 }
@@ -3609,17 +3581,10 @@ async function runFlowExtraction(
 
   let graphJson: unknown;
   try {
-    const graphFolder = vscode.Uri.joinPath(artifactRoot, 'graph');
-    const entries = await vscode.workspace.fs.readDirectory(graphFolder);
-    const graphFile = entries
-      .filter(([name, type]) => type === vscode.FileType.File && name.endsWith('.graph.json'))
-      .map(([name]) => name)
-      .sort()
-      .pop();
-    if (graphFile) {
-      const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(graphFolder, graphFile));
-      graphJson = JSON.parse(Buffer.from(bytes).toString('utf8'));
-    }
+    // Canonical graph at the artifact root (reviewed preferred, else deterministic).
+    const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(artifactRoot, 'source.graph.reviewed.json'))
+      .then((b) => b, () => vscode.workspace.fs.readFile(vscode.Uri.joinPath(artifactRoot, 'source.graph.json')));
+    graphJson = JSON.parse(Buffer.from(bytes).toString('utf8'));
   } catch { /* no graph yet */ }
 
   try {

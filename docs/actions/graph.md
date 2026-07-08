@@ -7,7 +7,7 @@ Megnyitja a legutóbbi kanonikus gráf vizualizációját a `GraphPreviewPanel`-
 
 ### Keresési sorrend
 
-1. Ha van kanonikus gráf az aktív semantic.md-hez (`.ai-native/graph/<slug>.graph.json`, ill. a source-import ág `source.graph.reviewed.json` / `source.graph.json` fájlja): azt nyitja meg
+1. Ha van mentett kanonikus gráf a gyökérben: `source.graph.reviewed.json` (felülvizsgált) → `source.graph.json` (determinisztikus): azt nyitja meg (nincs `graph/` almappa)
 2. Ha van `source.semantic.md` de nincs mentett gráf: élő gráfot generál az MCP-vel (`persist: false`) és megjeleníti — de nem menti el
 3. Ha nincs semmi: figyelmeztetés
 

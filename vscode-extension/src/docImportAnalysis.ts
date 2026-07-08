@@ -258,11 +258,13 @@ OUTPUT FORMAT — use EXACTLY this heading structure (H1 for system title, H2 fo
         vscode.window.showInformationMessage('Document import: no changes vs current source.semantic.md.');
       }
     } else {
-      // First import → create the source of truth.
+      // First import → create the source of truth, then derive the canonical graph
+      // AND the database schema from it so source.graph.json / source.database.*
+      // exist right away (kept consistent with source.semantic.md).
       await fs.writeFile(semanticPath, content + '\n', 'utf8');
       progress(`Done — source.semantic.md created (${content.length} chars)`);
       if (opts.registry) {
-        await generateDatabaseSchemaFiles(opts.registry, content, outputDir, progress);
+        await regenerateSemanticDerivedArtifacts({ registry: opts.registry, semanticContent: content, outputDir, progress });
       }
       postFn?.({ type: 'analysisDone', chars: content.length });
       vscode.window.showInformationMessage(`AI analysis complete — source.semantic.md created (${content.length} chars)`);
@@ -272,23 +274,6 @@ OUTPUT FORMAT — use EXACTLY this heading structure (H1 for system title, H2 fo
     postFn?.({ type: 'analysisDone', error: true });
     vscode.window.showWarningMessage('AI analysis returned no result. Check the AI Review provider configuration.');
   }
-}
-
-// Infer a fresh database schema draft from semantic content via the semantic-core
-// MCP tool. Returns undefined when nothing table-like could be inferred.
-async function inferSchemaFromSemantic(
-  registry: McpRegistry,
-  semanticContent: string,
-): Promise<DatabaseSchemaLike | undefined> {
-  const normalized = normalizeSemanticSections(semanticContent);
-  const response = await registry.callTool('semanticCore', 'generate_canonical_graph', {
-    content: normalized,
-    persist: false,
-  });
-  const payload = (response.json as Record<string, unknown> | undefined);
-  const graph = payload?.graph as Record<string, unknown> | undefined;
-  const dbSchema = (graph?.metadata as Record<string, unknown> | undefined)?.databaseSchema as DatabaseSchemaLike | undefined;
-  return dbSchema?.tables?.length ? dbSchema : undefined;
 }
 
 // Persist the canonical schema pair (source.database.json + source.database.md)
@@ -301,26 +286,6 @@ async function writeSchemaArtifacts(
   const schemaMd = renderDatabaseSchemaMd(schema);
   await fs.writeFile(path.join(outputDir, 'source.database.json'), schemaJson, 'utf8');
   await fs.writeFile(path.join(outputDir, 'source.database.md'), schemaMd, 'utf8');
-}
-
-async function generateDatabaseSchemaFiles(
-  registry: McpRegistry,
-  semanticContent: string,
-  outputDir: string,
-  progress: (msg: string) => void,
-): Promise<void> {
-  progress('Generating database schema…');
-  try {
-    const dbSchema = await inferSchemaFromSemantic(registry, semanticContent);
-    if (!dbSchema) {
-      progress('Database schema: no tables inferred from semantic content.');
-      return;
-    }
-    await writeSchemaArtifacts(dbSchema, outputDir);
-    progress(`Database schema written — ${dbSchema.tables.length} table(s) → source.database.md`);
-  } catch (err) {
-    progress(`Database schema generation skipped: ${err instanceof Error ? err.message : String(err)}`);
-  }
 }
 
 // AI-driven merge of the semantic source. Given the CURRENT source.semantic.md and

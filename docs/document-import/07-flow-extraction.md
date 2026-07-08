@@ -10,7 +10,7 @@
 |---|---|---|
 | `.ai-native/source.semantic.md` | igen | Document Import [5. lépés](05-outputs.md) vagy Source Import |
 | `.ai-native/doc-entities.json` | nem | Document Import [5. lépés](05-outputs.md) |
-| `.ai-native/graph/<latest>.graph.json` | nem | Generate Graph lépés |
+| `.ai-native/source.graph.reviewed.json` | nem | Generate Graph lépés |
 
 Ha a `doc-entities.json` nem létezik (nem volt document import), csak a semantic.md és az esetleges gráf alapján dolgozik.
 

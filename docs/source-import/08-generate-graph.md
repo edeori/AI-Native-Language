@@ -42,7 +42,7 @@ Ha az AI Review nincs bejelölve, csak a MCP validátor issue-i kerülnek diagno
 **Graph Preview panel** — `GraphPreviewPanel.show(context, graph, ...)` — a kanonikus gráf interaktív vizualizációja.
 
 **Kanonikus gráf fájlok** (nincs külön verziózott store — a történetet a git kezeli):
-- `.ai-native/graph/<slug>.graph.json` — a felülvizsgált (reviewed) gráf, amelyet a **Show graph**, a Flow Extraction és a Doc-Code Alignment használ.
+- `.ai-native/source.graph.reviewed.json` — a felülvizsgált (reviewed) gráf a gyökérben (nincs `graph/` almappa), amelyet a **Show graph**, a Flow Extraction és a Doc-code alignment használ.
 - AI Review nélkül a determinisztikus gráf frissül.
 
 > Kapcsolódó: a **reconcile Apply** (dokumentum-/forrás-import után) determinisztikusan újragenerálja a `source.graph.json`-t és a `source.database.json/.md`-t az új `source.semantic.md`-ből — a *felülvizsgált* gráfhoz viszont a **Generate Graph → AI Review** futtatás kell.
